@@ -96,6 +96,7 @@ pages:
       properties:
         title: Active Profile
         description: Select performance mode
+        key: performance_profile
         icon: power-profile-balanced-symbolic
         value_command: "tlpctl get"
         interval: 2
@@ -930,6 +931,7 @@ pages:
       properties:
         title: Active Profile
         description: Select performance mode
+        key: performance_profile
         icon: power-profile-balanced-symbolic
         value_command: "tlpctl get"
         interval: 2
