@@ -31,6 +31,7 @@ declare -ra FLEET_COMMANDS=(
     "U | hyprctl reload"
     "U | systemctl --user enable --now mako.service || true"
     "S | systemctl enable --now ufw.service || true"
+    "U | systemctl --user enable --now dusky_quickpanal.service || true"
 )
 
 # ==============================================================================
