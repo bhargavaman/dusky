@@ -326,7 +326,7 @@ render_item_list() {
         desc="${DESCRIPTIONS[$item]:-}"
 
         if [[ "$selected" == "true" ]]; then
-            check_mark="${C_GREEN}[x]${C_RESET}"
+            check_mark="${C_GREEN}[]${C_RESET}"
         elif [[ -n "${INSTALLED_PKGS[$item]:-}" ]]; then
             check_mark="${C_GREEN}[✓]${C_RESET}"
         else
