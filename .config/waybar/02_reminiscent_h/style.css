@@ -26,7 +26,7 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
-@define-color glass_bar                       @surface;
+@define-color glass_bar                       alpha(@surface, 0.6);
 @define-color glass_module                    @surface_container;
 @define-color glass_hover_bg                  @on_secondary;
 @define-color glass_hover_border              @secondary_container;
