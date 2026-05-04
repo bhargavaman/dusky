@@ -17,6 +17,7 @@ fi
 # --- CONSTANTS & PATHS ---
 readonly STATE_DIR="${HOME}/.config/dusky/settings/power_saver"
 readonly GUI_STATE_FILE="${HOME}/.config/dusky/settings/power_saver_state"
+readonly TLP_GUI_STATE_FILE="${HOME}/.config/dusky/settings/performance_profile"
 
 # Hardware Limits
 readonly BRIGHTNESS_PS_LEVEL="1%"
@@ -151,6 +152,17 @@ set_hardware_profiles() {
         log_step "Applying Hardware Power Saving Profiles..."
 
         # 1. STATE CAPTURE (Must occur before daemons cross-communicate)
+        
+        # TLP Tracker
+        if has_cmd tlpctl; then
+            if [[ ! -f "${STATE_DIR}/tlp_profile.state" ]]; then
+                local tlp_out
+                tlp_out=$(tlpctl get 2>/dev/null || echo "performance")
+                save_state "tlp_profile" "$tlp_out"
+            fi
+        fi
+
+        # Asus Tracker
         if has_cmd asusctl; then
             if [[ ! -f "${STATE_DIR}/asus_profile.state" ]]; then
                 local asus_out
@@ -168,8 +180,10 @@ set_hardware_profiles() {
         if has_cmd tlpctl; then
             log_info "Setting tlpctl to power-saver..."
             sudo tlpctl power-saver || true
+            printf "power-saver" > "${TLP_GUI_STATE_FILE}"
         elif has_cmd tlp; then
             sudo tlp bat || true
+            printf "power-saver" > "${TLP_GUI_STATE_FILE}"
         fi
 
         # 3. APPLY ASUSCTL
@@ -245,12 +259,23 @@ set_hardware_profiles() {
     else
         log_step "Restoring Hardware Performance Profiles..."
 
-        # TLPCTL
+        # TLPCTL (Stateful Restore + GUI Sync)
         if has_cmd tlpctl; then
-            log_info "Setting tlpctl to performance..."
-            sudo tlpctl performance || true
+            local prev_tlp
+            prev_tlp=$(get_state "tlp_profile")
+            if [[ -n "$prev_tlp" ]]; then
+                log_info "Restoring tlpctl to ${prev_tlp}..."
+                sudo tlpctl set "$prev_tlp" || true
+                printf "%s" "$prev_tlp" > "${TLP_GUI_STATE_FILE}"
+                clear_state "tlp_profile"
+            else
+                log_info "Setting tlpctl to performance..."
+                sudo tlpctl performance || true
+                printf "performance" > "${TLP_GUI_STATE_FILE}"
+            fi
         elif has_cmd tlp; then
             sudo tlp ac || true
+            printf "performance" > "${TLP_GUI_STATE_FILE}"
         fi
 
         # SYNCHRONIZATION BARRIER:
