@@ -2072,7 +2072,7 @@ render_item_list() {
     local -n _items=$2
     local ctx=$3
     local -i vs=$4 ve=$5 ri
-    local item val display type config padded_item max_len def_marker
+    local item val display type config padded_item max_len def_marker def_val
 
     for (( ri = vs; ri < ve; ri++ )); do
         item=${_items[ri]}
@@ -2080,9 +2080,14 @@ render_item_list() {
         config=${ITEM_MAP["${ctx}::${item}"]}
         IFS='|' read -r dummy_key type dummy_block dummy_min dummy_max dummy_step <<< "$config"
 
+        def_val=${DEFAULTS["${ctx}::${item}"]:-}
         def_marker="  "
-        if [[ -n ${DEFAULTS["${ctx}::${item}"]:-} ]]; then
-            def_marker="${C_YELLOW}• ${C_RESET}"
+        if [[ -n $def_val ]]; then
+            if [[ $val != "$UNSET_MARKER" && $val != "$def_val" ]]; then
+                def_marker="${C_RED}• ${C_RESET}"
+            else
+                def_marker="${C_YELLOW}• ${C_RESET}"
+            fi
         fi
 
         case $type in
@@ -2245,7 +2250,7 @@ draw_main_view() {
     render_scroll_indicator buf below "$count" "$_vis_end"
 
     buf+=$'\n'"${C_CYAN} [Tab] Category   [r] Reset Item   [R] Reset All   [←/→ h/l] Adjust${C_RESET}${CLR_EOL}"$'\n'
-    buf+="${C_CYAN} [Enter] Action   [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    buf+="${C_CYAN} [Enter] Action   [q] Quit   ${C_YELLOW}•${C_CYAN} Default  ${C_RED}•${C_CYAN} Modified${C_RESET}${CLR_EOL}"$'\n'
     if [[ -n $STATUS_MESSAGE ]]; then buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"; else buf+="${C_CYAN} File: ${C_WHITE}${WRITE_TARGET}${C_RESET}${CLR_EOL}${CLR_EOS}"; fi
     printf '%s' "$buf" || true
 }
@@ -2277,7 +2282,7 @@ draw_detail_view() {
     render_scroll_indicator buf below "$count" "$_vis_end"
     
     buf+=$'\n'"${C_CYAN} [Esc/Sh+Tab] Back   [r] Reset Item   [R] Reset All   [←/→ h/l] Adjust${C_RESET}${CLR_EOL}"$'\n'
-    buf+="${C_CYAN} [Enter] Toggle/Action   [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    buf+="${C_CYAN} [Enter] Toggle/Action   [q] Quit   ${C_YELLOW}•${C_CYAN} Default  ${C_RED}•${C_CYAN} Modified${C_RESET}${CLR_EOL}"$'\n'
     if [[ -n $STATUS_MESSAGE ]]; then buf+="${C_CYAN} Status: ${C_RED}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"; else buf+="${C_CYAN} Submenu: ${C_WHITE}${CURRENT_MENU_ID}${C_RESET}${CLR_EOL}${CLR_EOS}"; fi
     printf '%s' "$buf" || true
 }
