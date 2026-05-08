@@ -460,16 +460,30 @@ def main() -> None:
                 f.write(production_css)
             console.print(f"\n[bold green]✔ Success! Template beautifully updated at:[/] {file_path}")
             
-            # --- TUI Auto-Deploy Integration ---
-            tui_script = Path.home() / "user_scripts" / "theme_matugen" / "firefox" / "dusky_firefox_tui.sh"
+            # --- TUI Auto-Deploy & Browser Restart Integration ---
+            scripts_dir = Path.home() / "user_scripts" / "theme_matugen" / "firefox"
+            tui_script = scripts_dir / "dusky_firefox_tui.sh"
+            
+            # Handle potential variations in script naming
+            restart_script = scripts_dir / "restart_browser.sh"
+            if not restart_script.exists():
+                restart_script = scripts_dir / "restart.sh"
             
             if tui_script.exists():
                 console.print("\n[dim]Deploying autonomously using Dusky Firefox Themer...[/]")
                 try:
                     subprocess.run([str(tui_script), "--auto"], check=True)
-                    console.print("\n[bold green]✔ Deployment complete! Restart Firefox to see your changes.[/]")
+                    console.print("[bold green]✔ Deployment complete![/]")
+                    
+                    if restart_script.exists():
+                        console.print("[dim]Gracefully restarting browser to apply changes...[/]")
+                        subprocess.run([str(restart_script)], check=True)
+                        console.print("[bold green]✔ Browser restarted! Your new theme is live.[/]")
+                    else:
+                        console.print("\n[bold yellow]⚠ Restart script not found. Please restart Firefox manually to see your changes.[/]")
+                        
                 except subprocess.CalledProcessError as e:
-                    console.print(f"\n[bold red]✖ Auto-deploy failed (exit code {e.returncode}).[/]")
+                    console.print(f"\n[bold red]✖ Auto task failed (exit code {e.returncode}).[/]")
                 except Exception as e:
                     console.print(f"\n[bold red]✖ Error executing script: {e}[/]")
             else:
