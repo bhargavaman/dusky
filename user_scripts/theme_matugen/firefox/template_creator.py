@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import re
 import sys
+from urllib.parse import urlparse
 from pathlib import Path
 
 # Semantic mapping: Bridges the gap between what an element *is* and the correct CSS/Matugen logic.
@@ -22,9 +23,31 @@ def print_menu() -> None:
         print(f"[{key}] {data['name']}")
     print("---------------------------")
 
+def extract_domain(raw_input: str) -> str:
+    """Intelligently extracts just the domain name, even if the user pastes a full URL."""
+    raw_input = raw_input.strip()
+    
+    # Temporarily prepend a scheme if missing so urlparse reads the domain correctly
+    if not raw_input.startswith(('http://', 'https://')):
+        raw_input = 'https://' + raw_input
+        
+    parsed = urlparse(raw_input)
+    domain = parsed.netloc
+    
+    # Strip any port numbers if present (e.g., localhost:8080 -> localhost)
+    domain = domain.split(':')[0]
+    
+    # Final safety sanitize to prevent path traversal
+    domain = re.sub(r'[^\w.-]', '', domain)
+    
+    # Optional: Strip 'www.' so the rule applies to the root domain and subdomains universally
+    if domain.startswith('www.'):
+        domain = domain[4:]
+        
+    return domain
+
 def generate_css(domain: str, rules: list[dict[str, str]], mode: str = "production") -> str:
     """Generates the final Mozilla domain-scoped CSS string."""
-    # The domain is strictly sanitized upstream, so quotes are already mathematically impossible here.
     css_parts = [f'@-moz-document domain("{domain}") {{\n\n']
     
     for rule in rules:
@@ -41,15 +64,15 @@ def generate_css(domain: str, rules: list[dict[str, str]], mode: str = "producti
 
 def main() -> None:
     print("\n=== Dusky Dynamic Theme Builder ===")
-    raw_domain = input("Enter the website domain (e.g., google.com): ").strip()
+    raw_domain = input("Enter the website domain or paste the URL (e.g., https://arena.ai/): ").strip()
     
-    # [FIX] Replaced A-Z strict regex with \w to safely support Internationalized Domain Names (IDNs)
-    # while continuing to prevent Path Traversal or CSS injection (forbids slashes, quotes, spaces).
-    domain = re.sub(r'[^\w.-]', '', raw_domain)
+    domain = extract_domain(raw_domain)
     
     if not domain:
         print("Valid domain is required. Exiting.")
         return
+        
+    print(f"[*] Targeting domain: {domain}")
 
     collected_rules: list[dict[str, str]] = []
     
@@ -64,7 +87,7 @@ def main() -> None:
         print_menu()
         role_choice = input("Select the role (1-8): ").strip()
         
-        # [FIX] Replaced computationally heavier pattern matching with standard O(1) dictionary lookup
+        # O(1) Dictionary lookup
         if role_choice in ROLES:
             collected_rules.append({
                 "selector": selector,
@@ -102,7 +125,6 @@ def main() -> None:
             cache_dir = Path.home() / ".cache" / "dusky_themer"
             cache_dir.mkdir(parents=True, exist_ok=True)
             
-            # The domain variable is now guaranteed to be safe from traversal characters
             file_path = cache_dir / f"{domain}.css"
             
             try:
@@ -110,7 +132,7 @@ def main() -> None:
                     f.write(production_css)
                 print(f"\n[✓] Success! Production template saved to: {file_path}")
                 print("You can now open your Dusky TUI Manager to enable and deploy it.")
-            except OSError as e:  # [FIX] Use specific OSError instead of catching blind exceptions
+            except OSError as e:
                 print(f"\n[!] Error saving file: {e}")
                 print("Here is your Production Code instead:\n")
                 print(production_css)
@@ -118,6 +140,6 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (KeyboardInterrupt, EOFError):  # [FIX] Added EOFError to prevent crash on Ctrl+D/Piped streams
+    except (KeyboardInterrupt, EOFError):
         print("\n\nExiting Theme Builder. Goodbye!")
         sys.exit(0)
