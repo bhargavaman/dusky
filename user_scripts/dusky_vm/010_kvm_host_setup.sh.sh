@@ -33,7 +33,7 @@ sudo pacman -S --needed --noconfirm \
     qemu-full virt-manager libvirt dnsmasq iptables-nft edk2-ovmf \
     virt-viewer swtpm openbsd-netcat libosinfo
 
-# 3. Modular Daemon Configuration (CRITICAL: Added virtnodedevd and virtproxyd)
+# 3. Modular Daemon Configuration (Added virtnodedevd and virtproxyd)
 log_info "Enabling modern libvirt modular daemons..."
 sudo systemctl mask libvirtd.socket libvirtd-ro.socket libvirtd-admin.socket libvirtd-tls.socket libvirtd-tcp.socket libvirtd.service || true
 sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket virtnodedevd.socket virtproxyd.socket virtsecretd.socket virtnwfilterd.socket
@@ -45,9 +45,10 @@ sudo virsh -c qemu:///system net-autostart default || log_info "Default network 
 sudo virsh -c qemu:///system net-start default || log_info "Default network already running."
 log_success "Network bridging configured."
 
-# 5. User Permissions (Removed dangerous 'disk' group, added 'render' for 3D)
+# 5. User Permissions
 log_info "Granting standard user ($USER) virtualization management permissions..."
-sudo usermod -aG libvirt,kvm,input,render "$USER"
+# Restored 'disk' for raw block passthrough, kept 'render' for 3D acceleration.
+sudo usermod -aG libvirt,kvm,input,disk,render "$USER"
 log_success "Permissions granted. (Re-login required for group changes to fully propagate)."
 
 echo -e "${GREEN}=== Host Virtualization Setup Complete ===${NC}"
