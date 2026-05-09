@@ -6,7 +6,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from textual import work, on, events
+from textual import on, events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, Horizontal
@@ -21,7 +21,6 @@ from textual.theme import Theme
 from textual.timer import Timer
 
 from rich.text import Text
-
 
 # =============================================================================
 # FOR DIOGNOSING ANY ISSUES, VERY IMPORTANT Commands!!
@@ -98,7 +97,6 @@ SCHEMA: dict[int, list[ConfigItem]] = {
     ]
 }
 
-# Auto-hydrate test data
 for i in range(len(TABS)):
     if i not in SCHEMA: SCHEMA[i] = []
     for j in range(len(SCHEMA[i]), 35):
@@ -116,6 +114,8 @@ for i in range(len(TABS)):
 # =============================================================================
 
 class TextInputOverlay(ModalScreen[str | None]):
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
     def __init__(self, prompt: str, default: str) -> None:
         super().__init__()
         self.prompt_text = prompt
@@ -123,8 +123,10 @@ class TextInputOverlay(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-dialog"):
-            yield Label(self.prompt_text, id="modal-title")
-            yield Input(value=self.default_text, id="modal-input")
+            with Vertical(id="modal-content"):
+                yield Label(self.prompt_text, id="modal-title")
+                yield Input(value=self.default_text, id="modal-input")
+                yield Label("Press Enter to save, Escape to cancel", id="modal-hint")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -134,11 +136,16 @@ class TextInputOverlay(ModalScreen[str | None]):
         event.stop()
         self.dismiss(event.value)
         
-    def on_key(self, event: events.Key) -> None:
-        if event.key == "escape":
-            self.dismiss(None)
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 class PickerScreen(ModalScreen[str | None]):
+    BINDINGS = [
+        Binding("up,k", "cursor_up", "Up"),
+        Binding("down,j", "cursor_down", "Down"),
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
     def __init__(self, title: str, options: list[str], hints: list[str]) -> None:
         super().__init__()
         self.picker_title = title
@@ -147,32 +154,36 @@ class PickerScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="picker-dialog"):
-            yield Label(f"PICKER: {self.picker_title}", id="picker-title")
-            
-            list_items = []
-            for i, opt in enumerate(self.options):
-                hint = self.hints[i] if i < len(self.hints) else ""
-                txt = Text()
-                txt.append(opt)
-                if hint:
-                    txt.append(" - ")
-                    txt.append(hint, style=f"italic {THEME['muted']}")
-                list_items.append(ListItem(Label(txt)))
-                
-            yield ListView(*list_items, id="picker-list")
+            with Vertical(id="picker-content"):
+                yield Label(f"PICKER: {self.picker_title}", id="picker-title")
+                yield OptionList(id="picker-list")
+                yield Label("Use ↑/↓ and Enter", id="modal-hint")
 
     def on_mount(self) -> None:
-        self.query_one(ListView).focus()
+        ol = self.query_one(OptionList)
+        for i, opt in enumerate(self.options):
+            hint = self.hints[i] if i < len(self.hints) else ""
+            txt = Text()
+            txt.append(f" {opt} ", style="bold")
+            if hint:
+                txt.append(" - ")
+                txt.append(hint, style=f"italic {THEME['muted']}")
+            ol.add_option(Option(txt))
+            
+        ol.focus()
 
-    @on(ListView.Selected)
-    def on_selected(self, event: ListView.Selected) -> None:
-        idx = self.query_one(ListView).index
-        if idx is not None:
-            self.dismiss(self.options[idx])
+    @on(OptionList.OptionSelected)
+    def on_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self.options[event.option_index])
 
-    def on_key(self, event: events.Key) -> None:
-        if event.key == "escape":
-            self.dismiss(None)
+    def action_cursor_up(self) -> None:
+        self.query_one(OptionList).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one(OptionList).action_cursor_down()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 # =============================================================================
 # INTERACTIVE COMPONENTS
@@ -181,14 +192,42 @@ class PickerScreen(ModalScreen[str | None]):
 class ConfigOptionList(OptionList):
     """Subclassed OptionList with native scroll tracking and cached index."""
     BINDINGS = [
-        Binding("enter", "app.submit_current", "Action")
+        Binding("enter", "app.submit_current", "Action"),
+        Binding("j,down", "cursor_down", "Down"),
+        Binding("k,up", "cursor_up", "Up"),
+        Binding("g", "scroll_top", "Top"),
+        Binding("G", "scroll_bottom", "Bottom"),
+        Binding("h,left,backspace", "app.adjust(-1)", "Adjust Down"),
+        Binding("l,right", "app.adjust(1)", "Adjust Up"),
+        Binding("r", "app.reset_item", "Reset"),
+        Binding("R", "app.reset_all", "Reset Page"),
+        Binding("ctrl+d,page_down", "page_down", "Page Down"),
+        Binding("ctrl+u,page_up", "page_up", "Page Up"),
     ]
     
     last_highlighted_idx: int = 0
     _mouse_down_highlight: int | None = None
+    _last_click_x: int = 0
+
+    def action_scroll_top(self) -> None:
+        self.highlighted = 0
+        
+    def action_scroll_bottom(self) -> None:
+        if self.option_count > 0: self.highlighted = self.option_count - 1
+        
+    def action_page_down(self) -> None:
+        if self.option_count == 0: return
+        idx = self.highlighted if self.highlighted is not None else 0
+        self.highlighted = min(self.option_count - 1, idx + 10)
+        
+    def action_page_up(self) -> None:
+        if self.option_count == 0: return
+        idx = self.highlighted if self.highlighted is not None else 0
+        self.highlighted = max(0, idx - 10)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         self._mouse_down_highlight = self.highlighted
+        self._last_click_x = event.x
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
@@ -297,7 +336,7 @@ class FileLink(Label):
     
     def render(self) -> Text:
         txt = Text()
-        txt.append(" File: ", style=THEME["accent"])
+        txt.append(" 󰈔 File: ", style=THEME["accent"])
         txt.append(self.path, style=THEME["fg"] + " underline")
         txt.append("  (Edit: LMB/RMB- GUI/Neovim)", style=f"italic {THEME['muted']}")
         return txt
@@ -382,7 +421,7 @@ class DuskyApp(App):
     
     .list-wrapper { height: 1fr; }
     ConfigOptionList { width: 1fr; height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
-    ConfigOptionList > .option-list--option { padding: 0 1; background: transparent; }
+    ConfigOptionList > .option-list--option { padding: 0 1; background: transparent; transition: background 150ms linear; }
     ConfigOptionList > .option-list--option-hover { background: $primary 10%; }
     ConfigOptionList > .option-list--option-highlighted { background: $primary 20%; }
     
@@ -401,34 +440,31 @@ class DuskyApp(App):
     #file-link { padding: 0 1; background: transparent; }
     #file-link:hover { text-style: bold; color: $text; background: $primary 25%; }
     
+    /* MODAL STYLING WITH ROUNDED CORNERS - ZERO BLEED TRICK */
     TextInputOverlay, PickerScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
-    #modal-dialog { width: 50; height: 7; background: $background; border: solid $primary; padding: 1 2; }
-    #modal-title { color: $primary; margin-bottom: 1; }
+    
+    #modal-dialog { width: 50; height: auto; background: transparent; border: round $primary; padding: 0; }
+    #modal-content { width: 100%; height: auto; background: $background; padding: 1 2; }
+    
+    #picker-dialog { width: 60; height: 15; background: transparent; border: round $primary; padding: 0; }
+    #picker-content { width: 100%; height: 100%; background: $background; padding: 1 2; }
+    
+    #modal-title, #picker-title { color: $primary; margin-bottom: 1; text-style: bold; border-bottom: solid $secondary; }
+    #modal-hint { color: $secondary; text-style: italic; content-align: center middle; width: 100%; margin-top: 1; }
+    
     Input { border: none; background: transparent; color: $text; border-bottom: solid $primary; }
     Input:focus { border: none; border-bottom: solid $primary; }
     
-    #picker-dialog { width: 60; height: 15; background: $background; border: solid $primary; padding: 1 2; }
-    #picker-title { color: $primary; margin-bottom: 1; text-style: bold; border-bottom: solid $secondary; }
     #picker-list { height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
-    #picker-list > ListItem { height: 1; background: transparent; }
-    #picker-list > ListItem.-highlight { background: $primary 20%; }
-    #picker-footer { color: $primary; margin-top: 1; }
+    #picker-list > .option-list--option { padding: 0 1; background: transparent; transition: background 100ms linear; }
+    #picker-list > .option-list--option-hover { background: $primary 10%; }
+    #picker-list > .option-list--option-highlighted { background: $primary 20%; color: $text; text-style: bold; }
     """
 
     BINDINGS = [
         Binding("q,ctrl+c", "quit", "Quit", priority=True),
         Binding("tab", "next_tab", "Next Tab", priority=True),
         Binding("shift+tab", "prev_tab", "Prev Tab", priority=True),
-        Binding("j,down", "cursor_down", "Down", priority=True),
-        Binding("k,up", "cursor_up", "Up", priority=True),
-        Binding("g", "scroll_top", "Top", priority=True),
-        Binding("G", "scroll_bottom", "Bottom", priority=True),
-        Binding("h,left,backspace", "adjust(-1)", "Adjust Down", priority=True),
-        Binding("l,right", "adjust(1)", "Adjust Up", priority=True),
-        Binding("r", "reset_item", "Reset", priority=True),
-        Binding("R", "reset_all", "Reset Page", priority=True),
-        Binding("ctrl+d,page_down", "page_down", "Page Down", priority=True),
-        Binding("ctrl+u,page_up", "page_up", "Page Up", priority=True),
         Binding("alt+1", "switch_tab(0)", "Tab 1", show=False),
         Binding("alt+2", "switch_tab(1)", "Tab 2", show=False),
         Binding("alt+3", "switch_tab(2)", "Tab 3", show=False),
@@ -466,25 +502,34 @@ class DuskyApp(App):
         
         val_str = str(item.value)
         def_str = str(item.default)
-        dot_color = THEME["error"] if val_str != def_str else THEME["muted"]
         
-        txt.append("●", style=dot_color)
-        txt.append(" : ")
-        
-        match item.type_:
-            case "bool":
-                txt.append("ON" if item.value else "OFF", style=THEME["accent"] if item.value else THEME["muted"])
-            case "string":
-                if val_str == "":
-                    txt.append("[✎] Unset", style=f"italic {THEME['muted']}")
-                else:
-                    txt.append(f"[✎] {val_str}", style=THEME["accent"])
-            case "action":
-                txt.append("▶ press Enter", style=THEME["accent"])
-            case "picker":
-                txt.append(f"[+] {val_str}", style=THEME["accent"])
-            case _:
-                txt.append(val_str, style=THEME["fg"])
+        if item.type_ == "action":
+            # For actions, hide the dot entirely and use spacing to align properly
+            txt.append("   ")
+            txt.append("⚡ Execute Action", style=f"bold {THEME['warning']}")
+        else:
+            is_modified = val_str != def_str
+            dot_color = THEME["error"] if is_modified else THEME["muted"]
+            txt.append("●  ", style=dot_color)
+            
+            match item.type_:
+                case "bool":
+                    if item.value:
+                        txt.append(" ◉ ON  ", style=f"bold {THEME['bg']} on {THEME['success']}")
+                    else:
+                        txt.append(" ◯ OFF ", style=f"{THEME['muted']} on {THEME['bg']}")
+                case "string":
+                    if val_str == "":
+                        txt.append("[✎] Unset", style=f"italic {THEME['muted']}")
+                    else:
+                        txt.append(f"[✎] {val_str}", style=THEME["accent"])
+                case "picker":
+                    txt.append(f"[+] {val_str}", style=THEME["accent"])
+                case _:
+                    txt.append(val_str, style=THEME["fg"])
+                    
+            if is_modified and is_highlighted:
+                txt.append("   ↩ Reset", style=f"italic {THEME['error']}")
                 
         return txt
 
@@ -653,33 +698,6 @@ class DuskyApp(App):
         if 0 <= index < len(TABS):
             tc = self.query_one(TabbedContent)
             tc.active = f"tab-{index}"
-            
-    def action_cursor_down(self) -> None: 
-        if ol := self.current_option_list: ol.action_cursor_down()
-            
-    def action_cursor_up(self) -> None: 
-        if ol := self.current_option_list: ol.action_cursor_up()
-            
-    def action_scroll_top(self) -> None: 
-        if ol := self.current_option_list:
-            ol.highlighted = 0
-    
-    def action_scroll_bottom(self) -> None:
-        if ol := self.current_option_list:
-            if ol.option_count > 0:
-                ol.highlighted = ol.option_count - 1
-            
-    def action_page_down(self) -> None:
-        if ol := self.current_option_list:
-            if ol.option_count == 0: return
-            idx = ol.highlighted if ol.highlighted is not None else 0
-            ol.highlighted = min(ol.option_count - 1, idx + 10)
-        
-    def action_page_up(self) -> None:
-        if ol := self.current_option_list:
-            if ol.option_count == 0: return
-            idx = ol.highlighted if ol.highlighted is not None else 0
-            ol.highlighted = max(0, idx - 10)
 
     def action_adjust(self, direction: int) -> None:
         ol = self.current_option_list
@@ -757,6 +775,21 @@ class DuskyApp(App):
         except (AttributeError, IndexError, ValueError, KeyError):
             return
             
+        is_modified = str(item.value) != str(item.default)
+        
+        # Smart detection for clicking the "Reset" string on the right margin
+        if is_modified and item.type_ != "action":
+            val_str = str(item.value)
+            if item.type_ == "bool": threshold = 47
+            elif item.type_ in ("string", "picker"): threshold = 44 + len(val_str)
+            else: threshold = 40 + len(val_str)
+            
+            if getattr(ol, "_last_click_x", 0) >= threshold:
+                item.value = item.default
+                ol.replace_option_prompt_at_index(index, self._build_option(item, True))
+                self.notify_status(f"Reset {item.label}")
+                return
+                
         match item.type_:
             case "bool" | "cycle": 
                 self.action_adjust(1)
@@ -765,39 +798,42 @@ class DuskyApp(App):
             case "action":
                 if item.key == "demo_sudo":
                     self.notify_status("Acquiring Sudo... Simulated daemon restart.")
+                else:
+                    self.notify_status(f"Executed: {item.label}")
             case "picker": 
                 self.prompt_picker(ol, tab_idx, index, item)
 
-    @work
-    async def prompt_string(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
-        new_val = await self.push_screen(TextInputOverlay(f"Enter new {item.label}:", str(item.value)))
-        if new_val is not None:
-            if item.type_ == "int":
-                try: 
-                    new_val = int(new_val)
-                except ValueError: 
-                    self.notify_status("Error: Value must be an integer.")
-                    return
-            elif item.type_ == "float":
-                try: 
-                    new_val = float(new_val)
-                except ValueError: 
-                    self.notify_status("Error: Value must be a float.")
-                    return
-                    
-            item.value = new_val
-            is_hl = (item_idx == ol.highlighted)
-            ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
-            self.notify_status(f"Written: {item.label} = {new_val}")
+    def prompt_string(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+        def check_reply(new_val: str | None) -> None:
+            if new_val is not None:
+                if item.type_ == "int":
+                    try: new_val = int(new_val)
+                    except ValueError: 
+                        self.notify_status("Error: Value must be an integer.")
+                        return
+                elif item.type_ == "float":
+                    try: new_val = float(new_val)
+                    except ValueError: 
+                        self.notify_status("Error: Value must be a float.")
+                        return
+                        
+                item.value = new_val
+                is_hl = (item_idx == ol.highlighted)
+                ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
+                self.notify_status(f"Written: {item.label} = {new_val}")
+                
+        self.push_screen(TextInputOverlay(f"Enter new {item.label}:", str(item.value)), check_reply)
 
-    @work
-    async def prompt_picker(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
-        new_val = await self.push_screen(PickerScreen(item.label, item.options, item.hints))
-        if new_val is not None:
-            item.value = new_val
-            is_hl = (item_idx == ol.highlighted)
-            ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
-            self.notify_status(f"Selected: {new_val}")
+    def prompt_picker(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+        def check_reply(new_val: str | None) -> None:
+            if new_val is not None:
+                item.value = new_val
+                is_hl = (item_idx == ol.highlighted)
+                ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
+                self.notify_status(f"Selected: {new_val}")
+                
+        self.push_screen(PickerScreen(item.label, item.options, item.hints), check_reply)
+
 
 if __name__ == "__main__":
     app = DuskyApp()
