@@ -224,7 +224,7 @@ refresh_hardware() {
     done
 
     local vfr_status
-    vfr_status=$(hyprctl getoption misc:vfr -j 2>/dev/null | jq -r '.int' 2>/dev/null) || vfr_status="1"
+    vfr_status=$(hyprctl getoption debug:vfr -j 2>/dev/null | jq -r '.int' 2>/dev/null) || vfr_status="1"
     GLB_VFR=$vfr_status
 
     local json
@@ -368,11 +368,11 @@ save_config() {
         printf '\n# Global Settings\n'
 
         if (( GLB_VFR == 1 )); then
-            printf 'misc {\n    vfr = true\n}\n'
-            batch_cmd+="keyword misc:vfr 1 ; "
+            printf 'debug {\n    vfr = true\n}\n'
+            batch_cmd+="keyword debug:vfr 1 ; "
         else
-            printf 'misc {\n    vfr = false\n}\n'
-            batch_cmd+="keyword misc:vfr 0 ; "
+            printf 'debug {\n    vfr = false\n}\n'
+            batch_cmd+="keyword debug:vfr 0 ; "
         fi
 
         printf '\n# Monitor Rules\n'
