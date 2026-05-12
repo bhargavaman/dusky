@@ -5,6 +5,7 @@ import json
 import subprocess
 import colorsys
 import shlex
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -638,28 +639,40 @@ class DuskyTUI(App):
 
     def _build_option(self, item: ConfigItem, is_highlighted: bool = False) -> Text:
         txt = Text()
+        exists = getattr(item, "exists_in_target", True)
         
         CURSOR_CHAR = "▶"
         cursor = f"{CURSOR_CHAR} " if is_highlighted else "  "
         txt.append(cursor, style=f"{self.theme_colors['accent']} bold" if is_highlighted else "")
         
-        label_style = f"{self.theme_colors['fg']} bold" if is_highlighted else self.theme_colors["fg"]
-        txt.append(f"{item.label:<35}", style=label_style)
+        if exists:
+            label_style = f"{self.theme_colors['fg']} bold" if is_highlighted else self.theme_colors["fg"]
+            label_text = f"{item.label:<35}"
+        else:
+            label_style = f"{self.theme_colors['muted']} strike" if not is_highlighted else f"{self.theme_colors['muted']} strike bold"
+            label_text = f"{item.label + ' [Missing]':<35}"
+            
+        txt.append(label_text, style=label_style)
         
         val_str = str(item.value)
         def_str = str(item.default)
         
         if item.type_ == "action":
             txt.append("   ")
-            txt.append("⚡ Execute Action", style=f"bold {self.theme_colors['warning']}")
+            txt.append("⚡ Execute Action", style=f"bold {self.theme_colors['warning']}" if exists else f"{self.theme_colors['muted']} italic")
         else:
             is_modified = val_str != def_str
-            dot_color = self.theme_colors["error"] if is_modified else self.theme_colors["muted"]
+            dot_color = self.theme_colors["error"] if (is_modified and exists) else self.theme_colors["muted"]
             txt.append("●  ", style=dot_color)
+            
+            accent = self.theme_colors["accent"] if exists else self.theme_colors["muted"]
+            fg = self.theme_colors["fg"] if exists else self.theme_colors["muted"]
             
             match item.type_:
                 case "bool":
-                    if item.value:
+                    if not exists:
+                        txt.append(f" {'◉ ON' if item.value else '◯ OFF'} ", style=f"{self.theme_colors['muted']} italic")
+                    elif item.value:
                         txt.append(" ◉ ON  ", style=f"bold {self.theme_colors['bg']} on {self.theme_colors['success']}")
                     else:
                         txt.append(" ◯ OFF ", style=f"{self.theme_colors['muted']} on {self.theme_colors['bg']}")
@@ -667,19 +680,19 @@ class DuskyTUI(App):
                     if val_str == "":
                         txt.append("[✎] Unset", style=f"italic {self.theme_colors['muted']}")
                     else:
-                        txt.append(f"[✎] {val_str}", style=self.theme_colors["accent"])
+                        txt.append(f"[✎] {val_str}", style=accent)
                 case "picker":
-                    txt.append(f"[+] {val_str}", style=self.theme_colors["accent"])
+                    txt.append(f"[+] {val_str}", style=accent)
                 case "color":
                     r, g, b = color_to_rgb(val_str)
                     hex_color = f"#{r:02x}{g:02x}{b:02x}"
                     color_name = get_color_name(r, g, b)
-                    txt.append(" ⬤ ", style=hex_color)
-                    txt.append(f"{color_name}", style=self.theme_colors["accent"])
+                    txt.append(" ⬤ ", style=hex_color if exists else self.theme_colors["muted"])
+                    txt.append(f"{color_name}", style=accent)
                 case _:
-                    txt.append(val_str, style=self.theme_colors["fg"])
+                    txt.append(val_str, style=fg)
                     
-            if is_modified and is_highlighted:
+            if is_modified and is_highlighted and exists:
                 txt.append("   ↩ Reset", style=f"italic {self.theme_colors['error']}")
                 
         return txt
@@ -703,6 +716,7 @@ class DuskyTUI(App):
                 for idx, item in enumerate(items):
                     cache_key = f"{item.scope}/{item.key}" if item.scope else item.key
                     if cache_key in state:
+                        item.exists_in_target = True
                         raw_val = state[cache_key]
                         if item.type_ == "bool":
                             item.value = (raw_val == "true")
@@ -710,11 +724,12 @@ class DuskyTUI(App):
                             try:
                                 item.value = float(raw_val) if item.type_ == "float" else int(float(raw_val))
                             except ValueError: pass
-                        # FIXED: "color" strings must also have their engine quotes stripped
                         elif item.type_ in ("string", "picker", "cycle", "color"):
                             item.value = raw_val[1:-1] if raw_val.startswith('"') and raw_val.endswith('"') else raw_val
                         else:
                             item.value = raw_val
+                    else:
+                        item.exists_in_target = False
                             
                 options = [Option(self._build_option(item, is_highlighted=(idx == 0)), id=f"item_{i}_{idx}") for idx, item in enumerate(items)]
                 ol.add_options(options)
@@ -922,6 +937,7 @@ class DuskyTUI(App):
         success, msg, _ = self.engine.write_value(item.key, item.scope, val_str)
         if success:
             item.value = new_val
+            item.exists_in_target = True
             self.notify_status(f"Updated {item.label}")
             return True
         self.notify_status(f"Error: {msg}")
@@ -1018,6 +1034,16 @@ class DuskyTUI(App):
             except Exception:
                 pass
 
+    def play_reset_sound(self) -> None:
+        sound_path = "/usr/share/sounds/freedesktop/stereo/dialog-information.oga"
+        if Path(sound_path).exists():
+            player = shutil.which("pw-play") or shutil.which("paplay") or shutil.which("mpv")
+            if player:
+                cmd = [player, sound_path]
+                if player.endswith("mpv"):
+                    cmd.extend(["--no-video", "--really-quiet"])
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     def action_reset_all(self) -> None:
         try:
             switcher = self.query_one(ContentSwitcher)
@@ -1038,6 +1064,9 @@ class DuskyTUI(App):
                     
             if success_count > 0:
                 self.notify_status(f"Reset {success_count} items in {self.tabs[tab_idx]}")
+            
+            self.play_reset_sound()
+                
         except Exception:
             pass
 

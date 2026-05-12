@@ -19,6 +19,7 @@ class ConfigItem:
     max_val: float | None = None
     step: float | None = None
     value: Any = None
+    exists_in_target: bool = False
 
     def __post_init__(self) -> None:
         if self.value is None:
