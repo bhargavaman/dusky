@@ -48,14 +48,52 @@ SCHEMA = {
     0: [
         # TAB 1 ITEMS
         # Valid type_ strings: "bool", "int", "float", "string", "cycle", "action", "picker", "color"
-        ConfigItem(label="Example Bool", key="your_key", scope="your/scope", type_="bool", default=False),
-        ConfigItem(label="Example Int", key="your_key2", scope="your/scope", type_="int", default=10, min_val=0, max_val=100, step=5),
-        ConfigItem(label="Example Color", key="color_key", scope="your/scope", type_="color", default="rgb(255, 255, 255)"),
+        ConfigItem(
+            label="Example Bool", 
+            key="your_key", 
+            scope="your/scope", 
+            type_="bool", 
+            default=False,
+            group="Category Name", # (Optional) Chunk items under headers
+            extended_help="**Example Bool**\n\nThis is an example of extended documentation. You can format it with Markdown." # (Optional) Shows in [?] panel
+        ),
+        ConfigItem(
+            label="Example Int", 
+            key="your_key2", 
+            scope="your/scope", 
+            type_="int", 
+            default=10, 
+            min_val=0, 
+            max_val=100, 
+            step=5,
+            group="Category Name"
+        ),
+        ConfigItem(
+            label="Example Color", 
+            key="color_key", 
+            scope="your/scope", 
+            type_="color", 
+            default="rgb(255, 255, 255)",
+            group="Category Name"
+        ),
     ],
     1: [
         # TAB 2 ITEMS
-        ConfigItem(label="Example String", key="your_key3", scope="your/scope2", type_="string", default="default_text"),
-        ConfigItem(label="Example Picker", key="your_key4", scope="your/scope2", type_="picker", default="Option A", options=["Option A", "Option B"]),
+        ConfigItem(
+            label="Example String", 
+            key="your_key3", 
+            scope="your/scope2", 
+            type_="string", 
+            default="default_text"
+        ),
+        ConfigItem(
+            label="Example Picker", 
+            key="your_key4", 
+            scope="your/scope2", 
+            type_="picker", 
+            default="Option A", 
+            options=["Option A", "Option B"]
+        ),
     ]
 }
 
@@ -73,6 +111,10 @@ if __name__ == "__main__":
     
     # --- 3. SET WINDOW TITLE ---
     APP_TITLE = "My Custom Configurator"
+    
+    # --- 4. SET DEFAULT SAVE MODE ---
+    # Options: "auto" (saves instantly on change) or "batch" (requires explicit save)
+    DEFAULT_MODE = "auto"
 
     # -------------------------------------------------------------------------
     # Do not edit below this line
@@ -84,7 +126,8 @@ if __name__ == "__main__":
         schema=SCHEMA, 
         tabs=TABS, 
         title=APP_TITLE,
-        theme_path=THEME_FILE
+        theme_path=THEME_FILE,
+        default_mode=DEFAULT_MODE
     )
     
     app.run()

@@ -6,15 +6,17 @@ import subprocess
 import colorsys
 import shlex
 import shutil
+import asyncio
 from pathlib import Path
 from typing import Any
+from collections import deque
 
 from textual import on, events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, Horizontal
-from textual.widgets import Label, Input, Tabs, Tab, ContentSwitcher, OptionList
-from textual.widgets.option_list import Option
+from textual.widgets import Label, Input, Tabs, Tab, ContentSwitcher, OptionList, Markdown
+from textual.widgets.option_list import Option, OptionDoesNotExist
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from textual.theme import Theme
@@ -23,6 +25,18 @@ from textual.timer import Timer
 from rich.text import Text
 
 from python.frontend.core_types import ConfigItem, BaseEngine
+
+# =============================================================================
+# GLOBAL CACHE & REGEX COMPILE (Optimization)
+# =============================================================================
+
+_AUDIO_PLAYER_CACHE: str | None = None
+
+_RE_RGB = re.compile(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)")
+_RE_HSL = re.compile(r"hsla?\(\s*([\d.]+)\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?")
+_RE_OKLCH = re.compile(r"oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)")
+_RE_RGBA_ALPHA = re.compile(r"rgba\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)")
+_RE_HSLA_ALPHA = re.compile(r"hsla\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)")
 
 # =============================================================================
 # COLOR UTILITIES
@@ -72,16 +86,16 @@ def color_to_rgb(val: str) -> tuple[int, int, int]:
             try: return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
             except ValueError: pass
     
-    m_rgb = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", val)
+    m_rgb = _RE_RGB.match(val)
     if m_rgb: return (int(m_rgb.group(1)), int(m_rgb.group(2)), int(m_rgb.group(3)))
         
-    m_hsl = re.match(r"hsla?\(\s*([\d.]+)\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?", val)
+    m_hsl = _RE_HSL.match(val)
     if m_hsl:
         h, s, l_ = float(m_hsl.group(1))/360.0, float(m_hsl.group(2))/100.0, float(m_hsl.group(3))/100.0
         r, g, b = colorsys.hls_to_rgb(h, l_, s)
         return (int(r*255), int(g*255), int(b*255))
         
-    m_oklch = re.match(r"oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)", val)
+    m_oklch = _RE_OKLCH.match(val)
     if m_oklch:
         l_val, c_val, h_val = float(m_oklch.group(1)), float(m_oklch.group(2)), float(m_oklch.group(3))
         r, g, b = colorsys.hls_to_rgb(h_val/360.0, l_val, min(c_val*2.5, 1.0))
@@ -115,7 +129,7 @@ def format_rgb(color_name: str, fmt: str, original_val: str) -> str:
         
     if fmt == "rgba":
         alpha = "1.0"
-        m = re.search(r"rgba\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)", original_val)
+        m = _RE_RGBA_ALPHA.search(original_val)
         if m: alpha = m.group(1)
         return f"rgba({r}, {g}, {b}, {alpha})"
         
@@ -125,7 +139,7 @@ def format_rgb(color_name: str, fmt: str, original_val: str) -> str:
         if fmt == "hsl": return f"hsl({h_deg}, {s_pct}%, {l_pct}%)"
         else:
             alpha = "1.0"
-            m = re.search(r"hsla\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)", original_val)
+            m = _RE_HSLA_ALPHA.search(original_val)
             if m: alpha = m.group(1)
             return f"hsla({h_deg}, {s_pct}%, {l_pct}%, {alpha})"
             
@@ -152,7 +166,7 @@ def load_matugen_json(file_path: Path) -> dict[str, str] | None:
 # =============================================================================
 
 class TextInputOverlay(ModalScreen[str | None]):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
 
     def __init__(self, prompt: str, default: str) -> None:
         super().__init__()
@@ -164,7 +178,8 @@ class TextInputOverlay(ModalScreen[str | None]):
             with Vertical(id="modal-content"):
                 yield Label(self.prompt_text, id="modal-title")
                 yield Input(value=self.default_text, id="modal-input")
-                yield Label("Press Enter to save, Escape to cancel", id="modal-hint")
+                yield Label("Press Enter to save", id="modal-hint")
+                yield Label("  [ Cancel ]  ", classes="modal-close-btn")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -176,12 +191,21 @@ class TextInputOverlay(ModalScreen[str | None]):
         
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    @on(events.Click, ".modal-close-btn")
+    def on_close_click(self) -> None:
+        self.dismiss(None)
+        
+    @on(events.Click)
+    def on_background_click(self, event: events.Click) -> None:
+        if event.control is self:
+            self.dismiss(None)
 
 class PickerScreen(ModalScreen[str | None]):
     BINDINGS = [
         Binding("up,k", "cursor_up", "Up"),
         Binding("down,j", "cursor_down", "Down"),
-        Binding("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Cancel", priority=True),
     ]
 
     def __init__(self, title: str, options: list[str], hints: list[str]) -> None:
@@ -195,10 +219,11 @@ class PickerScreen(ModalScreen[str | None]):
             with Vertical(id="picker-content"):
                 yield Label(f"PICKER: {self.picker_title}", id="picker-title")
                 yield OptionList(id="picker-list")
-                yield Label("Use ↑/↓ and Enter", id="modal-hint")
+                yield Label("  [ Cancel ]  ", classes="modal-close-btn")
 
     def on_mount(self) -> None:
         ol = self.query_one(OptionList)
+        options_to_add = []
         for i, opt in enumerate(self.options):
             hint = self.hints[i] if i < len(self.hints) else ""
             txt = Text()
@@ -206,8 +231,9 @@ class PickerScreen(ModalScreen[str | None]):
             if hint:
                 txt.append(" - ")
                 txt.append(hint, style=f"italic {self.app.theme_colors['muted']}")
-            ol.add_option(Option(txt))
+            options_to_add.append(Option(txt))
             
+        ol.add_options(options_to_add)
         ol.focus()
 
     @on(OptionList.OptionSelected)
@@ -216,11 +242,22 @@ class PickerScreen(ModalScreen[str | None]):
 
     def action_cursor_up(self) -> None: self.query_one(OptionList).action_cursor_up()
     def action_cursor_down(self) -> None: self.query_one(OptionList).action_cursor_down()
-    def action_cancel(self) -> None: self.dismiss(None)
+    
+    def action_cancel(self) -> None: 
+        self.dismiss(None)
+        
+    @on(events.Click, ".modal-close-btn")
+    def on_close_click(self) -> None:
+        self.dismiss(None)
+        
+    @on(events.Click)
+    def on_background_click(self, event: events.Click) -> None:
+        if event.control is self:
+            self.dismiss(None)
 
 class SearchScreen(ModalScreen[tuple[int, int] | None]):
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("down,j", "cursor_down", "Down"),
         Binding("up,k", "cursor_up", "Up"),
     ]
@@ -231,10 +268,18 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
                 yield Label("FUZZY FIND (Ctrl+F)", id="modal-title")
                 yield Input(placeholder="Type to filter configurations...", id="search-input")
                 yield OptionList(id="search-list")
-                yield Label("Use ↑/↓ and Enter to jump, Escape to cancel", id="modal-hint")
+                yield Label("  [ Cancel ]  ", classes="modal-close-btn")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
+        
+        self._search_cache = []
+        for tab_idx, tab_items in self.app.schema.items():
+            tab_name = self.app.tabs[tab_idx] if tab_idx < len(self.app.tabs) else f"Tab {tab_idx}"
+            for item_idx, item in enumerate(tab_items):
+                haystack = f"{tab_name} {item.label} {item.key} {item.type_}".lower().replace(" ", "")
+                self._search_cache.append((tab_idx, item_idx, item, tab_name, haystack))
+                
         self._populate_list("")
 
     @on(Input.Changed)
@@ -247,28 +292,27 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
         self.results = []
         
         query = query.lower().replace(" ", "")
+        options_to_add = []
         
-        for tab_idx, tab_items in self.app.schema.items():
-            tab_name = self.app.tabs[tab_idx] if tab_idx < len(self.app.tabs) else f"Tab {tab_idx}"
-            for item_idx, item in enumerate(tab_items):
-                search_text = f"{tab_name} {item.label} {item.key} {item.type_}".lower()
+        for tab_idx, item_idx, item, tab_name, haystack in self._search_cache:
+            match = True
+            if query:
+                q_idx, s_idx = 0, 0
+                while q_idx < len(query) and s_idx < len(haystack):
+                    if query[q_idx] == haystack[s_idx]: q_idx += 1
+                    s_idx += 1
+                match = (q_idx == len(query))
+            
+            if match:
+                txt = Text()
+                txt.append(f"[{tab_name}] ", style=self.app.theme_colors["accent"])
+                txt.append(item.label, style="bold")
+                if item.hints:
+                    txt.append(f" - {item.hints[0]}", style=f"italic {self.app.theme_colors['muted']}")
+                options_to_add.append(Option(txt, id=f"search_{tab_idx}_{item_idx}"))
+                self.results.append((tab_idx, item_idx))
                 
-                match = True
-                if query:
-                    q_idx, s_idx = 0, 0
-                    while q_idx < len(query) and s_idx < len(search_text):
-                        if query[q_idx] == search_text[s_idx]: q_idx += 1
-                        s_idx += 1
-                    match = (q_idx == len(query))
-                
-                if match:
-                    txt = Text()
-                    txt.append(f"[{tab_name}] ", style=self.app.theme_colors["accent"])
-                    txt.append(item.label, style="bold")
-                    if item.hints:
-                        txt.append(f" - {item.hints[0]}", style=f"italic {self.app.theme_colors['muted']}")
-                    ol.add_option(Option(txt))
-                    self.results.append((tab_idx, item_idx))
+        ol.add_options(options_to_add)
 
     @on(OptionList.OptionSelected)
     def on_selected(self, event: OptionList.OptionSelected) -> None:
@@ -284,7 +328,61 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
 
     def action_cursor_down(self) -> None: self.query_one(OptionList).action_cursor_down()
     def action_cursor_up(self) -> None: self.query_one(OptionList).action_cursor_up()
-    def action_cancel(self) -> None: self.dismiss(None)
+    
+    def action_cancel(self) -> None: 
+        self.dismiss(None)
+        
+    @on(events.Click, ".modal-close-btn")
+    def on_close_click(self) -> None:
+        self.dismiss(None)
+
+    @on(events.Click)
+    def on_background_click(self, event: events.Click) -> None:
+        if event.control is self:
+            self.dismiss(None)
+
+class DiffScreen(ModalScreen[None]):
+    BINDINGS = [Binding("escape", "cancel", "Close", priority=True)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="diff-dialog"):
+            with Vertical(id="diff-content"):
+                yield Label("MODIFICATIONS (From Launch)", id="modal-title")
+                yield OptionList(id="diff-list")
+                yield Label("  [ Close ]  ", classes="modal-close-btn")
+
+    def on_mount(self) -> None:
+        ol = self.query_one(OptionList)
+        added_any = False
+        
+        for tab_idx, tab_items in self.app.schema.items():
+            for item in tab_items:
+                str_val = str(item.value)
+                str_init = str(item.initial_value)
+                if str_val != str_init:
+                    added_any = True
+                    txt = Text()
+                    txt.append(f"[{self.app.tabs[tab_idx]}] ", style=self.app.theme_colors["accent"])
+                    txt.append(f"{item.label}: ", style="bold")
+                    txt.append(f"{str_init} ", style=f"strike {self.app.theme_colors['error']}")
+                    txt.append("➜ ", style=self.app.theme_colors["muted"])
+                    txt.append(f"{str_val}", style=f"bold {self.app.theme_colors['success']}")
+                    ol.add_option(Option(txt, disabled=True))
+                    
+        if not added_any:
+            ol.add_option(Option("No changes detected from initial load state.", disabled=True))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+        
+    @on(events.Click, ".modal-close-btn")
+    def on_close_click(self) -> None:
+        self.dismiss(None)
+
+    @on(events.Click)
+    def on_background_click(self, event: events.Click) -> None:
+        if event.control is self:
+            self.dismiss(None)
 
 # =============================================================================
 # INTERACTIVE COMPONENTS
@@ -305,7 +403,7 @@ class ConfigOptionList(OptionList):
         Binding("ctrl+u,page_up", "page_up", "Page Up"),
     ]
     
-    last_highlighted_idx: int = 0
+    last_highlighted_id: str | None = None
     _mouse_down_highlight: int | None = None
     _last_click_x: int = 0
 
@@ -326,11 +424,17 @@ class ConfigOptionList(OptionList):
         self._last_click_x = event.x
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        super().watch_scroll_y(old_value, new_value)
-        if hasattr(self.app, "_update_scroll_indicators"): self.app._update_scroll_indicators()
+        if hasattr(super(), "watch_scroll_y"):
+            super().watch_scroll_y(old_value, new_value)
+        if hasattr(self.app, "_update_scroll_indicators"): 
+            self.app._update_scroll_indicators()
+            
     def watch_max_scroll_y(self, old_value: float, new_value: float) -> None:
-        super().watch_max_scroll_y(old_value, new_value)
-        if hasattr(self.app, "_update_scroll_indicators"): self.app._update_scroll_indicators()
+        if hasattr(super(), "watch_max_scroll_y"):
+            super().watch_max_scroll_y(old_value, new_value)
+        if hasattr(self.app, "_update_scroll_indicators"): 
+            self.app._update_scroll_indicators()
+            
     def on_resize(self, event: events.Resize) -> None:
         if hasattr(self.app, "_update_scroll_indicators"): self.app._update_scroll_indicators()
 
@@ -354,12 +458,17 @@ class ScrollIndicator(Label):
         max_pos = self._track_height - thumb_size
         pos = int((scroll_y / max_scroll_y) * max_pos) if max_scroll_y > 0 else 0
             
+        lines = ["▲"]
+        lines.extend(["│"] * pos)
+        lines.extend(["█"] * thumb_size)
+        lines.extend(["│"] * (self._track_height - pos - thumb_size))
+        lines.append("▼")
+        
         txt = Text()
-        txt.append("▲\n", style="bold")
-        for i in range(self._track_height):
-            if pos <= i < pos + thumb_size: txt.append("█\n")
-            else: txt.append("│\n", style="dim")
-        txt.append("▼", style="bold")
+        for i, char in enumerate(lines):
+            style = "bold" if char in ("▲", "▼") else ("dim" if char == "│" else "")
+            txt.append(char + ("\n" if i < len(lines)-1 else ""), style=style)
+            
         self.update(txt)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
@@ -410,15 +519,16 @@ class Shortcut(Label):
         if self.action_name: await self.app.run_action(self.action_name)
 
 class FileLink(Label):
-    # FIXED: Path must be reactive so it successfully re-renders when updated in on_mount
     path = reactive("")
     
     def render(self) -> Text:
         txt = Text()
-        txt.append(" 󰈔 File: ", style=self.app.theme_colors["accent"])
-        txt.append(self.path, style=self.app.theme_colors["fg"] + " underline")
-        txt.append("  (Edit: LMB/RMB- GUI/Terminal)", style=f"italic {self.app.theme_colors['muted']}")
+        txt.append(" 󰈔 Edit File ", style=self.app.theme_colors["accent"] + " bold underline")
         return txt
+        
+    def watch_path(self, new_val: str) -> None:
+        if new_val:
+            self.tooltip = f"Edit externally:\n{new_val}"
         
     def on_click(self, event: events.Click) -> None:
         if not self.path: return
@@ -447,30 +557,39 @@ class AppFooter(Vertical):
     status_msg = reactive("")
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="footer-controls"):
+        with Horizontal(id="footer-row-1"):
+            yield Shortcut("ctrl+s", "Batch Save", "save_batch")
+            yield Shortcut("d", "Diff", "show_diff")
+            yield Shortcut("u", "Undo", "undo")
+            yield Shortcut("?", "Help", "toggle_help")
+            yield Shortcut("ctrl+t", "Toggle Mode", "toggle_save_mode")
+
+        with Horizontal(id="footer-row-2"):
+            yield Shortcut("/", "Jump", "focus_local_search")
+            yield Shortcut("ctrl+f", "Search", "search")
             yield Shortcut("r", "Reset Item", "reset_item")
             yield Shortcut("R", "Reset Page", "reset_all")
-            yield Shortcut("ctrl+f", "Search", "search")
             yield Shortcut("q", "Quit", "quit")
-            yield Label("", id="footer-legend")
-
-        with Horizontal(id="footer-bottom-row"):
-            yield Label("", id="status-bar")
+            
+        with Horizontal(id="footer-row-3"):
             yield FileLink(id="file-link")
+            yield Label(" │ ", classes="footer-sep")
+            yield Label("", id="footer-legend")
+            yield Label("", id="status-bar")
 
     def watch_status_msg(self, new_val: str) -> None:
-        for bar in self.query("#status-bar"):
-            for link in self.query("#file-link"):
+        try:
+            for bar in self.query("#status-bar"):
                 if new_val:
                     txt = Text()
-                    txt.append(" Status: ", style=self.app.theme_colors["accent"])
+                    txt.append(" │ Status: ", style=self.app.theme_colors["accent"])
                     txt.append(new_val, style=self.app.theme_colors["error"])
                     bar.update(txt)
                     bar.display = True
-                    link.display = False
                 else:
                     bar.display = False
-                    link.display = True
+        except Exception:
+            pass
 
 # =============================================================================
 # MAIN APPLICATION
@@ -490,39 +609,38 @@ class DuskyTUI(App):
         border-subtitle-style: bold;
         border-subtitle-align: right;
         background: transparent;
-        padding: 0 1;
+        padding: 0 1 1 1; /* Padded from the bottom edges */
     }
     
     #tab-bar {
-        width: 100%;
-        height: 1;
-        margin-bottom: 1;
-        background: transparent;
+        width: 100%; height: 1; margin-bottom: 1; background: transparent;
     }
     
     #tabs-container {
-        width: 1fr;
-        height: 1;
-        overflow-x: auto;
-        scrollbar-size: 0 0;
+        width: 1fr; height: 1; overflow-x: auto; scrollbar-size: 0 0;
     }
     
     .tab-arrow {
-        width: 3;
-        height: 1;
-        content-align: center middle;
-        background: $background;
-        color: $primary;
-        text-style: bold;
-        display: none;
+        width: 3; height: 1; content-align: center middle;
+        background: $background; color: $primary; text-style: bold; display: none;
+    }
+    .tab-arrow:hover { color: $text; background: $primary 25%; }
+    
+    #content-area { height: 1fr; layout: horizontal; }
+    
+    ContentSwitcher { width: 1fr; height: 1fr; background: transparent; }
+    
+    #help-panel {
+        width: 35%; height: 100%;
+        min-width: 25; /* Prevents text wrap crashes */
+        border-left: solid $primary;
+        display: none; background: $background;
+        padding: 1 2;
+        overflow-y: auto;
     }
     
-    .tab-arrow:hover {
-        color: $text;
-        background: $primary 25%;
-    }
-    
-    ContentSwitcher { height: 1fr; background: transparent; }
+    #content-area.-show-help ContentSwitcher { width: 65%; }
+    #content-area.-show-help #help-panel { display: block; }
     
     Tabs { width: auto; min-width: 100%; height: 1; background: transparent; }
     Tabs > .underline { display: none; }
@@ -531,27 +649,38 @@ class DuskyTUI(App):
     Tab.-active { color: $background; background: $primary; text-style: bold; border: none; }
     
     .list-wrapper { height: 1fr; }
-    ConfigOptionList { width: 1fr; height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
+    ConfigOptionList { min-width: 20; width: 1fr; height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
     ConfigOptionList > .option-list--option { padding: 0 1; background: transparent; transition: background 150ms linear; }
     ConfigOptionList > .option-list--option-hover { background: $primary 10%; }
     ConfigOptionList > .option-list--option-highlighted { background: $primary 20%; }
+    ConfigOptionList > .option-list--option-disabled { background: transparent; color: $primary; }
     
     .indicator-column { width: 2; height: 1fr; background: transparent; align: right top; }
     ScrollIndicator { width: 1; height: 1fr; color: $primary; }
     ScrollIndicator:hover { color: $text; }
     
-    #footer { height: 4; dock: bottom; border-top: solid $secondary; padding-top: 0; background: transparent; }
-    #footer-controls { width: 100%; }
+    #local-search {
+        dock: bottom; border: none; border-top: solid $primary 50%;
+        background: $primary 10%; color: $text;
+        display: none; height: 3;
+    }
+    #local-search.-active { display: block; }
+    
+    #footer { height: 4; dock: bottom; border-top: solid $secondary; padding: 0; background: transparent; }
+    #footer-row-1, #footer-row-2, #footer-row-3 { width: 100%; height: 1; }
+    #footer-row-3 { margin-top: 0; }
+    
+    .footer-sep { color: $secondary; }
     
     .footer-shortcut { margin-right: 2; padding: 0 1; background: transparent; }
     .footer-shortcut:hover { text-style: bold; color: $text; background: $primary 25%; }
-    #footer-legend { color: $text; padding-top: 0; }
+    #footer-legend { color: $text; padding: 0 1; }
+    #status-bar { padding: 0 1; }
     
-    #footer-bottom-row { margin-top: 1; }
     #file-link { padding: 0 1; background: transparent; }
     #file-link:hover { text-style: bold; color: $text; background: $primary 25%; }
     
-    TextInputOverlay, PickerScreen, SearchScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
+    TextInputOverlay, PickerScreen, SearchScreen, DiffScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
     
     #modal-dialog { width: 50; height: auto; background: transparent; border: round $primary; padding: 0; }
     #modal-content { width: 100%; height: auto; background: $background; padding: 1 2; }
@@ -565,24 +694,38 @@ class DuskyTUI(App):
     #search-list > .option-list--option { padding: 0 1; background: transparent; transition: background 100ms linear; }
     #search-list > .option-list--option-hover { background: $primary 10%; }
     #search-list > .option-list--option-highlighted { background: $primary 20%; color: $text; text-style: bold; }
+
+    #diff-dialog { width: 70; height: 25; background: transparent; border: round $primary; padding: 0; }
+    #diff-content { width: 100%; height: 100%; background: $background; padding: 1 2; }
+    #diff-list { height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
+    #diff-list > .option-list--option { padding: 0 1; background: transparent; }
+    
+    .modal-close-btn {
+        background: $primary 20%; color: $text; text-style: bold;
+        content-align: center middle; width: 100%; height: 1;
+        margin-top: 1;
+    }
+    .modal-close-btn:hover { background: $primary 40%; color: $background; }
     
     #modal-title, #picker-title { color: $primary; margin-bottom: 1; text-style: bold; border-bottom: solid $secondary; }
     #modal-hint { color: $secondary; text-style: italic; content-align: center middle; width: 100%; margin-top: 1; }
     
     Input { border: none; background: transparent; color: $text; border-bottom: solid $primary; }
     Input:focus { border: none; border-bottom: solid $primary; }
-    
-    #picker-list { height: 1fr; scrollbar-size: 0 0; background: transparent; border: none; }
-    #picker-list > .option-list--option { padding: 0 1; background: transparent; transition: background 100ms linear; }
-    #picker-list > .option-list--option-hover { background: $primary 10%; }
-    #picker-list > .option-list--option-highlighted { background: $primary 20%; color: $text; text-style: bold; }
     """
 
     BINDINGS = [
         Binding("q,ctrl+c", "quit", "Quit", priority=True),
         Binding("ctrl+f", "search", "Search", priority=True),
+        Binding("ctrl+t", "toggle_save_mode", "Toggle Mode", priority=True),
+        Binding("ctrl+s", "save_batch", "Save Batch", priority=True),
+        Binding("d", "show_diff", "Diff", priority=True),
+        Binding("u", "undo", "Undo", priority=True),
+        Binding("?", "toggle_help", "Help", priority=True),
+        Binding("/", "focus_local_search", "Search Inline", priority=True),
         Binding("tab", "next_tab", "Next Tab", priority=True),
         Binding("shift+tab", "prev_tab", "Prev Tab", priority=True),
+        Binding("escape", "clear_local_search", "Clear Search", priority=True),
         Binding("alt+1", "switch_tab(0)", "Tab 1", show=False),
         Binding("alt+2", "switch_tab(1)", "Tab 2", show=False),
         Binding("alt+3", "switch_tab(2)", "Tab 3", show=False),
@@ -592,13 +735,19 @@ class DuskyTUI(App):
         Binding("alt+7", "switch_tab(6)", "Tab 7", show=False),
     ]
 
-    def __init__(self, engine: BaseEngine, schema: dict[int, list[ConfigItem]], tabs: list[str], title="Dusky Editor", theme_path: str | None = None, **kwargs):
+    auto_save = reactive(True)
+
+    def __init__(self, engine: BaseEngine, schema: dict[int, list[ConfigItem]], tabs: list[str], title="Dusky Editor", theme_path: str | None = None, default_mode: str = "auto", **kwargs):
         super().__init__(**kwargs)
         self.engine = engine
         self.schema = schema
         self.tabs = tabs
         self.editor_title = title
         self.theme_path = Path(theme_path).expanduser().resolve() if theme_path else None
+        
+        self.pending_commits: set[tuple[int, int]] = set() 
+        self.undo_stack: deque[tuple[int, int, Any, Any]] = deque(maxlen=50) 
+        self._save_timers: dict[tuple[int, int], Timer] = {}
         
         self.theme_colors = {
             "bg": "#111318", "fg": "#e1e2e9", "accent": "#a8c8ff", 
@@ -617,6 +766,8 @@ class DuskyTUI(App):
         self._cached_tab_left: Label | None = None
         self._cached_tab_right: Label | None = None
 
+        self.auto_save = (default_mode.lower() == "auto")
+
     def compose(self) -> ComposeResult:
         with Vertical(id="main-box"):
             with Horizontal(id="tab-bar"):
@@ -628,18 +779,26 @@ class DuskyTUI(App):
                     )
                 yield Label(" ▶ ", id="tab-right", classes="tab-arrow")
                 
-            with ContentSwitcher(initial="tab-0", id="content-switcher"):
-                for i, name in enumerate(self.tabs):
-                    with Vertical(id=f"tab-{i}"):
-                        with Horizontal(classes="list-wrapper"):
-                            yield ConfigOptionList(id=f"list-{i}")
-                            with Vertical(classes="indicator-column"):
-                                yield ScrollIndicator("", id=f"indicator-{i}")
+            with Horizontal(id="content-area"):
+                with ContentSwitcher(initial="tab-0", id="content-switcher"):
+                    for i, name in enumerate(self.tabs):
+                        with Vertical(id=f"tab-{i}"):
+                            with Horizontal(classes="list-wrapper"):
+                                yield ConfigOptionList(id=f"list-{i}")
+                                with Vertical(classes="indicator-column"):
+                                    yield ScrollIndicator("", id=f"indicator-{i}")
+                
+                with Vertical(id="help-panel"):
+                    yield Markdown("Select an item to view documentation.", id="help-markdown")
+                    
+            yield Input(id="local-search", placeholder="Type to jump... (Enter to close)")
+            
         yield AppFooter(id="footer")
 
     def _build_option(self, item: ConfigItem, is_highlighted: bool = False) -> Text:
         txt = Text()
         exists = getattr(item, "exists_in_target", True)
+        is_pending = (str(item.value) != str(item.initial_value))
         
         CURSOR_CHAR = "▶"
         cursor = f"{CURSOR_CHAR} " if is_highlighted else "  "
@@ -663,8 +822,11 @@ class DuskyTUI(App):
             txt.append("⚡ Execute Action", style=f"bold {self.theme_colors['warning']}" if exists else f"{self.theme_colors['muted']} italic")
         else:
             is_modified = val_str != def_str
-            dot_color = self.theme_colors["error"] if (is_modified and exists) else self.theme_colors["muted"]
-            txt.append("●  ", style=dot_color)
+            if not self.auto_save and is_pending:
+                txt.append("[+] ", style=self.theme_colors["warning"])
+            else:
+                dot_color = self.theme_colors["error"] if (is_modified and exists) else self.theme_colors["muted"]
+                txt.append("●  ", style=dot_color)
             
             accent = self.theme_colors["accent"] if exists else self.theme_colors["muted"]
             fg = self.theme_colors["fg"] if exists else self.theme_colors["muted"]
@@ -701,7 +863,6 @@ class DuskyTUI(App):
     async def on_mount(self) -> None:
         self.query_one("#main-box").border_title = f" {self.editor_title} "
         self.apply_theme_to_engine()
-        
         self.query_one("#file-link", FileLink).path = self.engine.target_path
         
         self._cached_tabs_container = self.query_one("#tabs-container", Horizontal)
@@ -714,6 +875,10 @@ class DuskyTUI(App):
             ol = self.query_one(f"#list-{i}", ConfigOptionList)
             items = self.schema.get(i, [])
             if items:
+                options = []
+                current_group = None
+                first_item_id = None
+                
                 for idx, item in enumerate(items):
                     cache_key = f"{item.scope}/{item.key}" if item.scope else item.key
                     if cache_key in state:
@@ -731,10 +896,24 @@ class DuskyTUI(App):
                             item.value = raw_val
                     else:
                         item.exists_in_target = False
-                            
-                options = [Option(self._build_option(item, is_highlighted=(idx == 0)), id=f"item_{i}_{idx}") for idx, item in enumerate(items)]
+                        
+                    if not item._initial_loaded:
+                        item.initial_value = item.value
+                        item._initial_loaded = True
+                    
+                    if item.group and item.group != current_group:
+                        current_group = item.group
+                        header_txt = Text(f"── {current_group.upper()} ──", style=f"bold {self.theme_colors['accent']}")
+                        options.append(Option(header_txt, id=f"header_{i}_{current_group}", disabled=True))
+                        
+                    opt_id = f"item_{i}_{idx}"
+                    if first_item_id is None: first_item_id = opt_id
+                    
+                    is_hl = (first_item_id == opt_id)
+                    options.append(Option(self._build_option(item, is_highlighted=is_hl), id=opt_id))
+                    
                 ol.add_options(options)
-                ol.last_highlighted_idx = 0
+                ol.last_highlighted_id = first_item_id
 
         if first_ol := self.current_option_list:
             first_ol.focus()
@@ -743,8 +922,29 @@ class DuskyTUI(App):
         if self.theme_path:
             self.set_interval(0.5, self.watch_theme_file)
             
-        self.set_interval(0.1, self.check_tab_overflow)
+        self.call_after_refresh(self.check_tab_overflow)
         self.call_after_refresh(self._update_scroll_indicators)
+        self._update_footer_legend()
+
+    @on(events.Resize)
+    def handle_resize(self, event: events.Resize) -> None:
+        self.check_tab_overflow()
+
+    def watch_auto_save(self, old: bool, new: bool) -> None:
+        if not getattr(self, "is_mounted", False): return
+        self._update_footer_legend()
+        if new and getattr(self, "pending_commits", None):
+            self.action_save_batch()
+
+    def _update_footer_legend(self) -> None:
+        if not getattr(self, "is_mounted", False): return
+        try:
+            legend = self.query_one("#footer-legend", Label)
+            mode_str = f"[{self.theme_colors['success']}]AUTO[/]" if self.auto_save else f"[{self.theme_colors['warning']}]BATCH[/]"
+            pending_str = f" │ Pending: {len(getattr(self, 'pending_commits', []))}" if not self.auto_save else ""
+            legend.update(f"Mode: {mode_str}{pending_str}")
+        except Exception:
+            pass 
 
     @property
     def current_option_list(self) -> ConfigOptionList | None:
@@ -753,98 +953,56 @@ class DuskyTUI(App):
             if switcher.current:
                 idx = switcher.current.split("-")[1]
                 return self.query_one(f"#list-{idx}", ConfigOptionList)
-        except Exception:
-            pass
+        except Exception: pass
         return None
 
     def check_tab_overflow(self) -> None:
-        if not self._cached_tabs_container or not self._cached_tab_left or not self._cached_tab_right:
-            return
-            
+        if not self._cached_tabs_container or not self._cached_tab_left or not self._cached_tab_right: return
         try:
-            container = self._cached_tabs_container
-            left = self._cached_tab_left
-            right = self._cached_tab_right
-            
+            container, left, right = self._cached_tabs_container, self._cached_tab_left, self._cached_tab_right
             has_overflow = container.max_scroll_x > 0
-            
             if has_overflow:
                 left.display = container.scroll_x > 0.5
                 right.display = container.scroll_x < (container.max_scroll_x - 0.5)
             else:
-                left.display = False
-                right.display = False
-        except Exception:
-            pass
+                left.display = right.display = False
+        except Exception: pass
 
     @on(events.Click, "#tab-left")
     def scroll_tabs_left(self, event: events.Click) -> None:
         event.stop()
-        try:
-            if self._cached_tabs_container:
-                self._cached_tabs_container.scroll_relative(x=-40, animate=True)
-        except Exception: pass
+        if self._cached_tabs_container: self._cached_tabs_container.scroll_relative(x=-40, animate=True)
 
     @on(events.Click, "#tab-right")
     def scroll_tabs_right(self, event: events.Click) -> None:
         event.stop()
-        try:
-            if self._cached_tabs_container:
-                self._cached_tabs_container.scroll_relative(x=40, animate=True)
-        except Exception: pass
+        if self._cached_tabs_container: self._cached_tabs_container.scroll_relative(x=40, animate=True)
 
-    def watch_theme_file(self) -> None:
+    async def watch_theme_file(self) -> None:
         if not self.theme_path: return
         try:
-            current_mtime = self.theme_path.stat().st_mtime
+            stat_info = await asyncio.to_thread(self.theme_path.stat)
+            current_mtime = stat_info.st_mtime
             if current_mtime > self.last_theme_mtime:
-                new_theme = load_matugen_json(self.theme_path)
-                
+                new_theme = await asyncio.to_thread(load_matugen_json, self.theme_path)
                 if new_theme is not None:
                     self.last_theme_mtime = current_mtime
                     self.theme_colors.update(new_theme) 
                     self.apply_theme_to_engine()
-                    
-                    for i in range(len(self.tabs)):
-                        try:
-                            ol = self.query_one(f"#list-{i}", ConfigOptionList)
-                            items = self.schema.get(i, [])
-                            last_idx = ol.last_highlighted_idx
-                            
-                            for idx, item in enumerate(items):
-                                is_hl = (idx == last_idx) and (self.current_option_list == ol)
-                                ol.replace_option_prompt_at_index(idx, self._build_option(item, is_hl))
-                        except Exception:
-                            continue
-                            
-                    for shortcut in self.query(Shortcut):
-                        shortcut.refresh()
-                        
-                    for footer in self.query(AppFooter):
-                        for legend in footer.query("#footer-legend"):
-                            legend.update(f"   [{self.theme_colors['error']}]●[/] Modified")
-                            
-                    for link in self.query(FileLink):
-                        link.refresh()
-        except OSError:
-            pass
+                    self._refresh_all_ui()
+                    for shortcut in self.query(Shortcut): shortcut.refresh()
+                    self._update_footer_legend()
+        except OSError: pass
 
     def apply_theme_to_engine(self) -> None:
         self._theme_toggle = not getattr(self, "_theme_toggle", False)
         theme_name = "dusky_matugen_A" if self._theme_toggle else "dusky_matugen_B"
-
         custom_theme = Theme(
-            name=theme_name,
-            primary=self.theme_colors["accent"],
-            secondary=self.theme_colors["muted"],
-            background=self.theme_colors["bg"],
-            surface=self.theme_colors["bg"],
-            warning=self.theme_colors["warning"],
-            error=self.theme_colors["error"],
-            success=self.theme_colors["success"],
-            foreground=self.theme_colors["fg"],
+            name=theme_name, primary=self.theme_colors["accent"], secondary=self.theme_colors["muted"],
+            background=self.theme_colors["bg"], surface=self.theme_colors["bg"],
+            warning=self.theme_colors["warning"], error=self.theme_colors["error"],
+            success=self.theme_colors["success"], foreground=self.theme_colors["fg"],
         )
-        
         self.register_theme(custom_theme)
         self.theme = theme_name
 
@@ -852,247 +1010,350 @@ class DuskyTUI(App):
     def handle_tab_activated(self, event: Tabs.TabActivated) -> None:
         try:
             idx = event.tab.id.split("-")[-1]
-            switcher = self.query_one(ContentSwitcher)
-            switcher.current = f"tab-{idx}"
-            
+            self.query_one(ContentSwitcher).current = f"tab-{idx}"
             event.tab.scroll_visible(animate=True, top=False)
-            
             if ol := self.current_option_list:
                 ol.focus()
                 self._update_pagination(ol)
                 self._update_scroll_indicators()
-        except Exception:
-            pass
+                self.check_tab_overflow()
+        except Exception: pass
+
+    def _get_item_from_id(self, opt_id: str) -> tuple[int, int, ConfigItem] | None:
+        if not opt_id or not opt_id.startswith("item_"): return None
+        try:
+            _, t_idx, i_idx = opt_id.split("_")
+            tab_idx, int(t_idx), int(i_idx)
+            return int(t_idx), int(i_idx), self.schema[int(t_idx)][int(i_idx)]
+        except (ValueError, KeyError, IndexError): return None
 
     @on(OptionList.OptionHighlighted)
     def handle_option_highlight(self, event: OptionList.OptionHighlighted) -> None:
         ol = event.option_list
-        if not isinstance(ol, ConfigOptionList):
-            return
-            
-        try:
-            tab_idx = int(ol.id.split("-")[1])
-        except (AttributeError, IndexError, ValueError):
-            return
-            
-        last_idx = ol.last_highlighted_idx
+        if not isinstance(ol, ConfigOptionList) or not event.option_id: return
         
-        if last_idx is not None and last_idx != event.option_index:
+        parsed = self._get_item_from_id(event.option_id)
+        if parsed:
+            _, _, item = parsed
             try:
-                item = self.schema[tab_idx][last_idx]
-                ol.replace_option_prompt_at_index(last_idx, self._build_option(item, False))
-            except (IndexError, KeyError):
-                pass
+                content_area = self.query_one("#content-area")
+                if content_area.has_class("-show-help"):
+                    md = self.query_one("#help-markdown", Markdown)
+                    help_text = item.extended_help or f"**{item.label}**\n\nNo extended documentation available."
+                    md.update(help_text)
+            except Exception: pass
+            
+        last_id = ol.last_highlighted_id
+        if last_id and last_id != event.option_id:
+            old_parsed = self._get_item_from_id(last_id)
+            if old_parsed:
+                try:
+                    old_idx = ol.get_option_index(last_id)
+                    ol.replace_option_prompt_at_index(old_idx, self._build_option(old_parsed[2], False))
+                except OptionDoesNotExist: pass
                 
-        if event.option_index is not None:
+        if parsed:
             try:
-                item = self.schema[tab_idx][event.option_index]
-                ol.replace_option_prompt_at_index(event.option_index, self._build_option(item, True))
-                ol.last_highlighted_idx = event.option_index
-            except (IndexError, KeyError):
-                pass
+                curr_idx = ol.get_option_index(event.option_id)
+                ol.replace_option_prompt_at_index(curr_idx, self._build_option(parsed[2], True))
+                ol.last_highlighted_id = event.option_id
+            except OptionDoesNotExist: pass
             
         self._update_pagination(ol)
 
     def _update_pagination(self, ol: ConfigOptionList) -> None:
         idx = ol.highlighted if ol.highlighted is not None else 0
         total = ol.option_count
-        main_box = self.query_one("#main-box")
-        main_box.border_subtitle = f" {idx + 1}/{total} " if total else " 0/0 "
+        self.query_one("#main-box").border_subtitle = f" {idx + 1}/{total} " if total else " 0/0 "
 
     def _update_scroll_indicators(self) -> None:
         try:
             switcher = self.query_one(ContentSwitcher)
             if not switcher.current: return
-            
             tab_idx = int(switcher.current.split("-")[1])
             ol = self.query_one(f"#list-{tab_idx}", ConfigOptionList)
             indicator = self.query_one(f"#indicator-{tab_idx}", ScrollIndicator)
-            
             if ol.max_scroll_y > 0 and ol.size.height > 2:
-                indicator.update_scroll(
-                    ol.scroll_y, 
-                    ol.max_scroll_y, 
-                    ol.size.height, 
-                    ol.virtual_size.height
-                )
+                indicator.update_scroll(ol.scroll_y, ol.max_scroll_y, ol.size.height, ol.virtual_size.height)
             else:
                 indicator.display = False
-        except Exception:
-            pass
+        except Exception: pass
 
     def notify_status(self, msg: str) -> None:
         app_footer = self.query_one(AppFooter)
         app_footer.status_msg = msg
-        
-        if self._status_timer is not None:
-            self._status_timer.stop()
-            
+        if self._status_timer: self._status_timer.stop()
         self._status_timer = self.set_timer(3, lambda: setattr(app_footer, 'status_msg', ""))
 
-    def _commit_change(self, item: ConfigItem, new_val: Any) -> bool:
+    def play_reset_sound(self) -> None:
+        global _AUDIO_PLAYER_CACHE
+        sound_path = "/usr/share/sounds/freedesktop/stereo/dialog-information.oga"
+        if Path(sound_path).exists():
+            if _AUDIO_PLAYER_CACHE is None:
+                _AUDIO_PLAYER_CACHE = shutil.which("pw-play") or shutil.which("paplay") or shutil.which("mpv") or ""
+                
+            player = _AUDIO_PLAYER_CACHE
+            if player:
+                cmd = [player, sound_path]
+                if player.endswith("mpv"): cmd.extend(["--no-video", "--really-quiet"])
+                
+                async def _play() -> None:
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+                        )
+                        await proc.wait()
+                    except OSError:
+                        pass
+                        
+                asyncio.create_task(_play())
+
+    def _apply_value(self, tab_idx: int, item_idx: int, item: ConfigItem, new_val: Any, is_undo: bool = False) -> bool:
+        if not is_undo:
+            self.undo_stack.append((tab_idx, item_idx, item.value, new_val))
+            
+        item.value = new_val
+        item.exists_in_target = True
+
         if isinstance(new_val, bool): val_str = "true" if new_val else "false"
         elif new_val is None: val_str = "nil"
         else: val_str = str(new_val)
 
+        if self.auto_save:
+            k = (tab_idx, item_idx)
+            if k in self._save_timers:
+                self._save_timers[k].stop()
+            self._save_timers[k] = self.set_timer(
+                0.25, lambda: self._do_auto_save(item, val_str)
+            )
+        else:
+            self.pending_commits.add((tab_idx, item_idx))
+            self._update_footer_legend()
+            
+        self._refresh_single_ui(tab_idx, item_idx, item)
+        return True
+
+    def _do_auto_save(self, item: ConfigItem, val_str: str) -> None:
         success, msg, _ = self.engine.write_value(item.key, item.scope, val_str)
         if success:
-            item.value = new_val
-            item.exists_in_target = True
+            item.initial_value = item.value
             self.notify_status(f"Updated {item.label}")
-            return True
-        self.notify_status(f"Error: {msg}")
-        return False
+        else:
+            self.notify_status(f"Error: {msg}")
+
+    def _refresh_single_ui(self, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+        try:
+            ol = self.query_one(f"#list-{tab_idx}", ConfigOptionList)
+            opt_id = f"item_{tab_idx}_{item_idx}"
+            idx = ol.get_option_index(opt_id)
+            is_hl = (ol.last_highlighted_id == opt_id)
+            ol.replace_option_prompt_at_index(idx, self._build_option(item, is_hl))
+        except Exception: pass
+
+    def _refresh_all_ui(self) -> None:
+        for tab_idx, items in self.schema.items():
+            for item_idx, item in enumerate(items):
+                self._refresh_single_ui(tab_idx, item_idx, item)
+
+    def action_toggle_save_mode(self) -> None:
+        self.auto_save = not self.auto_save
+
+    def action_save_batch(self) -> None:
+        if not self.pending_commits:
+            self.notify_status("No pending changes.")
+            return
+            
+        success_count = 0
+        for tab_idx, item_idx in list(self.pending_commits):
+            item = self.schema[tab_idx][item_idx]
+            val = item.value
+            if isinstance(val, bool): val_str = "true" if val else "false"
+            elif val is None: val_str = "nil"
+            else: val_str = str(val)
+            
+            success, _, _ = self.engine.write_value(item.key, item.scope, val_str)
+            if success:
+                item.initial_value = val
+                self.pending_commits.discard((tab_idx, item_idx))
+                success_count += 1
+                
+        self._refresh_all_ui()
+        self._update_footer_legend()
+        if success_count > 0:
+            self.notify_status(f"Batched {success_count} commits successfully.")
+            self.play_reset_sound()
+
+    def action_show_diff(self) -> None:
+        self.push_screen(DiffScreen())
+
+    def action_undo(self) -> None:
+        if not self.undo_stack:
+            self.notify_status("Nothing to undo.")
+            return
+            
+        tab_idx, item_idx, old_val, _ = self.undo_stack.pop()
+        item = self.schema[tab_idx][item_idx]
+        self._apply_value(tab_idx, item_idx, item, old_val, is_undo=True)
+        self.notify_status(f"Undid change to {item.label}")
+
+    def action_toggle_help(self) -> None:
+        content_area = self.query_one("#content-area")
+        content_area.toggle_class("-show-help")
+        
+        if content_area.has_class("-show-help"):
+            ol = self.current_option_list
+            if ol and ol.last_highlighted_id:
+                parsed = self._get_item_from_id(ol.last_highlighted_id)
+                if parsed:
+                    md = self.query_one("#help-markdown", Markdown)
+                    md.update(parsed[2].extended_help or f"**{parsed[2].label}**\n\nNo extended documentation.")
+
+    def action_focus_local_search(self) -> None:
+        inp = self.query_one("#local-search", Input)
+        inp.add_class("-active")
+        inp.value = ""
+        # Guarantee input gets focus after the class mutation updates the layout
+        self.call_after_refresh(inp.focus)
+
+    def action_clear_local_search(self) -> None:
+        inp = self.query_one("#local-search", Input)
+        if inp.has_focus or inp.has_class("-active"):
+            inp.remove_class("-active")
+            if ol := self.current_option_list: 
+                self.call_after_refresh(ol.focus)
+
+    @on(Input.Changed, "#local-search")
+    def handle_local_search(self, event: Input.Changed) -> None:
+        query = event.value.lower().replace(" ", "")
+        if not query: return
+        ol = self.current_option_list
+        if not ol: return
+        
+        try:
+            tab_idx = int(ol.id.split("-")[1])
+            items = self.schema.get(tab_idx, [])
+            for item_idx, item in enumerate(items):
+                if query in item.label.lower().replace(" ", ""):
+                    opt_id = f"item_{tab_idx}_{item_idx}"
+                    try:
+                        idx = ol.get_option_index(opt_id)
+                        ol.highlighted = idx
+                        # Safely call scroll_to_highlight only if it exists in API
+                        if hasattr(ol, "scroll_to_highlight"):
+                            ol.scroll_to_highlight()
+                        break
+                    except OptionDoesNotExist: pass
+        except Exception: pass
+
+    @on(Input.Submitted, "#local-search")
+    def submit_local_search(self, event: Input.Submitted) -> None:
+        self.action_clear_local_search()
 
     def action_search(self) -> None:
         def check_reply(result: tuple[int, int] | None) -> None:
             if result is not None:
                 tab_idx, item_idx = result
                 self.action_switch_tab(tab_idx)
-                try:
-                    ol = self.query_one(f"#list-{tab_idx}", ConfigOptionList)
-                    ol.focus()
-                    ol.highlighted = item_idx
-                    ol.scroll_to_highlight()
+                
+                def _focus_and_highlight():
+                    try:
+                        ol = self.query_one(f"#list-{tab_idx}", ConfigOptionList)
+                        ol.focus()
+                        idx = ol.get_option_index(f"item_{tab_idx}_{item_idx}")
+                        ol.highlighted = idx
+                    except Exception: pass
                     
-                    item = self.schema[tab_idx][item_idx]
-                    if ol.last_highlighted_idx is not None and ol.last_highlighted_idx != item_idx:
-                        old_item = self.schema[tab_idx][ol.last_highlighted_idx]
-                        ol.replace_option_prompt_at_index(ol.last_highlighted_idx, self._build_option(old_item, False))
-                        
-                    ol.replace_option_prompt_at_index(item_idx, self._build_option(item, True))
-                    ol.last_highlighted_idx = item_idx
-                    self._update_pagination(ol)
-                except Exception:
-                    pass
-                    
+                # Guarantee layout has finished switching tabs before highlighting
+                self.call_after_refresh(_focus_and_highlight)
+                
         self.push_screen(SearchScreen(), check_reply)
 
-    def action_next_tab(self) -> None: 
-        self.query_one(Tabs).action_next_tab()
-        
-    def action_prev_tab(self) -> None: 
-        self.query_one(Tabs).action_previous_tab()
-        
+    def action_next_tab(self) -> None: self.query_one(Tabs).action_next_tab()
+    def action_prev_tab(self) -> None: self.query_one(Tabs).action_previous_tab()
     def action_switch_tab(self, index: int) -> None:
-        if 0 <= index < len(self.tabs):
-            tabs = self.query_one(Tabs)
-            tabs.active = f"tab-id-{index}"
+        if 0 <= index < len(self.tabs): self.query_one(Tabs).active = f"tab-id-{index}"
 
     def action_adjust(self, direction: int) -> None:
         ol = self.current_option_list
-        if not ol or ol.highlighted is None: return
+        if not ol or not ol.last_highlighted_id: return
         
-        try:
-            switcher = self.query_one(ContentSwitcher)
-            if not switcher.current: return
-            tab_idx = int(switcher.current.split("-")[1])
-            item_idx = ol.highlighted
-            item = self.schema.get(tab_idx, [])[item_idx]
+        parsed = self._get_item_from_id(ol.last_highlighted_id)
+        if not parsed: return
+        tab_idx, item_idx, item = parsed
+        
+        new_val = item.value
+        match item.type_:
+            case "bool": new_val = not item.value
+            case "int" | "float":
+                step = item.step or 1
+                new_val = item.value + (direction * step)
+                if item.min_val is not None: new_val = max(item.min_val, new_val)
+                if item.max_val is not None: new_val = min(item.max_val, new_val)
+                new_val = round(new_val, 6) if item.type_ == "float" else int(new_val)
+            case "cycle":
+                if not item.options: return
+                try: idx = item.options.index(item.value)
+                except ValueError: idx = 0
+                new_val = item.options[(idx + direction) % len(item.options)]
+            case "color":
+                r, g, b = color_to_rgb(str(item.value))
+                current_name = get_color_name(r, g, b)
+                try: idx = CYCLE_COLORS.index(current_name)
+                except ValueError: idx = 0
+                next_name = CYCLE_COLORS[(idx + direction) % len(CYCLE_COLORS)]
+                fmt = parse_color_format(str(item.value))
+                new_val = format_rgb(next_name, fmt, str(item.value))
+            case _: return
             
-            new_val = item.value
-            match item.type_:
-                case "bool":
-                    new_val = not item.value
-                case "int" | "float":
-                    step = item.step or 1
-                    new_val = item.value + (direction * step)
-                    if item.min_val is not None: new_val = max(item.min_val, new_val)
-                    if item.max_val is not None: new_val = min(item.max_val, new_val)
-                    new_val = round(new_val, 6) if item.type_ == "float" else int(new_val)
-                case "cycle":
-                    if not item.options: return
-                    try: idx = item.options.index(item.value)
-                    except ValueError: idx = 0
-                    new_val = item.options[(idx + direction) % len(item.options)]
-                case "color":
-                    r, g, b = color_to_rgb(str(item.value))
-                    current_name = get_color_name(r, g, b)
-                    try: idx = CYCLE_COLORS.index(current_name)
-                    except ValueError: idx = 0
-                    next_name = CYCLE_COLORS[(idx + direction) % len(CYCLE_COLORS)]
-                    fmt = parse_color_format(str(item.value))
-                    new_val = format_rgb(next_name, fmt, str(item.value))
-                case _: return
-                
-            if new_val != item.value and self._commit_change(item, new_val):
-                ol.replace_option_prompt_at_index(item_idx, self._build_option(item, True))
-        except Exception:
-            pass
+        if new_val != item.value:
+            self._apply_value(tab_idx, item_idx, item, new_val)
 
     def action_reset_item(self) -> None:
         ol = self.current_option_list
-        if ol and ol.highlighted is not None:
-            try:
-                switcher = self.query_one(ContentSwitcher)
-                if not switcher.current: return
-                tab_idx = int(switcher.current.split("-")[1])
-                item_idx = ol.highlighted
-                item = self.schema[tab_idx][item_idx]
-                
-                if self._commit_change(item, item.default):
-                    ol.replace_option_prompt_at_index(item_idx, self._build_option(item, True))
-            except Exception:
-                pass
-
-    def play_reset_sound(self) -> None:
-        sound_path = "/usr/share/sounds/freedesktop/stereo/dialog-information.oga"
-        if Path(sound_path).exists():
-            player = shutil.which("pw-play") or shutil.which("paplay") or shutil.which("mpv")
-            if player:
-                cmd = [player, sound_path]
-                if player.endswith("mpv"):
-                    cmd.extend(["--no-video", "--really-quiet"])
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not ol or not ol.last_highlighted_id: return
+        parsed = self._get_item_from_id(ol.last_highlighted_id)
+        if parsed and str(parsed[2].value) != str(parsed[2].default):
+            self._apply_value(parsed[0], parsed[1], parsed[2], parsed[2].default)
 
     def action_reset_all(self) -> None:
         try:
             switcher = self.query_one(ContentSwitcher)
             if not switcher.current: return
-            
             tab_idx = int(switcher.current.split("-")[1])
             items = self.schema.get(tab_idx, [])
             success_count = 0
             
-            for item in items:
-                if str(item.value) != str(item.default) and self._commit_change(item, item.default):
-                    success_count += 1
-                
-            if ol := self.current_option_list:
-                for idx, item in enumerate(items):
-                    is_hl = (idx == ol.highlighted)
-                    ol.replace_option_prompt_at_index(idx, self._build_option(item, is_hl))
-                    
+            for item_idx, item in enumerate(items):
+                if str(item.value) != str(item.default):
+                    if self._apply_value(tab_idx, item_idx, item, item.default):
+                        success_count += 1
+                        
             if success_count > 0:
                 self.notify_status(f"Reset {success_count} items in {self.tabs[tab_idx]}")
-            
-            self.play_reset_sound()
-                
-        except Exception:
-            pass
+                self.play_reset_sound()
+        except Exception: pass
 
     def action_submit_current(self) -> None:
         ol = self.current_option_list
-        if ol and ol.highlighted is not None:
+        if ol and ol.last_highlighted_id:
             ol._last_click_x = 0
             ol._mouse_down_highlight = None
-            self._handle_item_action(ol, ol.highlighted)
+            self._handle_item_action(ol, ol.last_highlighted_id)
 
     @on(OptionList.OptionSelected)
     def handle_selection(self, event: OptionList.OptionSelected) -> None:
         ol = event.option_list
         if isinstance(ol, ConfigOptionList):
             if getattr(ol, "_mouse_down_highlight", None) == event.option_index:
-                self._handle_item_action(ol, event.option_index)
+                self._handle_item_action(ol, event.option_id)
             ol._mouse_down_highlight = None
             ol._last_click_x = 0
 
-    def _handle_item_action(self, ol: ConfigOptionList, index: int) -> None:
-        try:
-            tab_idx = int(ol.id.split("-")[1])
-            item = self.schema[tab_idx][index]
-        except (AttributeError, IndexError, ValueError, KeyError):
-            return
+    def _handle_item_action(self, ol: ConfigOptionList, opt_id: str | None) -> None:
+        if not opt_id: return
+        parsed = self._get_item_from_id(opt_id)
+        if not parsed: return
+        tab_idx, item_idx, item = parsed
             
         is_modified = str(item.value) != str(item.default)
         
@@ -1108,16 +1369,12 @@ class DuskyTUI(App):
                 return
                 
         match item.type_:
-            case "bool" | "cycle": 
-                self.action_adjust(1)
-            case "int" | "float" | "string" | "color": 
-                self.prompt_string(ol, tab_idx, index, item)
-            case "action":
-                self.notify_status(f"Action triggered: {item.label}")
-            case "picker": 
-                self.prompt_picker(ol, tab_idx, index, item)
+            case "bool" | "cycle": self.action_adjust(1)
+            case "int" | "float" | "string" | "color": self.prompt_string(tab_idx, item_idx, item)
+            case "action": self.notify_status(f"Action triggered: {item.label}")
+            case "picker": self.prompt_picker(tab_idx, item_idx, item)
 
-    def prompt_string(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+    def prompt_string(self, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         def check_reply(new_val: str | None) -> None:
             if new_val is not None:
                 if item.type_ == "int":
@@ -1139,17 +1396,10 @@ class DuskyTUI(App):
                         self.notify_status("Error: Value must be a float.")
                         return
                         
-                if self._commit_change(item, new_val):
-                    is_hl = (item_idx == ol.highlighted)
-                    ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
-                
+                self._apply_value(tab_idx, item_idx, item, new_val)
         self.push_screen(TextInputOverlay(f"Enter new {item.label}:", str(item.value)), check_reply)
 
-    def prompt_picker(self, ol: ConfigOptionList, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
+    def prompt_picker(self, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         def check_reply(new_val: str | None) -> None:
-            if new_val is not None:
-                if self._commit_change(item, new_val):
-                    is_hl = (item_idx == ol.highlighted)
-                    ol.replace_option_prompt_at_index(item_idx, self._build_option(item, is_hl))
-                
+            if new_val is not None: self._apply_value(tab_idx, item_idx, item, new_val)
         self.push_screen(PickerScreen(item.label, item.options, item.hints), check_reply)
