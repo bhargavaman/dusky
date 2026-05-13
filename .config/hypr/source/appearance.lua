@@ -15,8 +15,8 @@ hl.config({
 
         ["col.inactive_border"] = inverse_on_surface, -- Border color for inactive windows
         ["col.active_border"] = primary, -- Border color for the active window
-        ["col.nogroup_border"] = "0xffffaaff", -- Inactive border color for window that cannot be added to a group
-        ["col.nogroup_border_active"] = "0xffff00ff", -- Active border color for window that cannot be added to a group
+        ["col.nogroup_border"] = inverse_on_surface, -- Inactive border color for window that cannot be added to a group
+        ["col.nogroup_border_active"] = secondary, -- Active border color for window that cannot be added to a group
 
         layout = "dwindle", -- Which layout to use [dwindle/master/scrolling/monocle]
         resize_on_border = false, -- Enables resizing windows by clicking and dragging on borders and gaps
@@ -67,7 +67,7 @@ hl.config({
             range = 35, -- Shadow range ("size") in layout px
             render_power = 2, -- Falloff power (more power = faster falloff) [1 - 4]
             sharp = false, -- Make shadows sharp, akin to infinite render power
-            color = "rgba(1a1a1aee)", -- Shadow's color. Alpha dictates opacity
+            color = shadow, -- Shadow's color. Alpha dictates opacity
             offset = {0, 0}, -- Shadow's rendering offset
             scale = 1.0 -- Shadow's scale [0.0 - 1.0]
         },
@@ -76,7 +76,7 @@ hl.config({
             enabled = false, -- Enable inner glow on windows
             range = 10, -- Glow range ("size") in layout px
             render_power = 3, -- Falloff power [1 - 4]
-            color = "0xee1a1a1a" -- Glow's color. Alpha dictates opacity
+            color = primary_container -- Glow's color. Alpha dictates opacity
         }
     },
 
@@ -91,10 +91,10 @@ hl.config({
     -- GROUP UI (Colors & Groupbars)
     -- ==========================================
     group = {
-        ["col.border_active"] = "0x66ffff00", -- Active group border color
-        ["col.border_inactive"] = "0x66777700", -- Inactive group border color
-        ["col.border_locked_active"] = "0x66ff5500", -- Active locked group border color
-        ["col.border_locked_inactive"] = "0x66775500", -- Inactive locked group border color
+        ["col.border_active"] = primary, -- Active group border color
+        ["col.border_inactive"] = inverse_on_surface, -- Inactive group border color
+        ["col.border_locked_active"] = tertiary, -- Active locked group border color
+        ["col.border_locked_inactive"] = tertiary_container, -- Inactive locked group border color
 
         groupbar = {
             enabled = true, -- Enables groupbars
@@ -117,11 +117,11 @@ hl.config({
             gradient_rounding_power = 2.0, -- Curve used for rounding gradients
             round_only_edges = true, -- Round only indicator edges
             gradient_round_only_edges = true, -- Round only gradient edges
-            text_color = "0xffffffff", -- Title color
-            ["col.active"] = "0x66ffff00", -- Active background color
-            ["col.inactive"] = "0x66777700", -- Inactive background color
-            ["col.locked_active"] = "0x66ff5500", -- Active locked background color
-            ["col.locked_inactive"] = "0x66775500", -- Inactive locked background color
+            text_color = on_surface, -- Title color
+            ["col.active"] = primary, -- Active background color
+            ["col.inactive"] = inverse_on_surface, -- Inactive background color
+            ["col.locked_active"] = tertiary, -- Active locked background color
+            ["col.locked_inactive"] = tertiary_container, -- Inactive locked background color
             gaps_in = 2, -- Gap between gradients
             gaps_out = 2, -- Gap between gradients and window
             keep_upper_gap = true, -- Add/remove upper gap
@@ -140,7 +140,7 @@ hl.config({
         force_default_wallpaper = 1, -- Enforce default wallpapers (-1 random, 0/1 disables anime)
         animate_manual_resizes = false, -- Animate manual window resizes/moves
         animate_mouse_windowdragging = false, -- Animate windows being dragged by mouse
-        background_color = "0x111111", -- Custom background color
+        background_color = background, -- Custom background color
         render_unfocused_fps = 15, -- Max FPS limit for unfocused background windows
         enable_anr_dialog = true -- Enable "App Not Responding" dialog
     },
