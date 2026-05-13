@@ -64,16 +64,9 @@ CYCLE_COLORS = ["Red", "Lime", "Blue", "Yellow", "Cyan", "Magenta", "White", "Bl
 
 def is_theme_variable(val: str) -> bool:
     val = str(val).strip()
-    # Must be a valid identifier (starts with letter/underscore, contains letters/numbers/underscores)
-    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", val):
-        return False
-    # Exclude known basic color names
-    if val.lower() in _LOWER_KNOWN_COLORS:
-        return False
-    # Exclude strings that look exactly like raw hex codes missing a '#' 
-    # (Lengths 3, 4, 6, 8 of only hex characters)
-    if re.match(r"^([a-fA-F0-9]{3}|[a-fA-F0-9]{4}|[a-fA-F0-9]{6}|[a-fA-F0-9]{8})$", val):
-        return False
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", val): return False
+    if val.lower() in _LOWER_KNOWN_COLORS: return False
+    if re.match(r"^([a-fA-F0-9]{3}|[a-fA-F0-9]{4}|[a-fA-F0-9]{6}|[a-fA-F0-9]{8})$", val): return False
     return True
 
 def parse_color_format(val: str) -> str:
@@ -419,11 +412,11 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             ("tab", "Switch to Next Tab"),
             ("shift+tab", "Switch to Previous Tab"),
             ("d", "Show pending or modified items (Diff)"),
-            ("u", "Undo last change"),
+            ("u", "Undo last change (or batch change)"),
             ("ctrl+r", "Redo last undone change"),
             ("ctrl+t", "Toggle between Auto and Batch save modes"),
             ("ctrl+s", "Commit all pending changes (only available in Batch mode)"),
-            ("enter", "Trigger action / Input string / Open Picker"),
+            ("enter", "Trigger action / Apply Preset / Input string / Open Picker"),
             ("j, down", "Move cursor down"),
             ("k, up", "Move cursor up"),
             ("h, left", "Adjust value down / Cycle previous option"),
@@ -526,7 +519,6 @@ class ScrollIndicator(Label):
         max_pos = self._track_height - thumb_size
         pos = int((scroll_y / max_scroll_y) * max_pos) if max_scroll_y > 0 else 0
 
-        # High-Speed String Multiplier block-rendering (Restored Optimization)
         txt = Text()
         txt.append("▲\n", style="bold")
         if pos > 0:
@@ -579,7 +571,6 @@ class Shortcut(Label):
 
     def render(self) -> Text:
         txt = Text()
-        # If the widget has the -active class, force text to background color for contrast
         if self.has_class("-active"):
             contrast_color = self.app.theme_colors["bg"]
             txt.append(f"[{self.key_text}] ", style=f"bold {contrast_color}")
@@ -595,11 +586,9 @@ class Shortcut(Label):
     def blink(self) -> None:
         self.add_class("-active")
         self.refresh()
-
         def _unblink():
             self.remove_class("-active")
             self.refresh()
-
         self.set_timer(0.2, _unblink)
 
 class FileLink(Label):
@@ -910,16 +899,20 @@ class DuskyTUI(App):
         self.theme_path = Path(theme_path).expanduser().resolve() if theme_path else None
 
         self.pending_commits: set[tuple[int, int]] = set()
-        self.undo_stack: deque[tuple[int, int, Any, Any]] = deque(maxlen=50)
-        self.redo_stack: deque[tuple[int, int, Any, Any]] = deque(maxlen=50)
+        self.undo_stack: deque[list[tuple[int, int, Any, Any]]] = deque(maxlen=50)
+        self.redo_stack: deque[list[tuple[int, int, Any, Any]]] = deque(maxlen=50)
+        
+        self._key_map: dict[str, tuple[int, int]] = {}
         self._save_timers: dict[tuple[int, int], Timer] = {}
+        
+        # Debounce timer for preset UI refreshes to prevent extreme lag spikes
+        self._preset_refresh_timer: Timer | None = None
 
         self.theme_colors = {
             "bg": "#111318", "fg": "#e1e2e9", "accent": "#a8c8ff",
             "error": "#ffb4ab", "warning": "#bdc7dc", "success": "#dbbce1", "muted": "#43474e"
         }
 
-        # Initialize mtime before loading so the watcher skips the first tick if nothing changed
         self.last_theme_mtime: float = 0.0
         if self.theme_path:
             loaded_theme = load_matugen_json(self.theme_path)
@@ -965,17 +958,88 @@ class DuskyTUI(App):
 
         yield AppFooter(id="footer")
 
+    def _get_preset_match_ratio(self, preset_item: ConfigItem) -> float:
+        """Calculates how much of a preset's payload currently matches reality."""
+        if not preset_item.preset_payload:
+            return 0.0
+
+        if preset_item.preset_payload.get("__ALL_DEFAULTS__"):
+            total, matches = 0, 0
+            for t_idx, items in self.schema.items():
+                for target_item in items:
+                    if target_item.type_ not in ("action", "preset") and getattr(target_item, "exists_in_target", True):
+                        total += 1
+                        if str(target_item.value) == str(target_item.default) or target_item.default is None:
+                            matches += 1
+            return matches / total if total > 0 else 0.0
+
+        total, matches = 0, 0
+        for key_path, expected_val in preset_item.preset_payload.items():
+            if key_path not in self._key_map:
+                continue
+            total += 1
+            t_idx, i_idx = self._key_map[key_path]
+            target_item = self.schema[t_idx][i_idx]
+            if getattr(target_item, "exists_in_target", True):
+                if str(target_item.value) == str(expected_val):
+                    matches += 1
+        return matches / total if total > 0 else 0.0
+
+    def _is_preset_active(self, preset_item: ConfigItem) -> bool:
+        return self._get_preset_match_ratio(preset_item) == 1.0
+
+    def _refresh_presets_ui(self) -> None:
+        """Forces an instant visual update of all presets to reflect current active status."""
+        for t_idx, items in self.schema.items():
+            for i_idx, itm in enumerate(items):
+                if itm.type_ == "preset":
+                    self._refresh_single_ui(t_idx, i_idx, itm)
+
     def _build_option(self, item: ConfigItem, is_highlighted: bool = False) -> Text:
         txt = Text()
         exists = getattr(item, "exists_in_target", True)
         is_pending = (str(item.value) != str(item.initial_value))
+        is_modified = (str(item.value) != str(item.default))
 
         CURSOR_CHAR = "▶"
         cursor = f"{CURSOR_CHAR} " if is_highlighted else "  "
         txt.append(cursor, style=f"{self.theme_colors['accent']} bold" if is_highlighted else "")
 
+        ratio = 0.0
+        is_active_preset = False
+        is_deviated_preset = False
+        
+        if item.type_ == "preset":
+            ratio = self._get_preset_match_ratio(item)
+            is_active_preset = (ratio == 1.0)
+            is_deviated_preset = (0.5 < ratio < 1.0)
+
+        # UNIFIED DOT PREFIX SYSTEM
+        if item.type_ == "preset":
+            if is_active_preset:
+                txt.append("●  ", style=self.theme_colors["success"])
+            elif is_deviated_preset:
+                txt.append("●  ", style=self.theme_colors["warning"]) # Indicates user tweaked the preset
+            else:
+                txt.append("●  ", style=self.theme_colors["muted"])
+        elif item.type_ == "action":
+            txt.append("●  ", style=self.theme_colors["muted"])
+        else:
+            if not self.auto_save and is_pending:
+                txt.append("[+] ", style=self.theme_colors["warning"])
+            else:
+                dot_color = self.theme_colors["error"] if (is_modified and exists) else self.theme_colors["muted"]
+                txt.append("●  ", style=dot_color)
+
+        # LABEL RENDERING
         if exists:
-            label_style = f"{self.theme_colors['fg']} bold" if is_highlighted else self.theme_colors["fg"]
+            if item.type_ == "preset" and is_active_preset:
+                label_style = f"{self.theme_colors['success']} bold"
+            elif item.type_ == "preset" and is_deviated_preset:
+                label_style = f"{self.theme_colors['warning']} bold" if is_highlighted else f"{self.theme_colors['fg']}"
+            else:
+                label_style = f"{self.theme_colors['fg']} bold" if is_highlighted else self.theme_colors["fg"]
+                
             txt.append(f"{item.label:<35}", style=label_style)
         else:
             label_style = f"{self.theme_colors['muted']} strike" if not is_highlighted else f"{self.theme_colors['muted']} strike bold"
@@ -987,17 +1051,20 @@ class DuskyTUI(App):
         val_str = str(item.value)
         def_str = str(item.default)
 
-        if item.type_ == "action":
+        # TAIL RENDERING (Values, Tags, Actions)
+        if item.type_ in ("action", "preset"):
             txt.append("   ")
-            txt.append("⚡ Execute Action", style=f"bold {self.theme_colors['warning']}" if exists else f"{self.theme_colors['muted']} italic")
-        else:
-            is_modified = val_str != def_str
-            if not self.auto_save and is_pending:
-                txt.append("[+] ", style=self.theme_colors["warning"])
+            if item.type_ == "preset":
+                if is_active_preset:
+                    txt.append("Active", style=f"bold {self.theme_colors['success']}")
+                elif is_deviated_preset:
+                    txt.append("Apply", style=f"bold {self.theme_colors['warning']}")
+                else:
+                    txt.append("Apply", style=f"bold {self.theme_colors['accent']}" if exists else f"{self.theme_colors['muted']} italic")
             else:
-                dot_color = self.theme_colors["error"] if (is_modified and exists) else self.theme_colors["muted"]
-                txt.append("●  ", style=dot_color)
-
+                txt.append("⚡ Execute Action", style=f"bold {self.theme_colors['warning']}" if exists else f"{self.theme_colors['muted']} italic")
+        else:
+            # Render standard item values
             accent = self.theme_colors["accent"] if exists else self.theme_colors["muted"]
             fg = self.theme_colors["fg"] if exists else self.theme_colors["muted"]
 
@@ -1054,6 +1121,47 @@ class DuskyTUI(App):
 
         state = self.engine.load_state()
 
+        # PASS 1: Build robust _key_map and load memory state BEFORE rendering UI
+        for i in range(len(self.tabs)):
+            for idx, item in enumerate(self.schema.get(i, [])):
+                map_key = f"{item.scope}.{item.key}" if item.scope and item.scope != "DEFAULT" else item.key
+                self._key_map[map_key] = (i, idx)
+
+                cache_key = f"{item.scope}/{item.key}" if item.scope else item.key
+                
+                if item.type_ in ("action", "preset"):
+                    item.exists_in_target = True
+                elif cache_key in state:
+                    item.exists_in_target = True
+                    raw_val = state[cache_key]
+
+                    if item.type_ == "bool":
+                        if isinstance(raw_val, bool):
+                            item.value = raw_val
+                        else:
+                            item.value = (str(raw_val).lower() == "true")
+                    elif item.type_ in ("int", "float"):
+                        try:
+                            item.value = float(raw_val) if item.type_ == "float" else int(float(raw_val))
+                        except (ValueError, TypeError): pass
+                    elif item.type_ in ("string", "picker", "cycle", "color"):
+                        if isinstance(raw_val, str):
+                            if raw_val.startswith("__VAR__"):
+                                item.value = raw_val[7:]
+                            else:
+                                item.value = raw_val[1:-1] if raw_val.startswith('"') and raw_val.endswith('"') else raw_val
+                        else:
+                            item.value = raw_val
+                    else:
+                        item.value = raw_val
+                else:
+                    item.exists_in_target = False
+
+                if not getattr(item, "_initial_loaded", False):
+                    item.initial_value = item.value
+                    item._initial_loaded = True
+
+        # PASS 2: Safely Build UI Components
         for i in range(len(self.tabs)):
             ol = self.query_one(f"#list-{i}", ConfigOptionList)
             items = self.schema.get(i, [])
@@ -1063,37 +1171,6 @@ class DuskyTUI(App):
                 first_item_id = None
 
                 for idx, item in enumerate(items):
-                    cache_key = f"{item.scope}/{item.key}" if item.scope else item.key
-                    if cache_key in state:
-                        item.exists_in_target = True
-                        raw_val = state[cache_key]
-
-                        if item.type_ == "bool":
-                            if isinstance(raw_val, bool):
-                                item.value = raw_val
-                            else:
-                                item.value = (str(raw_val).lower() == "true")
-                        elif item.type_ in ("int", "float"):
-                            try:
-                                item.value = float(raw_val) if item.type_ == "float" else int(float(raw_val))
-                            except (ValueError, TypeError): pass
-                        elif item.type_ in ("string", "picker", "cycle", "color"):
-                            if isinstance(raw_val, str):
-                                if raw_val.startswith("__VAR__"):
-                                    item.value = raw_val[7:]
-                                else:
-                                    item.value = raw_val[1:-1] if raw_val.startswith('"') and raw_val.endswith('"') else raw_val
-                            else:
-                                item.value = raw_val
-                        else:
-                            item.value = raw_val
-                    else:
-                        item.exists_in_target = False
-
-                    if not getattr(item, "_initial_loaded", False):
-                        item.initial_value = item.value
-                        item._initial_loaded = True
-
                     if item.group and item.group != current_group:
                         current_group = item.group
                         header_txt = Text(f"── {current_group.upper()} ──", style=f"bold {self.theme_colors['accent']}")
@@ -1330,9 +1407,79 @@ class DuskyTUI(App):
                 if player.endswith("mpv"): cmd.extend(["--no-video", "--really-quiet"])
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def _apply_value(self, tab_idx: int, item_idx: int, item: ConfigItem, new_val: Any, is_undo: bool = False, batch_mode: bool = False) -> bool:
-        if not is_undo:
-            self.undo_stack.append((tab_idx, item_idx, item.value, new_val))
+    def _apply_transaction(self, transaction: list[tuple[int, int, Any, Any]], action_type: str = "new", success_msg: str = "") -> None:
+        """
+        Native, seamless transaction manager.
+        Handles optimistic memory mutation, bulk saving, precise dead-letter queue rollback, and stack manipulation.
+        action_type can be: "new", "undo", "redo"
+        """
+        # 1. Apply to memory optimistically
+        for t, i, o, n in transaction:
+            item = self.schema[t][i]
+            item.value = o if action_type == "undo" else n
+            item.exists_in_target = True
+            self.pending_commits.add((t, i))
+            self._refresh_single_ui(t, i, item)
+        
+        # 2. Handle Saving & Native Rollback
+        if self.auto_save:
+            # action_save_batch automatically handles its own notifications, sound, and clears successful items from pending_commits
+            self.action_save_batch() 
+            
+            successful_parts = []
+            failed_parts = []
+            
+            # Cross-reference the transaction with whatever action_save_batch failed to write
+            for t, i, o, n in transaction:
+                if (t, i) in self.pending_commits:
+                    failed_parts.append((t, i, o, n))
+                    # Natively roll back memory & UI for failed parts
+                    item = self.schema[t][i]
+                    item.value = n if action_type == "undo" else o
+                    self._refresh_single_ui(t, i, item)
+                    self.pending_commits.discard((t, i))
+                else:
+                    successful_parts.append((t, i, o, n))
+            
+            # Overwrite the generic batch feedback with our specific transaction message
+            if not failed_parts and success_msg:
+                self.notify_status(success_msg)
+                
+            # 3. Native Stack Management (Auto Save Mode)
+            if successful_parts:
+                if action_type == "undo": self.redo_stack.append(successful_parts)
+                elif action_type == "redo": self.undo_stack.append(successful_parts)
+                elif action_type == "new":
+                    self.undo_stack.append(successful_parts)
+                    self.redo_stack.clear()
+                    
+            if failed_parts:
+                # Put failed attempts right back where they came from so they aren't lost
+                if action_type == "undo": self.undo_stack.append(failed_parts)
+                elif action_type == "redo": self.redo_stack.append(failed_parts)
+        else:
+            # 3. Native Stack Management (Batch Mode)
+            self._update_footer_legend()
+            if action_type == "undo": self.redo_stack.append(transaction)
+            elif action_type == "redo": self.undo_stack.append(transaction)
+            elif action_type == "new":
+                self.undo_stack.append(transaction)
+                self.redo_stack.clear()
+
+            if success_msg:
+                self.notify_status(success_msg)
+
+        # Instantly resolve UI without the 150ms debounce delay for bulk transactions
+        if getattr(self, "_preset_refresh_timer", None) is not None:
+            self._preset_refresh_timer.stop()
+            self._preset_refresh_timer = None
+        self._refresh_presets_ui()
+
+    def _apply_value(self, tab_idx: int, item_idx: int, item: ConfigItem, new_val: Any, is_undo: bool = False, batch_mode: bool = False, record_undo: bool = True) -> bool:
+        old_val = item.value
+
+        if not is_undo and record_undo:
+            self.undo_stack.append([(tab_idx, item_idx, old_val, new_val)])
             self.redo_stack.clear()
 
         item.value = new_val
@@ -1349,8 +1496,9 @@ class DuskyTUI(App):
             k = (tab_idx, item_idx)
             if k in self._save_timers:
                 self._save_timers[k].stop()
+            # Capture old_val into the timer so _do_auto_save can roll it back natively if needed
             self._save_timers[k] = self.set_timer(
-                0.25, lambda ti=tab_idx, ii=item_idx, it=item, vs=val_str: self._do_auto_save(ti, ii, it, vs)
+                0.25, lambda ti=tab_idx, ii=item_idx, it=item, vs=val_str, ov=old_val: self._do_auto_save(ti, ii, it, vs, ov)
             )
         else:
             self.pending_commits.add((tab_idx, item_idx))
@@ -1358,15 +1506,33 @@ class DuskyTUI(App):
                 self._update_footer_legend()
 
         self._refresh_single_ui(tab_idx, item_idx, item)
+
+        if not batch_mode:
+            if getattr(self, "_preset_refresh_timer", None) is not None:
+                self._preset_refresh_timer.stop()
+            self._preset_refresh_timer = self.set_timer(0.15, self._refresh_presets_ui)
+
         return True
 
-    def _do_auto_save(self, tab_idx: int, item_idx: int, item: ConfigItem, val_str: str) -> None:
+    def _do_auto_save(self, tab_idx: int, item_idx: int, item: ConfigItem, val_str: str, old_val: Any) -> None:
         self._save_timers.pop((tab_idx, item_idx), None)
         success, msg, _ = self.engine.write_value(item.key, item.scope, val_str)
         if success:
             self.notify_status(f"Updated {item.label}")
         else:
             self.notify_status(f"Error: {msg}")
+
+            # NATIVE ROLLBACK FOR SINGLE EDITS
+            item.value = old_val
+            self._refresh_single_ui(tab_idx, item_idx, item)
+
+            # Snip the dead action off the top of the undo stack
+            if self.undo_stack:
+                top_tx = self.undo_stack[-1]
+                if len(top_tx) == 1 and top_tx[0][:2] == (tab_idx, item_idx):
+                    self.undo_stack.pop()
+
+            self.play_reset_sound()
 
     def _refresh_single_ui(self, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         try:
@@ -1385,13 +1551,15 @@ class DuskyTUI(App):
     def action_toggle_save_mode(self) -> None:
         self.auto_save = not self.auto_save
 
-    def action_save_batch(self) -> None:
+    def action_save_batch(self) -> bool:
         self.trigger_shortcut_blink("ctrl-s")
         if not self.pending_commits:
             self.notify_status("No pending changes.")
-            return
+            return True
 
-        success_count = 0
+        changes_to_write = []
+        processed_commits = []
+
         for tab_idx, item_idx in list(self.pending_commits):
             item = self.schema[tab_idx][item_idx]
             val = item.value
@@ -1402,16 +1570,43 @@ class DuskyTUI(App):
                 if item.type_ == "color" and is_theme_variable(val_str):
                     val_str = f"__VAR__{val_str}"
 
-            success, _, _ = self.engine.write_value(item.key, item.scope, val_str)
-            if success:
-                self.pending_commits.discard((tab_idx, item_idx))
-                success_count += 1
+            changes_to_write.append((item.key, item.scope, val_str))
+            processed_commits.append((tab_idx, item_idx))
+
+        success, msg, _ = self.engine.write_batch(changes_to_write)
+        final_success = False
+
+        if success:
+            for commit in processed_commits:
+                self.pending_commits.discard(commit)
+            self.notify_status(f"Batched {len(changes_to_write)} commits successfully.")
+            self.play_reset_sound()
+            final_success = True
+        else:
+            success_count = 0
+            first_error = ""
+            for (key, scope, val_str), commit in zip(changes_to_write, processed_commits):
+                ok, item_msg, _ = self.engine.write_value(key, scope, val_str)
+                if ok:
+                    self.pending_commits.discard(commit)
+                    success_count += 1
+                elif not first_error:
+                    first_error = item_msg
+
+            if success_count == len(changes_to_write):
+                self.notify_status(f"Batched {len(changes_to_write)} commits successfully (fallback).")
+                self.play_reset_sound()
+                final_success = True
+            elif success_count > 0:
+                self.notify_status(f"Partial success ({success_count}/{len(changes_to_write)}). Error: {first_error}")
+                self.play_reset_sound()
+            else:
+                err = first_error if first_error else msg
+                self.notify_status(f"Batch Error: {err}")
 
         self._refresh_all_ui()
         self._update_footer_legend()
-        if success_count > 0:
-            self.notify_status(f"Batched {success_count} commits successfully.")
-            self.play_reset_sound()
+        return final_success
 
     def action_show_diff(self) -> None:
         if isinstance(self.screen, DiffScreen):
@@ -1435,23 +1630,27 @@ class DuskyTUI(App):
         if not self.undo_stack:
             self.notify_status("Nothing to undo.")
             return
+        transaction = self.undo_stack.pop()
 
-        tab_idx, item_idx, old_val, new_val = self.undo_stack.pop()
-        self.redo_stack.append((tab_idx, item_idx, old_val, new_val))
-        item = self.schema[tab_idx][item_idx]
-        self._apply_value(tab_idx, item_idx, item, old_val, is_undo=True)
-        self.notify_status(f"Undid change to {item.label}")
+        if self.auto_save:
+            msg = f"Undid batch of {len(transaction)} changes." if len(transaction) > 1 else f"Undid change to {self.schema[transaction[0][0]][transaction[0][1]].label}"
+        else:
+            msg = f"Queued undo of {len(transaction)} changes." if len(transaction) > 1 else f"Queued undo for {self.schema[transaction[0][0]][transaction[0][1]].label}"
+
+        self._apply_transaction(transaction, action_type="undo", success_msg=msg)
 
     def action_redo(self) -> None:
         if not self.redo_stack:
             self.notify_status("Nothing to redo.")
             return
+        transaction = self.redo_stack.pop()
 
-        tab_idx, item_idx, old_val, new_val = self.redo_stack.pop()
-        self.undo_stack.append((tab_idx, item_idx, old_val, new_val))
-        item = self.schema[tab_idx][item_idx]
-        self._apply_value(tab_idx, item_idx, item, new_val, is_undo=True)
-        self.notify_status(f"Redid change to {item.label}")
+        if self.auto_save:
+            msg = f"Redid batch of {len(transaction)} changes." if len(transaction) > 1 else f"Redid change to {self.schema[transaction[0][0]][transaction[0][1]].label}"
+        else:
+            msg = f"Queued redo of {len(transaction)} changes." if len(transaction) > 1 else f"Queued redo for {self.schema[transaction[0][0]][transaction[0][1]].label}"
+
+        self._apply_transaction(transaction, action_type="redo", success_msg=msg)
 
     def action_toggle_help(self) -> None:
         content_area = self.query_one("#content-area")
@@ -1550,7 +1749,6 @@ class DuskyTUI(App):
 
         new_val = item.value
 
-        # SURGICAL OVERRIDE: If explicit options are provided, cycle through them regardless of type
         if item.options and item.type_ != "bool":
             try: 
                 idx = item.options.index(item.value)
@@ -1570,7 +1768,7 @@ class DuskyTUI(App):
                 if item.min_val is not None: new_val = max(item.min_val, new_val)
                 if item.max_val is not None: new_val = min(item.max_val, new_val)
                 new_val = round(new_val, 6) if item.type_ == "float" else int(new_val)
-            case "cycle": return # Handled by the override above
+            case "cycle": return 
             case "color":
                 r, g, b = color_to_rgb(str(item.value))
                 current_name = get_color_name(r, g, b)
@@ -1599,21 +1797,18 @@ class DuskyTUI(App):
             if not switcher.current: return
             tab_idx = int(switcher.current.split("-")[1])
             items = self.schema.get(tab_idx, [])
-            success_count = 0
-
+            
+            transaction = []
             for item_idx, item in enumerate(items):
                 if str(item.value) != str(item.default):
-                    if self._apply_value(tab_idx, item_idx, item, item.default, batch_mode=True):
-                        success_count += 1
-
-            if success_count > 0:
-                if self.auto_save:
-                    self.action_save_batch()
-                    self.notify_status(f"Reset and saved {success_count} items in {self.tabs[tab_idx]}")
-                else:
-                    self._update_footer_legend()
-                    self.notify_status(f"Reset {success_count} items in {self.tabs[tab_idx]}")
-                    self.play_reset_sound()
+                    transaction.append((tab_idx, item_idx, item.value, item.default))
+            
+            if transaction:
+                verb = "Reset" if self.auto_save else "Queued reset of"
+                msg = f"{verb} {len(transaction)} items in {self.tabs[tab_idx]}"
+                self._apply_transaction(transaction, action_type="new", success_msg=msg)
+            else:
+                self.notify_status(f"No changes to reset in {self.tabs[tab_idx]}")
         except Exception: pass
 
     def action_submit_current(self) -> None:
@@ -1640,7 +1835,7 @@ class DuskyTUI(App):
 
         is_modified = str(item.value) != str(item.default)
 
-        if is_modified and item.type_ != "action":
+        if is_modified and item.type_ not in ("action", "preset"):
             rendered_text = self._build_option(item, True)
             total_width = rendered_text.cell_len
             reset_width = 10
@@ -1655,7 +1850,54 @@ class DuskyTUI(App):
             case "bool" | "cycle": self.action_adjust(1)
             case "int" | "float" | "string" | "color": self.prompt_string(tab_idx, item_idx, item)
             case "action": self.notify_status(f"Action triggered: {item.label}")
+            case "preset": self.apply_preset(item)
             case "picker": self.prompt_picker(tab_idx, item_idx, item)
+
+    def apply_preset(self, preset_item: ConfigItem) -> None:
+        if not preset_item.preset_payload:
+            self.notify_status("Preset contains no payload.")
+            return
+            
+        transaction = []
+        skipped = 0
+        
+        if preset_item.preset_payload.get("__ALL_DEFAULTS__"):
+            for t_idx, items in self.schema.items():
+                for i_idx, target_item in enumerate(items):
+                    if target_item.type_ not in ("action", "preset"):
+                        if not getattr(target_item, "exists_in_target", True):
+                            skipped += 1
+                            continue
+                        if target_item.value != target_item.default and target_item.default is not None:
+                            transaction.append((t_idx, i_idx, target_item.value, target_item.default))
+        else:
+            for key_path, new_val in preset_item.preset_payload.items():
+                if key_path not in self._key_map:
+                    skipped += 1
+                    continue
+                    
+                t_idx, i_idx = self._key_map[key_path]
+                target_item = self.schema[t_idx][i_idx]
+                
+                if not getattr(target_item, "exists_in_target", True):
+                    skipped += 1
+                    continue
+                    
+                if target_item.value != new_val:
+                    transaction.append((t_idx, i_idx, target_item.value, new_val))
+        
+        if not transaction:
+            if skipped > 0:
+                self.notify_status(f"Preset applied, but {skipped} items were missing/invalid.")
+            else:
+                self.notify_status("Preset already active (no changes needed).")
+            return
+            
+        verb = "applied" if self.auto_save else "queued"
+        msg = f"Preset '{preset_item.label}' {verb}."
+        if skipped > 0: msg += f" ({skipped} skipped)"
+        
+        self._apply_transaction(transaction, action_type="new", success_msg=msg)
 
     def prompt_string(self, tab_idx: int, item_idx: int, item: ConfigItem) -> None:
         def check_reply(new_val: str | None) -> None:

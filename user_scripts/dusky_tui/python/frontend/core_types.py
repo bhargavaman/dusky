@@ -4,7 +4,7 @@ from typing import Any, Literal
 from abc import ABC, abstractmethod
 
 # Preserving your exact Python 3.12+ type alias syntax from the original ui.py
-type ConfigType = Literal["bool", "int", "float", "string", "cycle", "action", "menu", "picker", "color"]
+type ConfigType = Literal["bool", "int", "float", "string", "cycle", "action", "menu", "picker", "color", "preset"]
 
 @dataclass(kw_only=True)
 class ConfigItem:
@@ -26,6 +26,9 @@ class ConfigItem:
     extended_help: str | None = None
     initial_value: Any = None 
     _initial_loaded: bool = False
+    
+    # Batch Operations 
+    preset_payload: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.value is None:
@@ -65,3 +68,32 @@ class BaseEngine(ABC):
             tuple[bool, str, str]: (Success boolean, Status/Error message, Debug/Telemetry output)
         """
         pass
+
+    def write_batch(self, changes: list[tuple[str, str, str]]) -> tuple[bool, str, str]:
+        """
+        Commits multiple value changes to the configuration backend.
+        Base implementation loops through write_value. Engine subclasses should override 
+        this for atomic AST batch writes to prevent I/O bottlenecks.
+        
+        Args:
+            changes: A list of tuples containing (target_key, target_scope, new_value)
+            
+        Returns:
+            tuple[bool, str, str]: (Success boolean, Status/Error message, Debug/Telemetry output)
+        """
+        success_count = 0
+        last_msg = ""
+        last_debug = ""
+        for key, scope, val in changes:
+            ok, msg, debug = self.write_value(key, scope, val)
+            if ok:
+                success_count += 1
+            last_msg = msg
+            last_debug = debug
+            
+        if success_count == len(changes):
+            return True, f"Successfully batched {success_count} writes.", last_debug
+        elif success_count > 0:
+            return False, f"Partial failure: only wrote {success_count}/{len(changes)}.", last_debug
+        else:
+            return False, f"Batch write failed: {last_msg}", last_debug

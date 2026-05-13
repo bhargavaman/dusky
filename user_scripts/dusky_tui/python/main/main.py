@@ -30,7 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from python.engines.lua import HyprlandLuaEngine
-from python.frontend.ui import DuskyTUI
+from python.frontend.ui import DuskyTUI, is_theme_variable
 
 # =============================================================================
 # SCHEMA SEARCH PATHS
@@ -133,7 +133,7 @@ EXAMPLES:
     safety_group.add_argument("--backup", action="store_true", help="Create a backup of the target config before doing anything.")
     safety_group.add_argument("--restore", action="store_true", help="Restore the target config from the latest backup and exit.")
     
-    # IMPROVEMENT: Use mutually exclusive group to prevent silent CLI fall-through via hard exits
+    # Mutually exclusive group to prevent silent CLI fall-through via hard exits
     headless_group = parser.add_mutually_exclusive_group()
     headless_group.add_argument("--default", action="store_true", help="Headlessly restore all schema items to their default values.")
     headless_group.add_argument("--reset-key", metavar="KEY", type=str, help="Headlessly restore a specific key to its default.")
@@ -180,7 +180,7 @@ EXAMPLES:
 
     schema_module = importlib.util.module_from_spec(spec)
     
-    # IMPROVEMENT: Prefix namespace mapping to strictly prevent silent standard library clobbering
+    # Prefix namespace mapping to strictly prevent silent standard library clobbering
     safe_module_namespace = f"dusky_schema_{module_name}"
     sys.modules[safe_module_namespace] = schema_module
     
@@ -238,7 +238,7 @@ EXAMPLES:
                         print(f"\n> {item.extended_help.replace('**', '')}\n")
             sys.exit(0)
 
-        # IMPROVEMENT: Prevent data loss via schema flattening collisions. Map both direct & compound keys safely.
+        # Map both direct & compound keys safely
         flat_schema = {}
         for items in SCHEMA.values():
             for item in items:
@@ -270,6 +270,10 @@ EXAMPLES:
                 print(f"[-] Key '{target_key}' is ambiguous across multiple scopes. Please specify using 'scope.{target_key}'.")
                 sys.exit(1)
 
+            # APPLY HEADLESS THEME VARIABLE WRAPPER
+            if item.type_ == "color" and is_theme_variable(val_str):
+                val_str = f"__VAR__{val_str}"
+
             logger.info(f"Headless Injection: {target_key} -> {val_str}")
             success, msg, _ = engine.write_value(item.key, item.scope, val_str)
             print(f"[{'OK' if success else 'FAIL'}] {msg}")
@@ -285,7 +289,15 @@ EXAMPLES:
                 print(f"[-] Key '{args.reset_key}' is ambiguous across multiple scopes. Please specify using 'scope.{args.reset_key}'.")
                 sys.exit(1)
 
-            val = "true" if item.default is True else "false" if item.default is False else "nil" if item.default is None else str(item.default)
+            # APPLY HEADLESS THEME VARIABLE WRAPPER
+            if item.default is True: val = "true"
+            elif item.default is False: val = "false"
+            elif item.default is None: val = "nil"
+            else:
+                val = str(item.default)
+                if item.type_ == "color" and is_theme_variable(val):
+                    val = f"__VAR__{val}"
+
             logger.info(f"Headless Reset Key: {args.reset_key} -> {val}")
             success, msg, _ = engine.write_value(item.key, item.scope, val)
             print(f"[{'OK' if success else 'FAIL'}] {msg}")
@@ -293,19 +305,41 @@ EXAMPLES:
 
         if args.default:
             logger.info("Initiating Full Headless Default Restoration")
-            success_count, skip_count = 0, 0
             
             # Use id() mapping to ensure we don't duplicate executions for keys vs scoped_keys
             unique_items = {id(item): item for item in flat_schema.values() if item is not None}.values()
             
-            for item in unique_items:
-                val = "true" if item.default is True else "false" if item.default is False else "nil" if item.default is None else str(item.default)
-                success, msg, _ = engine.write_value(item.key, item.scope, val)
-                if success: success_count += 1
-                else: skip_count += 1
+            changes_to_write = []
             
-            print(f"[*] Restoration Complete. Reset: {success_count} | Skipped: {skip_count}")
-            sys.exit(0)
+            for item in unique_items:
+                # APPLY HEADLESS THEME VARIABLE WRAPPER
+                if item.default is True: val = "true"
+                elif item.default is False: val = "false"
+                elif item.default is None: val = "nil"
+                else:
+                    val = str(item.default)
+                    if item.type_ == "color" and is_theme_variable(val):
+                        val = f"__VAR__{val}"
+                
+                changes_to_write.append((item.key, item.scope, val))
+            
+            # FULLY DEPLOY NATIVE BATCH ARCHITECTURE IN HEADLESS CLI
+            success, msg, _ = engine.write_batch(changes_to_write)
+            
+            if success:
+                print(f"[*] Restoration Complete. Reset {len(changes_to_write)} items successfully.")
+                sys.exit(0)
+            else:
+                # Graceful fallback logic
+                success_count, skip_count = 0, 0
+                for key, scope, val in changes_to_write:
+                    ok, _, _ = engine.write_value(key, scope, val)
+                    if ok: success_count += 1
+                    else: skip_count += 1
+                
+                print(f"[*] Partial Restoration Complete. Reset: {success_count} | Skipped: {skip_count}")
+                sys.exit(0 if success_count > 0 else 1)
+
 
     # --- 5. INTERACTIVE TUI EXECUTION ---
     logger.info("Launching TUI")
