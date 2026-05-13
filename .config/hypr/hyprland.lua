@@ -1,3 +1,20 @@
+require("edit_here.source.default_apps")
+
+-- -----------------------------------------------------
+-- DEFAULT APPS & USER VARIABLES
+-- Must be FIRST so that globals (terminal, browser, etc.)
+-- defined in this file are available to every file below.
+-- Managed by: ~/.config/hypr/edit_here/source/default_apps.lua
+-- -----------------------------------------------------
+
+
+
+
+-- -----------------------------------------------------
+-- Path to home
+-- -----------------------------------------------------
+HOME = os.getenv("HOME")
+
 -- =============================================================================
 -- HYPRLAND MAIN CONFIGURATION
 -- User: [dusky]
@@ -10,13 +27,6 @@
 --   require("source.monitors")  ->  ~/.config/hypr/source/monitors.lua
 -- =============================================================================
 
--- -----------------------------------------------------
--- DEFAULT APPS & USER VARIABLES
--- Must be FIRST so that globals (terminal, browser, etc.)
--- defined in this file are available to every file below.
--- Managed by: ~/.config/hypr/edit_here/source/default_apps.lua
--- -----------------------------------------------------
--- require("edit_here.source.default_apps")
 
 -- -----------------------------------------------------
 -- SOURCE FILES
@@ -75,4 +85,6 @@ require("source.workspace_rules")
 -- in-progress changes you don't want to commit yet.
 -- Loaded LAST so it can overwrite any setting above.
 -- Managed by: ~/.config/hypr/edit_here/
--- require("edit_here.hyprland")
+
+-- Source User Custom Config Overlay
+require("edit_here.hyprland")

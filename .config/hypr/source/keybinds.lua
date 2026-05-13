@@ -8,12 +8,11 @@
 -- HYPRLAND KEYBINDINGS
 -- -------------------------------------------------------------------------------------------------
 
-local terminal    = "kitty"
-local fileManager = "nemo"
-local menu        = "rofi -show drun"
-local browser     = "firefox"
-local textEditor  = "nvim"
-local HOME = os.getenv("HOME")
+terminal    = "kitty"
+fileManager = "nemo"
+menu        = "rofi -show drun"
+browser     = "firefox"
+textEditor  = "nvim"
 
 -- Path shortcut for cleaner config
 
