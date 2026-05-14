@@ -1,19 +1,8 @@
 -- =============================================================================
--- window_rules_new_backup_organized.lua
 --
--- Reorganized, fully commented version of your Hyprland window rules,
--- translated to the new v0.55 Lua syntax.
--- - Everything from the original file has been preserved verbatim (no semantics changed).
 -- - Blocks are grouped in an intuitive order (global/general -> floating -> media -> apps
 --   -> dialogs/pickers -> visual styling -> workspace rules -> misc/startup).
--- - Explanatory comments precede each group and/or rule explaining intent and matching
---   behavior so you (or anyone else) can quickly understand why a rule exists.
--- - Consolidation notes: I did NOT merge any rules that were explicitly separate and tested
---   by you. Where consolidation was safe and obvious, I left a short note suggesting
---   a consolidated alternative while keeping your original individual rules intact.
 --
--- NOTE: This file is purely reorganizational and documentary. It keeps your exact
--- windowrule blocks and commented-out blocks as they were in the backup.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
