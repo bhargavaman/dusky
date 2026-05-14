@@ -47,5 +47,11 @@ hl.config({
 
         -- uses extra 1 watt but looks smoother when enabled (1)
         vrr = 0
+    },
+
+    debug = {
+
+        -- Power Saving & Refresh Rate (true saves power because gpu doesn't have to render frames when idle)
+        vfr = true
     }
 })

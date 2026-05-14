@@ -95,3 +95,16 @@ if enforce_global_fallbacks then
         layout = "scrolling"
     })
 end
+
+
+-- ==============================================================================
+-- 5. preserve_split needs to be true for toggle split keybind to work
+-- ==============================================================================
+
+hl.config({
+    dwindle = {
+        preserve_split = true, -- You probably want this
+    },
+})
+
+

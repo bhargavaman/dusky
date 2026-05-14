@@ -537,13 +537,21 @@ hl.bind(
     { description = "Pin Window" }
 )
 
+--------------------------------------------------------------------
+-- Split requiers preserve_split to be true managed in another config
+--------------------------------------------------------------------
+-- hl.config({
+--     dwindle = {
+--         preserve_split = true,
+--     },
+-- })
+
 hl.bind(
     "SUPER + Y",
     hl.dsp.layout("togglesplit"),
     { description = "Toggle Window Split" }
 )
-
-
+---------------------------------------------
 hl.bind(
     "SUPER + D",
     hl.dsp.exec_cmd([[
