@@ -145,657 +145,388 @@ EOF
 -- These will override or add to the defaults found in ~/.config/hypr/source/
 -- This file can also be managed with dusky monitor from the rofi menu or
 -- from dusky control center.
+-- HOW THIS FILE IS STRUCTURED
+-- ──────────────────────────────────────────────────────────────────────────
+--  SECTION 1 │ GLOBAL FALLBACK RULE       (required — keep this enabled)
+--  SECTION 2 │ LAPTOP BUILT-IN DISPLAY    (eDP-1 example)
+--  SECTION 3 │ EXTERNAL / DESKTOP MONITORS (DP / HDMI examples)
+--  SECTION 4 │ MIRROR / CLONE SETUP
+--  SECTION 5 │ DISABLING A MONITOR
+--  SECTION 6 │ WORKSPACE → MONITOR BINDINGS
+--  SECTION 7 │ GLOBAL RENDER & POWER SETTINGS (VRR, VFR, color pipeline)
 --
--- Syntax:
---   hl.monitor({ output = "DP-1", mode = "2560x1440@144", position = "0x0", scale = 1 })
---   hl.monitor({ output = "",     mode = "preferred",     position = "auto", scale = "auto" })
+-- QUICK REFERENCE — hl.monitor() FIELDS
+-- ──────────────────────────────────────────────────────────────────────────
+--  output         STRING   Port name ("eDP-1", "DP-1", "HDMI-A-1") or ""
+--                          for the global fallback.  Use `hyprctl monitors all`
+--                          to list every connected and disconnected output.
+--                          You may also match by description (see SECTION 3).
 --
--- See: https://wiki.hypr.land/Configuring/Basics/Monitors/
--- ==============================================================================
---[[
-#################################################################################################
-  MONITOR CONFIGURATION — Hyprland 0.55 (Lua)
-  https://wiki.hypr.land/Configuring/Basics/Monitors/
+--  mode           STRING   "WIDTHxHEIGHT[@REFRESH]"  e.g. "1920x1080@144"
+--                          Special values: "preferred"  (native res/rate)
+--                                          "highres"    (highest resolution)
+--                                          "highrr"     (highest refresh rate)
+--
+--  position       STRING   "XxY" pixel offset from the virtual layout origin.
+--                          Hyprland uses an INVERSE-Y system:
+--                            negative Y = higher on screen
+--                            positive Y = lower on screen
+--                          Special values: "auto"        (place to the right)
+--                                          "auto-left"   "auto-right"
+--                                          "auto-up"     "auto-down"
+--
+--  scale          NUMBER   Fractional scale factor, e.g. 1, 1.5, 2.
+--                 STRING   "auto" lets Hyprland pick based on PPI.
+--                          Tip: integer scales (1, 2) avoid sub-pixel blur.
+--                          Valid scale = resolution / scale must be integer.
+--
+--  transform      NUMBER   Screen rotation / flip:
+--                            0  normal              4  flipped
+--                            1  90°                 5  flipped + 90°
+--                            2  180°                6  flipped + 180°
+--                            3  270°                7  flipped + 270°
+--
+--  mirror         STRING   Output name to clone this monitor from.
+--                          e.g.  mirror = "eDP-1"  makes this display a copy.
+--
+--  disabled       BOOLEAN  true = tell Hyprland this output does not exist.
+--                          Useful for phantom outputs (e.g. "Unknown-1").
+--
+--  bitdepth       NUMBER   8 (default) or 10 for 10-bit colour output.
+--                          NOTE: Hyprland border colours do NOT support 10-bit.
+--                          Some screen-capture tools also break with 10-bit.
+--
+--  cm             STRING   Colour management preset:
+--                            "auto"     automatic (default)
+--                            "sdronly"  force SDR pipeline
+--                            "hdr"      HDR output (requires HDR-capable panel)
+--                            "edid"     use display's EDID colour profile
+--
+--  sdrbrightness  NUMBER   SDR content brightness multiplier when HDR is on.
+--                          Range 0.5–2.0.  Default ~1.0.
+--
+--  sdrsaturation  NUMBER   SDR content saturation multiplier when HDR is on.
+--                          Range 0.5–1.5.  Default ~1.0.
+--
+--  sdr_eotf       STRING   Transfer function assumed for SDR/sRGB content:
+--                            "default"  follows render.cm_sdr_eotf (global)
+--                            "srgb"     piecewise sRGB
+--                            "gamma22"  Gamma 2.2
+--
+--  icc            STRING   ABSOLUTE path to an .icm / .icc profile.
+--                          Forces sdr_eotf = "srgb" automatically.
+--                          Overrides the cm preset.
+--                          ⚠  Incompatible with HDR gaming; artefacts may occur.
+--
+--  vrr            NUMBER   Variable Refresh Rate override for this monitor:
+--                            0  off
+--                            1  always on
+--                            2  fullscreen apps only (recommended for desktops)
+--                          Overrides the global misc.vrr setting.
+--
+--  reserved_area  NUMBER   Pixels reserved on all four edges (single value), or
+--                 TABLE    a table { top=N, bottom=N, left=N, right=N }.
+--                          Stacks on top of bars / layer-shells.
+--                          Only ONE reserved_area rule per monitor is allowed.
+-- ──────────────────────────────────────────────────────────────────────────
 
-  Quick-reference commands:
-    hyprctl monitors all          → list all active + inactive monitors with full details
-    hyprctl monitors              → list only active monitors
-    hyprctl monitors | grep desc  → grab the description string for desc:-based rules
 
-  FIELD REFERENCE (all fields beyond `output` are optional):
-    output        — connector name ("eDP-1", "DP-1", "HDMI-A-1") or desc:"..." or "" (fallback)
-    mode          — "WxH@RR" | "preferred" (native) | "highres" | "highrr"
-    position      — "XxY" | "auto" | "auto-right/left/up/down"
-                    "auto-center-right/left/up/down" (centers-based placement)
-    scale         — float (1, 1.5, 2 …) | "auto" (Hyprland picks based on PPI)
-    transform     — 0=normal 1=90° 2=180° 3=270° 4=flip 5=flip+90° 6=flip+180° 7=flip+270°
-    mirror        — connector name of the source monitor to mirror
-    bitdepth      — 8 (default) | 10 (HDR/wide-gamut panels)
-    cm            — colour-management preset (see Section 9)
-    sdrbrightness — SDR brightness multiplier when cm="hdr" (default 1.0)
-    sdrsaturation — SDR saturation multiplier when cm="hdr" (default 1.0)
-    sdr_eotf      — "default" | "srgb" | "gamma22"  (SDR transfer function)
-    icc           — absolute path to an ICC/ICM profile for this output
-    vrr           — per-display VRR mode: 0=off 1=on 2=fullscreen-only
-    disabled      — true/false  (soft-disable the output, e.g. Unknown-1)
-    reserved_area — { top, bottom, left, right }  extra reserved pixels (stacks on bar area)
-#################################################################################################
---]]
-
-
--- =================================================================================================
--- SECTION 1 — GLOBAL FALLBACK  (CRITICAL — keep this first, always)
--- =================================================================================================
--- Catches every monitor not matched by a specific rule below.
--- "preferred" = native resolution & refresh. scale "auto" = Hyprland picks based on PPI.
--- Without this, hotplugged displays (projectors, docks, USB-C adapters) may stay black.
+-- #############################################################################
+-- SECTION 1 — GLOBAL FALLBACK RULE
+-- #############################################################################
+-- This catches any monitor that has no explicit rule below.
+-- Critical for plug-and-play (projectors, docks, etc.) — do NOT remove this.
+-- Change scale to 2 here if you commonly hotplug HiDPI external displays.
 
 hl.monitor({
-    output   = "",
-    mode     = "preferred",
-    position = "auto",
-    scale    = "auto",
+    output   = "",          -- "" = match any output not covered by a specific rule
+    mode     = "preferred", -- use the display's advertised native resolution & rate
+    position = "auto",      -- auto-place to the right of other monitors
+    scale    = "auto",      -- let Hyprland decide based on PPI
 })
 
 
--- =================================================================================================
--- SECTION 2 — LAPTOP BUILT-IN DISPLAY  (eDP-1)
--- =================================================================================================
--- Uncomment and adjust the block that matches your panel.
--- Run `hyprctl monitors all` to confirm your connector name (eDP-1, eDP-2, …).
+-- #############################################################################
+-- SECTION 2 — LAPTOP BUILT-IN DISPLAY (eDP-1)
+-- #############################################################################
+-- Uncomment and adjust the block that matches your use-case.
+-- Run `hyprctl monitors all` to verify your internal display is named "eDP-1".
 
--- --- 2.1  Standard 1080p laptop (1x scale) --------------------------------------------------
+-- ── 2a. Standard laptop panel ─────────────────────────────────────────────
 -- hl.monitor({
---     output   = "eDP-1",
---     mode     = "1920x1080@60",
---     position = "0x0",
---     scale    = 1,
+--     output    = "eDP-1",
+--     mode      = "preferred",   -- or e.g. "2560x1600@165"
+--     position  = "0x0",
+--     scale     = 1,             -- use 2 for HiDPI / Retina panels
+--     transform = 0,             -- 0 = normal (no rotation)
 -- })
 
--- --- 2.2  QHD / 2K laptop (1.5x scale) -------------------------------------------------------
+-- ── 2b. Laptop panel — 10-bit HDR (requires HDR-capable display) ───────────
 -- hl.monitor({
---     output   = "eDP-1",
---     mode     = "2560x1600@165",
---     position = "0x0",
---     scale    = 1.5,
+--     output        = "eDP-1",
+--     mode          = "2880x1800@90",
+--     position      = "0x0",
+--     scale         = 2,
+--     bitdepth      = 10,        -- 10-bit colour depth
+--     cm            = "hdr",     -- enable HDR colour pipeline
+--     sdrbrightness = 1.0,       -- SDR content brightness in HDR mode (0.5–2.0)
+--     sdrsaturation = 1.0,       -- SDR content saturation in HDR mode (0.5–1.5)
 -- })
 
--- --- 2.3  4K / UHD laptop (2x scale) ---------------------------------------------------------
+-- ── 2c. Laptop panel with ICC colour profile ───────────────────────────────
+-- Absolute path required. Automatically forces sdr_eotf = "srgb".
 -- hl.monitor({
---     output   = "eDP-1",
---     mode     = "3840x2400@60",
+--     output = "eDP-1",
+--     mode   = "preferred",
 --     position = "0x0",
---     scale    = 2,
+--     scale  = 2,
+--     icc    = "/home/USERNAME/.config/hypr/icc/your_panel.icm",
 -- })
 
--- --- 2.4  High-refresh OLED (preferred mode, auto scale) --------------------------------------
+-- ── 2d. Laptop panel — custom SDR transfer function ───────────────────────
+-- Use when you want explicit control over how sRGB content is tone-mapped.
 -- hl.monitor({
 --     output   = "eDP-1",
 --     mode     = "preferred",
 --     position = "0x0",
---     scale    = "auto",
+--     scale    = 2,
+--     sdr_eotf = "srgb",         -- "default" | "srgb" | "gamma22"
 -- })
 
 
--- =================================================================================================
--- SECTION 3 — DESKTOP / SINGLE EXTERNAL MONITOR
--- =================================================================================================
--- Uncomment the block that best describes your display.
+-- #############################################################################
+-- SECTION 3 — EXTERNAL / DESKTOP MONITORS
+-- #############################################################################
+-- You can match monitors by port name OR by description string.
+-- Description matching is more robust (survives port changes on docks):
+--   desc:MANUFACTURER MODEL SERIAL   e.g. desc:LG Electronics LG HDR 4K 0x00007B3E
+-- Get the description string from:  hyprctl monitors all
 
--- --- 3.1  Full-HD @ 60 Hz -------------------------------------------------------------------
+-- ── 3a. Single external monitor (simple) ──────────────────────────────────
 -- hl.monitor({
---     output   = "DP-1",
---     mode     = "1920x1080@60",
+--     output   = "DP-1",         -- or HDMI-A-1, DP-2, etc.
+--     mode     = "1920x1080@144",
 --     position = "0x0",
 --     scale    = 1,
 -- })
 
--- --- 3.2  Full-HD @ 144 Hz ------------------------------------------------------------------
+-- ── 3b. Dual-monitor horizontal layout (laptop left, external right) ───────
+-- Place the laptop screen at the left edge (x = 0).
+-- Place the external monitor immediately to the right (x = laptop logical width).
+-- If laptop is 2560px wide at scale 2, its logical width = 1280 → use "1280x0".
+--
+-- hl.monitor({
+--     output   = "eDP-1",
+--     mode     = "2560x1600@165",
+--     position = "0x0",
+--     scale    = 2,
+-- })
+-- hl.monitor({
+--     output   = "DP-1",
+--     mode     = "1920x1080@144",
+--     position = "1280x0",       -- eDP-1 logical width (2560 / 2) = 1280
+--     scale    = 1,
+-- })
+
+-- ── 3c. Triple-monitor layout (left / centre / right) ─────────────────────
 -- hl.monitor({
 --     output   = "DP-1",
 --     mode     = "1920x1080@144",
 --     position = "0x0",
 --     scale    = 1,
 -- })
+-- hl.monitor({
+--     output   = "DP-2",
+--     mode     = "2560x1440@165",
+--     position = "1920x0",
+--     scale    = 1,
+-- })
+-- hl.monitor({
+--     output   = "HDMI-A-1",
+--     mode     = "1920x1080@60",
+--     position = "4480x0",       -- 1920 + 2560
+--     scale    = 1,
+-- })
 
--- --- 3.3  QHD @ 144/165 Hz ------------------------------------------------------------------
+-- ── 3d. Vertical stack (primary on top, secondary below) ──────────────────
+-- Hyprland's Y axis is inverted: positive Y goes downward on screen.
 -- hl.monitor({
 --     output   = "DP-1",
 --     mode     = "2560x1440@165",
 --     position = "0x0",
 --     scale    = 1,
 -- })
-
--- --- 3.4  4K @ 60 Hz ------------------------------------------------------------------------
 -- hl.monitor({
---     output   = "DP-1",
---     mode     = "3840x2160@60",
---     position = "0x0",
---     scale    = 2,
+--     output   = "HDMI-A-1",
+--     mode     = "1920x1080@60",
+--     position = "0x1440",       -- placed directly below DP-1
+--     scale    = 1,
 -- })
 
--- --- 3.5  4K @ 120/144 Hz (DisplayPort 1.4 / HDMI 2.1) ------------------------------------
+-- ── 3e. Portrait monitor (rotated 90°) ────────────────────────────────────
+-- When rotated, logical dimensions are swapped.
+-- A 1080x1920 portrait monitor's logical width = 1080 → next monitor at "1080x0".
+-- hl.monitor({
+--     output    = "DP-3",
+--     mode      = "1920x1080@60",
+--     position  = "0x0",
+--     scale     = 1,
+--     transform = 1,             -- 1 = 90°  |  3 = 270°
+-- })
+
+-- ── 3f. 4K external with per-monitor VRR and 10-bit ───────────────────────
 -- hl.monitor({
 --     output   = "DP-1",
 --     mode     = "3840x2160@144",
 --     position = "0x0",
 --     scale    = 2,
+--     bitdepth = 10,
+--     vrr      = 2,              -- VRR only for fullscreen apps (0=off 1=on 2=fs-only)
 -- })
 
--- --- 3.6  Ultrawide 21:9 @ 144 Hz -----------------------------------------------------------
+-- ── 3g. Match by monitor description (dock / hotplug-safe) ────────────────
 -- hl.monitor({
---     output   = "DP-1",
---     mode     = "3440x1440@144",
---     position = "0x0",
---     scale    = 1,
--- })
-
--- --- 3.7  Let Hyprland pick the best available mode (highres / highrr) ----------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "highres",    -- highest resolution available
---     position = "0x0",
---     scale    = "auto",
--- })
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "highrr",    -- highest refresh rate available
---     position = "0x0",
---     scale    = "auto",
--- })
-
-
--- =================================================================================================
--- SECTION 4 — MULTI-MONITOR LAYOUTS
--- =================================================================================================
--- Positions are pixel-offsets from the top-left corner of the virtual canvas.
--- Tip: for fractional-scaled monitors, position must account for the *logical* (scaled) size.
---   Example: a 3840x2160 display at scale=2 occupies 1920x1080 in layout space.
-
--- --- 4.1  Two monitors side-by-side (1080p primary left, 1080p secondary right) --------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "1920x1080@144",
---     position = "0x0",
---     scale    = 1,
--- })
--- hl.monitor({
---     output   = "DP-2",
---     mode     = "1920x1080@60",
+--     output   = "desc:Dell Inc. DELL S2722DGM F9GHVJ3",
+--     mode     = "2560x1440@165",
 --     position = "1920x0",
 --     scale    = 1,
 -- })
 
--- --- 4.2  Laptop + external (external on the right, auto-positioned) -------------------------
--- hl.monitor({
---     output   = "eDP-1",
---     mode     = "1920x1080@60",
---     position = "0x0",
---     scale    = 1,
--- })
--- hl.monitor({
---     output   = "HDMI-A-1",
---     mode     = "preferred",
---     position = "auto-right",
---     scale    = "auto",
--- })
 
--- --- 4.3  Three monitors (left | centre | right) ---------------------------------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "2560x1440@144",
---     position = "0x0",
---     scale    = 1,
--- })
--- hl.monitor({
---     output   = "DP-2",
---     mode     = "2560x1440@144",
---     position = "2560x0",
---     scale    = 1,
--- })
--- hl.monitor({
---     output   = "DP-3",
---     mode     = "2560x1440@144",
---     position = "5120x0",
---     scale    = 1,
--- })
+-- #############################################################################
+-- SECTION 4 — MIRROR / CLONE SETUP
+-- #############################################################################
+-- Mirrors duplicate another monitor's output pixel-for-pixel.
+-- The `mirror` field takes the output NAME of the source display.
 
--- --- 4.4  Stacked (primary on top, secondary below) -----------------------------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "1920x1080@144",
---     position = "0x0",
---     scale    = 1,
--- })
+-- ── 4a. Mirror one specific monitor to another ────────────────────────────
 -- hl.monitor({
 --     output   = "HDMI-A-1",
 --     mode     = "1920x1080@60",
---     position = "0x1080",
---     scale    = 1,
--- })
-
--- --- 4.5  Auto-placement (let Hyprland decide direction) -------------------------------------
--- hl.monitor({ output = "DP-1",    mode = "preferred", position = "auto",       scale = 1 })
--- hl.monitor({ output = "DP-2",    mode = "preferred", position = "auto-right",  scale = 1 })
--- hl.monitor({ output = "HDMI-A-1",mode = "preferred", position = "auto-left",   scale = 1 })
-
-
--- =================================================================================================
--- SECTION 5 — IDENTIFY MONITORS BY DESCRIPTION  (desc:)
--- =================================================================================================
--- More robust than connector names — survives cable swaps and GPU reseats.
--- Run `hyprctl monitors` and use the description *without* the trailing port name in parentheses.
--- Example output:  "description: Dell Inc. S2721DGF 7JHVG43   (DP-1)"
---                  → use:  "desc:Dell Inc. S2721DGF 7JHVG43"
-
--- --- 5.1  Single display identified by description ------------------------------------------
--- hl.monitor({
---     output   = "desc:Dell Inc. S2721DGF 7JHVG43",
---     mode     = "2560x1440@165",
 --     position = "0x0",
 --     scale    = 1,
+--     mirror   = "eDP-1",        -- clone eDP-1 onto HDMI-A-1
 -- })
 
--- --- 5.2  Multi-monitor by description -------------------------------------------------------
--- hl.monitor({
---     output   = "desc:LG Electronics LG ULTRAGEAR 311NTWB123456",
---     mode     = "2560x1440@144",
---     position = "0x0",
---     scale    = 1,
--- })
--- hl.monitor({
---     output   = "desc:Samsung Electric Company C27HG7x HTQH123456",
---     mode     = "2560x1440@144",
---     position = "2560x0",
---     scale    = 1,
--- })
-
--- --- 5.3  Laptop panel by description --------------------------------------------------------
--- hl.monitor({
---     output   = "desc:Chimei Innolux Corporation 0x150C",
---     mode     = "preferred",
---     position = "0x0",
---     scale    = 1.5,
--- })
-
-
--- =================================================================================================
--- SECTION 6 — DISPLAY MIRRORING
--- =================================================================================================
--- NOTE: Mirroring re-uses the source framebuffer — it does NOT re-render.
--- A 1080p source mirrored to a 4K display stays at 1080p on the 4K panel.
--- Aspect-ratio mismatches (16:9 → 16:10) will result in stretching.
--- HDR is fundamentally incompatible with mirroring.
-
--- --- 6.1  Mirror DP-2 onto DP-3 -------------------------------------------------------------
--- hl.monitor({
---     output   = "DP-3",
---     mode     = "1920x1080@60",
---     position = "0x0",
---     scale    = 1,
---     mirror   = "DP-2",
--- })
-
--- --- 6.2  Fallback: mirror all unspecified monitors onto DP-1 --------------------------------
+-- ── 4b. Mirror all hotplugged monitors to the primary display ─────────────
+-- (Combine with the global fallback rule in SECTION 1)
 -- hl.monitor({
 --     output   = "",
 --     mode     = "preferred",
 --     position = "auto",
 --     scale    = 1,
---     mirror   = "DP-1",
+--     mirror   = "eDP-1",        -- every unspecified output mirrors eDP-1
 -- })
 
 
--- =================================================================================================
--- SECTION 7 — TRANSFORM / ROTATION
--- =================================================================================================
--- Values:  0 = normal  |  1 = 90°  |  2 = 180°  |  3 = 270°
---          4 = flipped |  5 = flip+90° | 6 = flip+180° | 7 = flip+270°
+-- #############################################################################
+-- SECTION 5 — DISABLING A MONITOR
+-- #############################################################################
+-- Use `disabled = true` to tell Hyprland a port does not exist.
+-- This is especially useful for phantom outputs that appear on some GPUs.
+-- To blank an active display temporarily, use the DPMS dispatcher instead:
+--   hl.dispatch(hl.dsp.dpms({ action = "disable" }))
 
--- --- 7.1  Portrait monitor (rotated 90°) -----------------------------------------------------
--- hl.monitor({
---     output    = "DP-2",
---     mode      = "1080x1920@60",
---     position  = "1920x0",
---     scale     = 1,
---     transform = 1,       -- 90° clockwise
--- })
-
--- --- 7.2  Upside-down / ceiling-mounted display ----------------------------------------------
--- hl.monitor({
---     output    = "HDMI-A-1",
---     mode      = "1920x1080@60",
---     position  = "0x0",
---     scale     = 1,
---     transform = 2,       -- 180°
--- })
-
--- --- 7.3  Portrait (rotated 270° / counter-clockwise 90°) ------------------------------------
--- hl.monitor({
---     output    = "DP-3",
---     mode      = "1080x1920@60",
---     position  = "0x0",
---     scale     = 1,
---     transform = 3,       -- 270°
--- })
-
-
--- =================================================================================================
--- SECTION 8 — COLOUR DEPTH (BIT DEPTH)
--- =================================================================================================
--- 10-bit (bitdepth = 10) is needed for HDR, wide-gamut, and banding-free gradients.
--- Requires a panel and cable (DP 1.4 / HDMI 2.0+) that support 10-bit output.
--- Check support: `hyprctl monitors` → look for "10bpc" in the output.
-
--- --- 8.1  10-bit on an OLED / HDR panel ------------------------------------------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "3840x2160@120",
---     position = "0x0",
---     scale    = 2,
---     bitdepth = 10,
--- })
-
--- --- 8.2  Explicit 8-bit (default, usually unnecessary to set) -------------------------------
--- hl.monitor({
---     output   = "HDMI-A-1",
---     mode     = "1920x1080@60",
---     position = "0x0",
---     scale    = 1,
---     bitdepth = 8,
--- })
-
-
--- =================================================================================================
--- SECTION 9 — COLOUR MANAGEMENT PRESETS  (cm)
--- =================================================================================================
--- Requires bitdepth = 10 for anything beyond sRGB to be meaningful.
--- Preset options:
---   "auto"   → sRGB for 8bpc; "wide" for 10bpc when supported  [RECOMMENDED default]
---   "srgb"   → sRGB primaries (IEC 61966-2-1)                  [software default]
---   "dcip3"  → DCI P3 primaries (cinema)
---   "dp3"    → Apple Display P3 (D65 white point, P3 primaries)
---   "adobe"  → Adobe RGB (1998)
---   "wide"   → BT.2020 / wide-colour-gamut
---   "edid"   → primaries read from the display's EDID (may be inaccurate)
---   "hdr"    → wide-gamut + HDR signalling  (requires bitdepth = 10)
-
--- --- 9.1  Auto (recommended — Hyprland decides based on bitdepth) ----------------------------
--- hl.monitor({
---     output   = "eDP-1",
---     mode     = "2880x1800@90",
---     position = "0x0",
---     scale    = 2,
---     bitdepth = 10,
---     cm       = "auto",
--- })
-
--- --- 9.2  Apple Display P3 (macOS-style wide-gamut) -----------------------------------------
--- hl.monitor({
---     output   = "eDP-1",
---     mode     = "2880x1800@90",
---     position = "0x0",
---     scale    = 2,
---     bitdepth = 10,
---     cm       = "dp3",
--- })
-
--- --- 9.3  DCI P3 (cinema grading displays) ---------------------------------------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "3840x2160@60",
---     position = "0x0",
---     scale    = 2,
---     bitdepth = 10,
---     cm       = "dcip3",
--- })
-
--- --- 9.4  Adobe RGB (photo editing) ----------------------------------------------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "3840x2160@60",
---     position = "0x0",
---     scale    = 2,
---     bitdepth = 10,
---     cm       = "adobe",
--- })
-
-
--- =================================================================================================
--- SECTION 10 — HDR  (High Dynamic Range)
--- =================================================================================================
--- Requirements: cm = "hdr" + bitdepth = 10 + an actual HDR-capable panel + DP 1.4 / HDMI 2.1.
--- sdrbrightness — multiplier for SDR content brightness in HDR mode (default 1.0, range ~0.5–2.0)
--- sdrsaturation — multiplier for SDR content saturation in HDR mode (default 1.0, range ~0.5–1.5)
--- sdr_eotf      — transfer function for SDR content:
---                   "default"  → follows render:cm_sdr_eotf global setting
---                   "srgb"     → piecewise sRGB (IEC 61966-2-1)
---                   "gamma22"  → simple Gamma 2.2
--- NOTE: HDR is fundamentally incompatible with mirroring and ICC profiles.
-
--- --- 10.1  HDR OLED with tuned SDR tone-mapping ----------------------------------------------
--- hl.monitor({
---     output        = "DP-1",
---     mode          = "3840x2160@120",
---     position      = "0x0",
---     scale         = 2,
---     bitdepth      = 10,
---     cm            = "hdr",
---     sdrbrightness = 1.0,     -- raise to boost SDR content brightness (e.g. 1.2)
---     sdrsaturation = 1.0,     -- raise to boost SDR saturation in HDR mode (e.g. 1.05)
---     sdr_eotf      = "srgb",  -- force sRGB EOTF for SDR content
--- })
-
--- --- 10.2  HDR with EDID-derived primaries (experimental) ------------------------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "3840x2160@120",
---     position = "0x0",
---     scale    = 2,
---     bitdepth = 10,
---     cm       = "hdr",
---     -- sdr_eotf = "gamma22",
--- })
-
-
--- =================================================================================================
--- SECTION 11 — ICC PROFILES
--- =================================================================================================
--- Load a per-output ICC/ICM file for hardware-accurate colour management.
--- Requirements:
---   • Path MUST be absolute (no ~, $HOME, or relative paths).
---   • Applying an ICC profile automatically forces sdr_eotf = "srgb" on that output.
---   • ICC profiles OVERRIDE the cm preset — do not combine both.
---   • ICC is INCOMPATIBLE with HDR — unexpected results will occur.
--- Typical locations: /usr/share/color/icc/ or ~/.local/share/icc/
-
--- --- 11.1  Calibrated ICC profile for the built-in display -----------------------------------
--- hl.monitor({
---     output = "eDP-1",
---     icc    = "/usr/share/color/icc/colord/MyLaptopPanel.icm",
--- })
-
--- --- 11.2  Calibrated external display -------------------------------------------------------
--- hl.monitor({
---     output = "DP-1",
---     icc    = "/home/USER/.local/share/icc/dell-s2721dgf-calibrated.icm",
--- })
-
-
--- =================================================================================================
--- SECTION 12 — PER-MONITOR VRR  (Variable Refresh Rate)
--- =================================================================================================
--- Overrides the global misc.vrr setting for a specific display.
--- Modes:  0 = disabled  |  1 = always enabled  |  2 = fullscreen-only
--- Requires a FreeSync / G-Sync Compatible panel and a driver that exposes VRR.
--- The global fallback is set in Section 16 (misc).
-
--- --- 12.1  VRR always on for a gaming monitor ------------------------------------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "2560x1440@165",
---     position = "0x0",
---     scale    = 1,
---     vrr      = 1,
--- })
-
--- --- 12.2  VRR only in fullscreen (reduces flicker in mixed workloads) -----------------------
--- hl.monitor({
---     output   = "DP-1",
---     mode     = "2560x1440@144",
---     position = "0x0",
---     scale    = 1,
---     vrr      = 2,
--- })
-
--- --- 12.3  Explicitly disable VRR on a secondary display -------------------------------------
--- hl.monitor({
---     output   = "HDMI-A-1",
---     mode     = "1920x1080@60",
---     position = "1920x0",
---     scale    = 1,
---     vrr      = 0,
--- })
-
-
--- =================================================================================================
--- SECTION 13 — DISABLING MONITORS
--- =================================================================================================
--- Use disabled = true to soft-disable an output without physically disconnecting it.
--- Most commonly needed for the ghost "Unknown-1" monitor that appears when Hyprland
--- starts before all displays are enumerated.
-
--- --- 13.1  Suppress the ghost Unknown-1 monitor ----------------------------------------------
+-- ── 5a. Suppress a phantom / ghost output ─────────────────────────────────
 -- hl.monitor({
 --     output   = "Unknown-1",
 --     disabled = true,
 -- })
 
--- --- 13.2  Disable a specific port (e.g. unused HDMI) ----------------------------------------
+-- ── 5b. Disable a known port until you need it ────────────────────────────
 -- hl.monitor({
 --     output   = "HDMI-A-2",
 --     disabled = true,
 -- })
 
 
--- =================================================================================================
--- SECTION 14 — RESERVED AREA
--- =================================================================================================
--- Reserve additional pixels on an edge of a specific monitor.
--- Useful for custom status bars that do not use layer-shell protocols.
--- Format: { top, bottom, left, right }  (pixels)
--- This STACKS on top of any area already reserved by layer-shell bars (e.g. Waybar).
--- Only ONE reserved_area rule is permitted per monitor in the config.
+-- #############################################################################
+-- SECTION 6 — WORKSPACE → MONITOR BINDINGS
+-- #############################################################################
+-- Use hl.workspace_rule() to pin specific workspaces to specific monitors.
+-- `monitor` accepts a port name OR a "desc:..." description string.
+-- `default = true` makes that workspace the one shown when the monitor connects.
 
--- --- 14.1  Reserve 30px at the top for a custom bar ------------------------------------------
--- hl.monitor({
---     output        = "eDP-1",
---     mode          = "1920x1080@60",
---     position      = "0x0",
---     scale         = 1,
---     reserved_area = { 30, 0, 0, 0 },   -- { top, bottom, left, right }
--- })
-
--- --- 14.2  Reserve pixels on multiple edges --------------------------------------------------
--- hl.monitor({
---     output        = "DP-1",
---     mode          = "2560x1440@144",
---     position      = "0x0",
---     scale         = 1,
---     reserved_area = { 35, 0, 0, 0 },   -- top bar only
--- })
-
-
--- =================================================================================================
--- SECTION 15 — WORKSPACE BINDINGS
--- =================================================================================================
--- Pin specific workspaces to a specific monitor so they never migrate.
--- "monitor" field accepts a connector name or a desc: string.
--- "default = true" makes a workspace the one shown when the monitor first activates.
-
--- --- 15.1  Pin workspaces 1-5 to the laptop screen -------------------------------------------
--- hl.workspace_rule({ workspace = "1", monitor = "eDP-1", default = true })
--- hl.workspace_rule({ workspace = "2", monitor = "eDP-1" })
--- hl.workspace_rule({ workspace = "3", monitor = "eDP-1" })
--- hl.workspace_rule({ workspace = "4", monitor = "eDP-1" })
--- hl.workspace_rule({ workspace = "5", monitor = "eDP-1" })
-
--- --- 15.2  Pin workspaces 6-10 to an external monitor ----------------------------------------
--- hl.workspace_rule({ workspace = "6",  monitor = "DP-1", default = true })
+-- ── 6a. Pin individual workspaces to monitors ─────────────────────────────
+-- hl.workspace_rule({ workspace = "1",  monitor = "eDP-1",   default = true })
+-- hl.workspace_rule({ workspace = "2",  monitor = "eDP-1" })
+-- hl.workspace_rule({ workspace = "3",  monitor = "eDP-1" })
+-- hl.workspace_rule({ workspace = "4",  monitor = "eDP-1" })
+-- hl.workspace_rule({ workspace = "5",  monitor = "eDP-1" })
+-- hl.workspace_rule({ workspace = "6",  monitor = "DP-1",    default = true })
 -- hl.workspace_rule({ workspace = "7",  monitor = "DP-1" })
 -- hl.workspace_rule({ workspace = "8",  monitor = "DP-1" })
 -- hl.workspace_rule({ workspace = "9",  monitor = "DP-1" })
 -- hl.workspace_rule({ workspace = "10", monitor = "DP-1" })
 
--- --- 15.3  Pin a named workspace (e.g. "coding") to a display by description -----------------
+-- ── 6b. Pin a named workspace to a monitor (by description) ───────────────
 -- hl.workspace_rule({
---     workspace = "name:coding",
---     monitor   = "desc:Dell Inc. S2721DGF 7JHVG43",
+--     workspace = "name:gaming",
+--     monitor   = "desc:LG Electronics LG ULTRAGEAR 0x0000B256",
 --     default   = true,
 -- })
 
--- --- 15.4  Pin the "gaming" workspace to a specific monitor and open steam on creation -------
--- hl.workspace_rule({
---     workspace        = "name:gaming",
---     monitor          = "DP-1",
---     default          = true,
---     on_created_empty = "[float] steam",
+-- ── 6c. Reserved area for a specific monitor ──────────────────────────────
+-- Use this when a bar/panel does not automatically reserve space,
+-- or when you want extra padding on any edge.
+-- hl.monitor({
+--     output        = "eDP-1",
+--     mode          = "preferred",
+--     position      = "0x0",
+--     scale         = 2,
+--     reserved_area = { top = 0, bottom = 0, left = 0, right = 0 },
 -- })
+--
+-- Or as a single integer for equal padding on all sides:
+-- hl.monitor({ output = "eDP-1", reserved_area = 10 })
 
 
--- =================================================================================================
--- SECTION 16 — MISC  (Power-saving & Global VRR / VFR)
--- =================================================================================================
+-- #############################################################################
+-- SECTION 7 — GLOBAL RENDER & POWER SETTINGS
+-- #############################################################################
+-- These hl.config() options affect all monitors globally.
+-- Per-monitor VRR overrides can be set with the `vrr` field in hl.monitor().
 
 hl.config({
+
     misc = {
-
-        -- -----------------------------------------------------------------------------------------
-        -- vfr — Variable Frame Rate (idle power-saving)
-        -- When true, Hyprland drops the rendering rate while the compositor is idle.
-        -- Saves ~1–3 W on the GPU at the cost of a brief delay when activity resumes.
-        -- -----------------------------------------------------------------------------------------
-
-        -- -----------------------------------------------------------------------------------------
-        -- vrr — Global Variable Refresh Rate  (per-monitor override is in Section 12)
-        --   0 = disabled (default)
-        --   1 = always enabled (may cause flicker on some panels with mixed refresh content)
-        --   2 = fullscreen-only (recommended if you game; avoids flicker in desktop use)
-        -- Uses ~1 extra watt but produces noticeably smoother motion when active.
-        -- -----------------------------------------------------------------------------------------
+        -- ── Variable Refresh Rate (global default) ────────────────────────
+        -- Overridden per-monitor by the `vrr` field in hl.monitor().
+        --   0 = disabled
+        --   1 = always enabled  (can cause brightness flicker on some displays)
+        --   2 = fullscreen apps only  ← recommended for most users
         vrr = 0,
+    },
 
-    }
+    debug = {
+        -- ── Variable Frame Rate (power saving) ───────────────────────────
+        -- When true, Hyprland stops sending frames to the GPU while nothing
+        -- is changing on screen.  Saves ~1 W on a laptop; looks identical.
+        -- Set to false only if you notice input latency regressions.
+        vfr = true,
+    },
+
+    render = {
+        -- ── Global SDR EOTF (transfer function for SDR/sRGB content) ─────
+        -- Applied to every monitor whose per-monitor sdr_eotf is "default".
+        --   "auto"    Hyprland decides (recommended)
+        --   "srgb"    piecewise sRGB curve  (best colour accuracy on most panels)
+        --   "gamma22" traditional Gamma 2.2
+        -- cm_sdr_eotf = "auto",
+
+        -- ── Fullscreen HDR passthrough ────────────────────────────────────
+        -- When true, fullscreen apps that output HDR signals bypass Hyprland's
+        -- colour pipeline entirely for zero-overhead HDR gaming.
+        -- Alternative to setting cm = "hdr" per-monitor.
+        -- cm_fs_passthrough = false,
+
+        -- ── Automatic HDR ─────────────────────────────────────────────────
+        -- Experimental: automatically promote SDR content to HDR where possible.
+        -- Requires --target-colorspace-hint-mode=source in mpv ≥ 0.41.
+        -- cm_auto_hdr = false,
+    },
+
 })
-
-
--- =================================================================================================
--- SECTION 17 — CLAMSHELL / LID-SWITCH
--- =================================================================================================
--- Automatically disable the built-in display when the laptop lid is closed and an
--- external monitor is connected, then re-enable it when the lid is opened.
--- Requires bindl (lid-switch bind) and the hyprctl dispatch to toggle outputs.
-
--- --- 17.1  Simple clamshell (disable eDP-1 on lid close, re-enable on open) -----------------
--- hl.bind("", "switch:on:Lid Switch", function()
---     hl.dispatch(hl.dsp.dpms({ output = "eDP-1", action = "off" }))
--- end)
--- hl.bind("", "switch:off:Lid Switch", function()
---     hl.dispatch(hl.dsp.dpms({ output = "eDP-1", action = "on" }))
--- end)
-
--- --- 17.2  Hard-disable eDP-1 on lid close (stronger — removes it from the layout) ----------
--- hl.bind("", "switch:on:Lid Switch", function()
---     hl.monitor({ output = "eDP-1", disabled = true })
--- end)
--- hl.bind("", "switch:off:Lid Switch", function()
---     hl.monitor({
---         output   = "eDP-1",
---         mode     = "preferred",
---         position = "0x0",
---         scale    = "auto",
---     })
--- end)
 EOF
             ;;
 
@@ -851,6 +582,13 @@ EOF
         # ======================================================================
         "appearance.lua")
             cat <<'EOF'
+-- ==============================================================================
+-- USER CONFIGURATION: appearance.lua
+-- ==============================================================================
+-- Add your custom appearance settings here.
+-- These will override or add to the defaults found in ~/.config/hypr/source/
+-- This file can also be managed with dusky appearance from the rofi menu or
+-- from dusky control center.
 -- -------------------------------------------------------------------------------------------------
 -- APPEARANCE, DECORATION & RENDERING
 -- -------------------------------------------------------------------------------------------------
