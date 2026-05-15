@@ -1098,7 +1098,7 @@ class DuskyTUI(App):
                     txt.append(" ⬤ ", style=hex_color if exists else self.theme_colors["muted"])
                     
                     if is_theme_variable(val_str):
-                        txt.append(f"{val_str} (Theme Variable)", style=accent)
+                        txt.append(f" {val_str}", style=accent)
                     else:
                         color_name = get_color_name(r, g, b)
                         if resolved_color != val_str:
