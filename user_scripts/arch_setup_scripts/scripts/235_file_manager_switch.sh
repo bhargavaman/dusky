@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ELITE HYPRLAND FILE MANAGER SWITCHER - PLATINUM EDITION (v6.7)
+# ELITE HYPRLAND FILE MANAGER SWITCHER - PLATINUM EDITION (v6.8)
 # =============================================================================
 #
 # BASED ON: Dusky TUI Engine v5.9 (Fully Armored)
 # TARGET:   Arch Linux / Hyprland / UWSM / Wayland
 
-set -euo pipefail
+set -Eeuo pipefail
 shopt -s extglob
 
 # =============================================================================
@@ -33,7 +33,7 @@ declare -r LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/dusky_fm_switch.lock"
 
 # UI Configuration
 declare -r APP_TITLE="Dusky File Manager"
-declare -r APP_VERSION="v6.7 (Armored TUI Engine)"
+declare -r APP_VERSION="v6.8 (Armored TUI Engine)"
 declare -ri BOX_INNER_WIDTH=60
 declare -ri MAX_DISPLAY_ROWS=10
 declare -ri ITEM_PADDING=38
@@ -110,7 +110,7 @@ cleanup() {
     if [[ -t 1 ]] && (( IN_TUI )); then
         printf '%s%s%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" "$ALT_SCREEN_OFF" 2>/dev/null || :
     fi
-    [[ -n ${ORIGINAL_STTY:-} ]] && stty "$ORIGINAL_STTY" 2>/dev/null || :
+    [[ -n ${ORIGINAL_STTY:-} ]] && stty "$ORIGINAL_STTY" < /dev/tty 2>/dev/null || :
 
     for path in "${_TEMP_PATHS[@]:-}"; do
         [[ -n $path && -e $path ]] && rm -f -- "$path" 2>/dev/null || :
@@ -154,7 +154,7 @@ log_action() {
 
 update_terminal_size() {
     local size
-    if size=$(stty size 2>/dev/null); then
+    if size=$(stty size < /dev/tty 2>/dev/null); then
         TERM_ROWS=${size%% *}
         TERM_COLS=${size##* }
     else
@@ -181,7 +181,7 @@ atomic_write() {
     if ! printf '%s\n' "$content" > "$tmp_file"; then
         rm -f -- "$tmp_file"; forget_temp "$tmp_file"; return 1
     fi
-    sync -f "$tmp_file" 2>/dev/null || :
+    sync "$tmp_file" 2>/dev/null || :
 
     if [[ -e $target && -f $target ]]; then
         chown --reference="$target" -- "$tmp_file" 2>/dev/null || :
@@ -555,8 +555,12 @@ run_tui() {
         if [[ "$k" == "$CURRENT_FM_KEY" ]]; then SELECTED_ROW=$i; break; fi
     done
 
-    ORIGINAL_STTY=$(stty -g 2>/dev/null) || ORIGINAL_STTY=""
-    stty -icanon -echo min 1 time 0 2>/dev/null
+    ORIGINAL_STTY=$(stty -g < /dev/tty 2>/dev/null) || ORIGINAL_STTY=""
+    if ! stty -icanon -echo -ixon min 1 time 0 < /dev/tty 2>/dev/null; then 
+        log_err "Failed to configure terminal raw input."
+        exit 1
+    fi
+    
     printf '%s%s%s%s%s' "$ALT_SCREEN_ON" "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
 
     trap 'RESIZE_PENDING=1' WINCH
@@ -586,9 +590,6 @@ main() {
         run_tui
     else
         case "$1" in
-            --nemo)   switch_file_manager "nemo" ;;
-            --yazi)   switch_file_manager "yazi" ;;
-            --thunar) switch_file_manager "thunar" ;;
             --set)
                 if [[ -n "${2:-}" ]]; then switch_file_manager "$2"
                 else log_err "Usage: --set <name>"; exit 1; fi
@@ -599,6 +600,25 @@ main() {
                     if grep -q "true" "$STATE_FILE"; then switch_file_manager "yazi"
                     else switch_file_manager "nemo"; fi
                 else log_info "No state file found."; fi
+                ;;
+            --*)
+                # DYNAMIC CLI PARSER: Automatically supports any key in the FM_CATALOG
+                local requested_fm="${1#--}"
+                local found=0
+                for entry in "${FM_CATALOG[@]}"; do
+                    IFS='|' read -r k _ <<< "$entry"
+                    if [[ "$k" == "$requested_fm" ]]; then
+                        found=1
+                        break
+                    fi
+                done
+                
+                if (( found )); then
+                    switch_file_manager "$requested_fm"
+                else
+                    log_err "Unknown FM argument: $1"
+                    exit 1
+                fi
                 ;;
             *)
                 log_err "Unknown argument: $1"
