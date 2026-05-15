@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ELITE HYPRLAND TERMINAL SWITCHER - PLATINUM EDITION (v6.2)
+# ELITE HYPRLAND TERMINAL SWITCHER - PLATINUM EDITION (v6.6)
 # =============================================================================
 #
 # BASED ON: Dusky TUI Engine v3.9.6 (Template Aligned)
@@ -43,7 +43,7 @@ declare -r STATE_FILE="${HOME}/.config/dusky/settings/terminal_switch"
 
 # UI Configuration (Template Aligned)
 declare -r APP_TITLE="Dusky Terminal Manager"
-declare -r APP_VERSION="v6.2 (Stable)"
+declare -r APP_VERSION="v6.6 (Omni-Environment)"
 declare -ri BOX_INNER_WIDTH=60
 declare -ri MAX_DISPLAY_ROWS=10
 declare -ri ITEM_PADDING=38  
@@ -99,13 +99,13 @@ log_action() {
     local is_error="${1:-0}"
     local msg="$2"
     if (( IN_TUI )); then
-        if (( is_error )); then
+        if (( is_error != 0 )); then
             STATUS_MSG="${C_RED}Error: ${msg}${C_RESET}"
         else
             STATUS_MSG="${C_GREEN}Success: Switched to ${msg}${C_RESET}"
         fi
     else
-        if (( is_error )); then log_err "$msg"; else log_info "Switched to $msg"; fi
+        if (( is_error != 0 )); then log_err "$msg"; else log_info "Switched to $msg"; fi
     fi
 }
 
@@ -145,7 +145,6 @@ switch_terminal() {
     local t_type="" t_desktop="" t_name="" found=0
     local entry
 
-    # 1. Catalog Lookup
     for entry in "${TERM_CATALOG[@]}"; do
         IFS='|' read -r k t d n <<< "$entry"
         if [[ "$k" == "$target" ]]; then
@@ -162,7 +161,6 @@ switch_terminal() {
         return 1
     fi
 
-    # 2. Update Variable (default_apps.conf)
     if [[ ! -f "$CONF_VARS" ]]; then
         log_action 1 "Config not found: $CONF_VARS"
         return 1
@@ -171,17 +169,19 @@ switch_terminal() {
     local new_vars
     new_vars=$(awk -v val="$target" '
         BEGIN { found=0 }
-        /^[[:space:]]*terminal[[:space:]]*=/ {
-            print "terminal = \"" val "\""
+        /^[[:space:]]*(local[[:space:]]+)?terminal[[:space:]]*=/ {
+            idx = index($0, "=")
+            prefix = substr($0, 1, idx)
+            print prefix " \"" val "\""
             found=1
             next
         }
         { print }
         END { if(!found) print "terminal = \"" val "\"" }
     ' "$CONF_VARS")
-    atomic_write "$CONF_VARS" "$new_vars"
+    
+    atomic_write "$CONF_VARS" "$new_vars" || { log_action 1 "Failed to write $CONF_VARS"; return 1; }
 
-    # 3. Update Keybind (keybinds.conf)
     if [[ ! -f "$CONF_BINDS" ]]; then
         log_action 1 "Keybinds not found: $CONF_BINDS"
         return 1
@@ -198,7 +198,7 @@ switch_terminal() {
                     found = 1
                     for (j = i; j >= 1; j--) {
                         if (lines[j] ~ /hl\.dsp\.exec_cmd/) {
-                            lines[j] = "    hl.dsp.exec_cmd(" new_cmd "),"
+                            sub(/hl\.dsp\.exec_cmd\([^)]+\)/, "hl.dsp.exec_cmd(" new_cmd ")", lines[j])
                             break
                         }
                         if (j < i - 5) break
@@ -217,22 +217,31 @@ switch_terminal() {
             }
         }
     ' "$CONF_BINDS")
-    atomic_write "$CONF_BINDS" "$new_binds"
+    
+    atomic_write "$CONF_BINDS" "$new_binds" || { log_action 1 "Failed to write $CONF_BINDS"; return 1; }
 
-    # 4. Update State Files
+    # Update State Files safely
     local legacy_state="false"
-    [[ "$target" == "kitty" ]] && legacy_state="true"
-    atomic_write "$STATE_FILE" "$legacy_state"
-    atomic_write "${STATE_FILE}.smart" "$target"
+    if [[ "$target" == "kitty" ]]; then
+        legacy_state="true"
+    fi
+    atomic_write "$STATE_FILE" "$legacy_state" || true
+    atomic_write "${STATE_FILE}.smart" "$target" || true
 
-    CURRENT_TERM_KEY="$target"
+    # Trigger Hyprland Hot-Reload (Omni-Environment Aware)
+    if [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] && command -v hyprctl &>/dev/null; then
+        hyprctl reload >/dev/null 2>&1 || true
+    fi
+
+    detect_environment
+    
     log_action 0 "$t_name"
     return 0
 }
 
-detect_current() {
+detect_environment() {
     if [[ -f "$CONF_VARS" ]]; then
-        CURRENT_TERM_KEY=$(grep -m1 '^[[:space:]]*terminal[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || echo "unknown")
+        CURRENT_TERM_KEY=$(grep -E -m1 '^[[:space:]]*(local[[:space:]]+)?terminal[[:space:]]*=' "$CONF_VARS" | cut -d'=' -f2 | tr -d ' "' || true)
         CURRENT_TERM_KEY="${CURRENT_TERM_KEY//[[:space:]]/}"
         
         if [[ -z "$CURRENT_TERM_KEY" ]]; then
@@ -323,12 +332,12 @@ draw_ui() {
     printf -v pad_buf '%*s' "$right_pad" ''
     buf+="${pad_buf}│${C_RESET}${CLR_EOL}"$'\n'
 
-    local curr_txt="Current: ${CURRENT_TERM_KEY}"
+    local curr_txt="Terminal: ${CURRENT_TERM_KEY}"
     strip_ansi "$curr_txt"; local -i c_len=${#REPLY}
     left_pad=$(( (BOX_INNER_WIDTH - c_len) / 2 ))
     right_pad=$(( BOX_INNER_WIDTH - c_len - left_pad ))
     printf -v pad_buf '%*s' "$left_pad" ''
-    buf+="${C_MAGENTA}│${pad_buf}${C_GREY}Current: ${C_GREEN}${CURRENT_TERM_KEY}${C_MAGENTA}"
+    buf+="${C_MAGENTA}│${pad_buf}${C_GREY}Terminal: ${C_GREEN}${CURRENT_TERM_KEY}${C_MAGENTA}"
     printf -v pad_buf '%*s' "$right_pad" ''
     buf+="${pad_buf}│${C_RESET}${CLR_EOL}"$'\n'
     
@@ -463,7 +472,6 @@ apply_selection() {
     local k
     IFS='|' read -r k _ <<< "${TERM_CATALOG[$SELECTED_ROW]}"
     switch_terminal "$k"
-    detect_current
 }
 
 handle_input() {
@@ -504,7 +512,7 @@ run_tui() {
     if [[ ! -t 0 ]]; then log_err "TUI requires a terminal."; exit 1; fi
 
     IN_TUI=1
-    detect_current
+    detect_environment
 
     local i
     for (( i = 0; i < ${#TERM_CATALOG[@]}; i++ )); do
@@ -532,13 +540,12 @@ run_tui() {
 main() {
     if (( BASH_VERSINFO[0] < 5 )); then log_err "Bash 5+ required."; exit 1; fi
 
+    detect_environment
+
     if [[ $# -eq 0 ]]; then
         run_tui
     else
         case "$1" in
-            --kitty) switch_terminal "kitty" ;;
-            --foot)  switch_terminal "foot" ;;
-            --wezterm) switch_terminal "wezterm" ;;
             --set)
                 if [[ -n "${2:-}" ]]; then
                     switch_terminal "$2"
@@ -558,6 +565,25 @@ main() {
                     fi
                 else
                     log_info "No state file found."
+                fi
+                ;;
+            --*)
+                # DYNAMIC CLI PARSER: Automatically supports any key in the TERM_CATALOG
+                local requested_term="${1#--}"
+                local found=0
+                for entry in "${TERM_CATALOG[@]}"; do
+                    IFS='|' read -r k _ <<< "$entry"
+                    if [[ "$k" == "$requested_term" ]]; then
+                        found=1
+                        break
+                    fi
+                done
+                
+                if (( found )); then
+                    switch_terminal "$requested_term"
+                else
+                    log_err "Unknown terminal argument: $1"
+                    exit 1
                 fi
                 ;;
             *)

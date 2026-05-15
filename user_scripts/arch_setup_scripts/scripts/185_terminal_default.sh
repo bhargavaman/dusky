@@ -18,5 +18,5 @@ log_success() { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
 readonly TARGET_FILE="${HOME}/.config/xdg-terminals.list"
 
 log_info "Writing ${TARGET_FILE}..."
-printf '%s\n' "kitty.desktop" > "$TARGET_FILE"
+printf '%s\n' "foot.desktop" > "$TARGET_FILE"
 log_success "Done"
