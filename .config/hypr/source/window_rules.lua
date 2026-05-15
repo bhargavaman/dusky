@@ -1659,6 +1659,7 @@ hl.window_rule({
 
 --------------------------------------------------------------------------------
 -- SMART GAPS (No Gaps/Borders when only one window is visible)
+-- this is in appearance.lua
 --------------------------------------------------------------------------------
 
 --- 1. Behavior for Single Tiled Window (w[tv1]) ---

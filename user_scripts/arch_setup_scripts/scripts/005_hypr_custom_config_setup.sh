@@ -767,6 +767,74 @@ hl.config({
 })
 
 -- -------------------------------------------------------------------------------------------------
+-- SINGLE WINDOW APPEARANCE
+-- Applied when exactly one tiled window is on screen (w[tv1]), or when
+-- a window is maximized (f[1]). Excludes special/scratchpad workspaces (s[false]).
+--
+-- WHAT CANNOT BE SET HERE (window rules don't support these — global hl.config() only):
+--   • rounding_power  → decoration.rounding_power in hl.config()
+--   • no_shadow / no_dim → no per-window shadow or dim suppression in 0.55 window rules
+--   • blur sub-options (size, passes, etc.) → decoration.blur in hl.config()
+--   • border_size → must live in hl.workspace_rule(), not hl.window_rule()
+-- -------------------------------------------------------------------------------------------------
+
+-- Workspace-level: gaps + border (border_size is only valid here, not in hl.window_rule)
+hl.workspace_rule({ workspace = "w[tv1]s[false]", gaps_out = 0, gaps_in = 0, border_size = 1 })
+hl.workspace_rule({ workspace = "f[1]s[false]",   gaps_out = 0, gaps_in = 0, border_size = 1 })
+
+-- Single tiled window
+hl.window_rule({
+    name  = "single_window_style",
+    match = { float = false, workspace = "w[tv1]s[false]" },
+
+    -- ROUNDING
+    -- matches your global decoration.rounding = 10
+    -- set to 0 for sharp corners on a lone window, or keep 10 to match global
+    rounding      = 10,
+
+    -- OPACITY
+    -- format: "active [override] inactive [override] fullscreen [override]"
+    -- "override" makes it absolute instead of multiplicative with other rules
+    -- your global active_opacity and inactive_opacity are both 0.85
+    -- using override here so it doesn't compound with the global value
+    opacity       = "0.85 override 0.85 override 1.0 override",
+
+    -- BLUR
+    -- false = keep blur enabled (matches your global blur.enabled = true)
+    -- set to true to disable blur for this window only
+    no_blur       = false,
+
+    -- BORDER COLOR
+    -- leave unset to inherit global col.active_border / col.inactive_border
+    -- uncomment to override, e.g. a gradient:
+    -- border_color = "rgb(ffffff) rgb(000000) 45deg",
+
+    -- ANIMATION
+    -- override the open/close animation for this window
+    -- options: "popin", "popin 80%", "slide", "gnomed", or unset to inherit global
+    -- animation = "popin 80%",
+
+    -- TEARING
+    -- allow this window to request tearing (reduce latency)
+    -- matches your global allow_tearing = true, but this is per-window opt-in
+    -- immediate = false,
+})
+
+-- Maximized window (f[1] = workspace has a maximized window)
+hl.window_rule({
+    name  = "maximized_window_style",
+    match = { float = true, workspace = "f[1]s[false]" },
+
+    rounding      = 10,
+    opacity       = 0.45, -- override 0.85 override 1.0 override"
+    no_blur       = true,
+
+    -- border_color = "rgb(ffffff) rgb(000000) 45deg",
+    -- animation = "popin 80%",
+    -- immediate = false,
+})
+
+-- -------------------------------------------------------------------------------------------------
 --  ANIMATIONS
 -- -------------------------------------------------------------------------------------------------
 
@@ -1055,29 +1123,33 @@ if enforce_default_names_1_to_10 then
 end
 
 
--- ==============================================================================
--- §3  SMART GAPS  ("no gaps when only")
--- Removes gaps and borders when exactly one tiled window is on screen,
--- or when a window is in fullscreen/maximized state.
--- Replicates the popular "smartgaps" feature from other WMs.
+
+-- -- ==============================================================================
+-- -- §3  SMART GAPS  ("no gaps when only")
+-- -- Removes gaps and borders when exactly one tiled window is on screen,
+-- -- or when a window is in fullscreen/maximized state.
+-- -- Replicates the popular "smartgaps" feature from other WMs.
+-- --
+-- -- Selector reference used here:
+-- --   w[tv1]   → workspace with exactly 1 visible tiled window
+-- --   f[1]     → workspace where a window is maximized
+-- --   s[false] → exclude special/scratchpad workspaces
 --
--- Selector reference used here:
---   w[tv1]   → workspace with exactly 1 visible tiled window
---   f[1]     → workspace where a window is maximized
---   s[false] → exclude special/scratchpad workspaces
--- ==============================================================================
-local enable_smart_gaps = false
-
-if enable_smart_gaps then
-    -- Remove gaps when there is only one tiled window
-    hl.workspace_rule({ workspace = "w[tv1]s[false]", gaps_out = 0, gaps_in = 0 })
-    -- Remove gaps when a window is maximized
-    hl.workspace_rule({ workspace = "f[1]s[false]",   gaps_out = 0, gaps_in = 0 })
-
-    -- Also remove borders and rounding so the window fills the screen cleanly
-    hl.window_rule({ match = { float = false, workspace = "w[tv1]s[false]" }, border_size = 0, rounding = 0 })
-    hl.window_rule({ match = { float = false, workspace = "f[1]s[false]"   }, border_size = 0, rounding = 0 })
-end
+-- --  this section is in appearance.lua
+--
+-- -- ==============================================================================
+-- local enable_smart_gaps = false
+-- 
+-- if enable_smart_gaps then
+--     -- Remove gaps when there is only one tiled window
+--     hl.workspace_rule({ workspace = "w[tv1]s[false]", gaps_out = 0, gaps_in = 0 })
+--     -- Remove gaps when a window is maximized
+--     hl.workspace_rule({ workspace = "f[1]s[false]",   gaps_out = 0, gaps_in = 0 })
+-- 
+--     -- Also remove borders and rounding so the window fills the screen cleanly
+--     hl.window_rule({ match = { float = false, workspace = "w[tv1]s[false]" }, border_size = 0, rounding = 0 })
+--     hl.window_rule({ match = { float = false, workspace = "f[1]s[false]"   }, border_size = 0, rounding = 0 })
+-- end
 
 
 -- ==============================================================================

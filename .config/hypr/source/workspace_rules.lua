@@ -156,29 +156,33 @@ if enforce_default_names_1_to_10 then
 end
 
 
--- ==============================================================================
--- §3  SMART GAPS  ("no gaps when only")
--- Removes gaps and borders when exactly one tiled window is on screen,
--- or when a window is in fullscreen/maximized state.
--- Replicates the popular "smartgaps" feature from other WMs.
+
+-- -- ==============================================================================
+-- -- §3  SMART GAPS  ("no gaps when only")
+-- -- Removes gaps and borders when exactly one tiled window is on screen,
+-- -- or when a window is in fullscreen/maximized state.
+-- -- Replicates the popular "smartgaps" feature from other WMs.
+-- --
+-- -- Selector reference used here:
+-- --   w[tv1]   → workspace with exactly 1 visible tiled window
+-- --   f[1]     → workspace where a window is maximized
+-- --   s[false] → exclude special/scratchpad workspaces
 --
--- Selector reference used here:
---   w[tv1]   → workspace with exactly 1 visible tiled window
---   f[1]     → workspace where a window is maximized
---   s[false] → exclude special/scratchpad workspaces
--- ==============================================================================
-local enable_smart_gaps = false
-
-if enable_smart_gaps then
-    -- Remove gaps when there is only one tiled window
-    hl.workspace_rule({ workspace = "w[tv1]s[false]", gaps_out = 0, gaps_in = 0 })
-    -- Remove gaps when a window is maximized
-    hl.workspace_rule({ workspace = "f[1]s[false]",   gaps_out = 0, gaps_in = 0 })
-
-    -- Also remove borders and rounding so the window fills the screen cleanly
-    hl.window_rule({ match = { float = false, workspace = "w[tv1]s[false]" }, border_size = 0, rounding = 0 })
-    hl.window_rule({ match = { float = false, workspace = "f[1]s[false]"   }, border_size = 0, rounding = 0 })
-end
+-- --  this section is in appearance.lua
+--
+-- -- ==============================================================================
+-- local enable_smart_gaps = false
+-- 
+-- if enable_smart_gaps then
+--     -- Remove gaps when there is only one tiled window
+--     hl.workspace_rule({ workspace = "w[tv1]s[false]", gaps_out = 0, gaps_in = 0 })
+--     -- Remove gaps when a window is maximized
+--     hl.workspace_rule({ workspace = "f[1]s[false]",   gaps_out = 0, gaps_in = 0 })
+-- 
+--     -- Also remove borders and rounding so the window fills the screen cleanly
+--     hl.window_rule({ match = { float = false, workspace = "w[tv1]s[false]" }, border_size = 0, rounding = 0 })
+--     hl.window_rule({ match = { float = false, workspace = "f[1]s[false]"   }, border_size = 0, rounding = 0 })
+-- end
 
 
 -- ==============================================================================
