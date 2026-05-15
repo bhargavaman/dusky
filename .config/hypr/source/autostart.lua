@@ -37,6 +37,10 @@
 --      -- --- CLIPBOARD MANAGER ---
 --      hl.exec_cmd("uwsm-app -- wl-paste --type text --watch cliphist store")
 --      hl.exec_cmd("uwsm-app -- wl-paste --type image --watch cliphist store")
+--
+--      hl.exec_cmd("uwsm-app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store'")
+--      hl.exec_cmd("uwsm-app -- sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store'")
+--
 --      hl.exec_cmd("uwsm-app -- wl-clip-persist --clipboard regular")
 --  
 --      -- --- OPTIONAL / USER INTERFACE ---
