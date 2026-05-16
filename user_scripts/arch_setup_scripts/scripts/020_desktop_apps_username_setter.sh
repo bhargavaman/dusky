@@ -41,9 +41,14 @@ if [[ -z ${USER:-} ]]; then
 fi
 readonly CURRENT_USER="$USER"
 
-# Prepare USER variable for SED (Escape slashes and ampersands)
-# This prevents sed from breaking if the username is exotic
-readonly USER_SED_SAFE="${CURRENT_USER//\//\\/}"
+# Prepare USER variable for SED substitution.
+# Since we use '|' as the delimiter in `s|old|new|g`, we must escape:
+# 1. Backslashes '\' (escape these first!)
+# 2. Pipe characters '|' (so sed doesn't prematurely end the command)
+# 3. Ampersands '&' (sed uses this to refer to the matched pattern)
+_SAFE_USER="${CURRENT_USER//\\/\\\\}"
+_SAFE_USER="${_SAFE_USER//|/\\|}"
+readonly USER_SED_SAFE="${_SAFE_USER//&/\\&}"
 
 # ------------------------------------------------------------------------------
 # 2. Target Files List
