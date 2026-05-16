@@ -20,6 +20,7 @@ readonly ICON_FILE=""
 readonly ICON_DIR="󰹹"      
 readonly ICON_BACK=""     
 readonly ICON_ERROR=""    
+readonly ICON_DISABLE=""  
 
 # -----------------------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -156,7 +157,7 @@ fi
 
 selection="${ROFI_INFO:-}"
 
-if [[ -z "$selection" && $# -eq 2 && ("$1" == "horizontal" || "$1" == "vertical") ]]; then
+if [[ -z "$selection" && $# -eq 2 && ("$1" == "horizontal" || "$1" == "vertical" || "$1" == "disabled") ]]; then
     selection="FILE:$1:$2"
 fi
 
@@ -196,6 +197,12 @@ if [[ "$selection" == DIR:* ]]; then
 
     for file in "${files[@]}"; do
         filename="${file##*/}"
+
+        # Prevent the disable.lua file from cluttering the orientation sub-menus
+        if [[ "$filename" == "disable.lua" ]]; then
+            continue
+        fi
+
         escaped_name=$(escape_markup "$filename")
 
         if [[ "$file" == "$current_anim" && "$target_orient" == "$current_orient" ]]; then
@@ -216,13 +223,22 @@ if [[ -z "$selection" || "$selection" == "BACK" ]]; then
     printf '\0no-custom\x1ftrue\n'
     printf '\0message\x1fSelect animation layout orientation\n'
 
-    if [[ "$current_orient" == "horizontal" && -n "$current_anim" ]]; then
+    # Check for disable.lua and list it as the first option if it exists
+    if [[ -f "$ANIM_DIR/disable.lua" ]]; then
+        if [[ "$current_anim" == "$ANIM_DIR/disable.lua" ]]; then
+            printf '<span weight="bold">Disable Animations</span> <span size="small" style="italic">(Active)</span>\0icon\x1f%s\x1finfo\x1fFILE:disabled:%s/disable.lua\n' "$ICON_ACTIVE" "$ANIM_DIR"
+        else
+            printf 'Disable Animations\0icon\x1f%s\x1finfo\x1fFILE:disabled:%s/disable.lua\n' "$ICON_DISABLE" "$ANIM_DIR"
+        fi
+    fi
+
+    if [[ "$current_orient" == "horizontal" && -n "$current_anim" && "$current_anim" != "$ANIM_DIR/disable.lua" ]]; then
         printf '<span weight="bold">Horizontal Animations</span> <span size="small" style="italic">(Active)</span>\0icon\x1f%s\x1finfo\x1fDIR:horizontal\n' "$ICON_ACTIVE"
     else
         printf 'Horizontal Animations\0icon\x1f%s\x1finfo\x1fDIR:horizontal\n' "$ICON_DIR"
     fi
 
-    if [[ "$current_orient" == "vertical" && -n "$current_anim" ]]; then
+    if [[ "$current_orient" == "vertical" && -n "$current_anim" && "$current_anim" != "$ANIM_DIR/disable.lua" ]]; then
         printf '<span weight="bold">Vertical Animations</span> <span size="small" style="italic">(Active)</span>\0icon\x1f%s\x1finfo\x1fDIR:vertical\n' "$ICON_ACTIVE"
     else
         printf 'Vertical Animations\0icon\x1f%s\x1finfo\x1fDIR:vertical\n' "$ICON_DIR"
