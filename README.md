@@ -30,6 +30,12 @@ here's what it looks like.
 
 ![waybar_minimal](Pictures/readme_assets/waybar_minimal.webp)
 
+## 🎨 Theming & Acknowledgments
+
+A massive shoutout to [@Ubaidullah-Web-Dev](https://github.com/Ubaidullah-Web-Dev) for his amazing project that enables website theming on gecko based browsers like firefox! This configuration wouldn't be the possible without it.
+
+⭐ **Support the Developer:** If you like the look of this setup, please head over and drop a star on his repository:
+👉 [MatugenFox on GitHub](https://github.com/Ubaidullah-Web-Dev/MatugenFox)
 
 ### There's also a brand new Dusky Control Center that acts as a system overview gui for settings and features, it's exhaustive in it's scope, almost anything you want to set/change can be done from this one stop shop intuitive gui app. I'll keep adding more quality of life features to it over time.
 
