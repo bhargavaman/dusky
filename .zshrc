@@ -399,7 +399,7 @@ waydroid_bind() {
 
 
 # monitor info
-hyprmoninfo() {
+mon_info() {
   hyprctl monitors | awk '
     # Mathematical GCD for Aspect Ratio calculation
     function gcd(a, b,  t) {
