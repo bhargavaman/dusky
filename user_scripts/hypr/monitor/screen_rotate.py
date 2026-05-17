@@ -13,17 +13,37 @@ Design principles:
   • Temporary by design — changes reset on `hyprctl reload`.
   • Mode-string fidelity — resolves active mode natively without resolution corruption.
   • Flip-transform aware — rotates within the current flip state (0-3 / 4-7).
-  • Keybind safe — pipes critical errors to notify-send.
+  • Keybind safe — pipes critical errors to notify-send and debounces rapid inputs.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
+
+
+# ── Concurrency Lock ───────────────────────────────────────────────────────────
+
+def acquire_lock() -> None:
+    """
+    Acquire an exclusive lock. If another instance is running, exit silently.
+    This prevents race conditions when the keybind is spammed.
+    """
+    lock_file = os.path.join(tempfile.gettempdir(), "hypr_screen_rotate.lock")
+    fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # Another instance is running. Silently drop this execution.
+        sys.exit(0)
+    # The file descriptor remains open and locked until the process exits.
+    # The OS automatically releases the lock when the script finishes.
 
 
 # ── ANSI colour helpers ────────────────────────────────────────────────────────
@@ -221,6 +241,9 @@ def format_scale(scale: float) -> str:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # 1. Establish concurrency lock immediately to debounce keybind spam
+    acquire_lock()
+    
     check_environment()
     direction = parse_direction()
 
