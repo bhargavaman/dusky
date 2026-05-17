@@ -160,6 +160,8 @@ alias tui='python ~/user_scripts/dusky_tui/python/main/main.py'
 # VNC iphone daemon.
 alias iphone_vnc='~/user_scripts/networking/iphone_vnc.sh'
 
+alias screen_size='hyprctl monitors | awk '\''/physical size/ {split($4,a,"x");printf "Screen size: %.2f inches\n",sqrt(a[1]^2 + a[2]^2)/25.4}'\'''
+
 # wifi security
 alias wifi_security='~/user_scripts/networking/ax201_wifi_testing.sh'
 
