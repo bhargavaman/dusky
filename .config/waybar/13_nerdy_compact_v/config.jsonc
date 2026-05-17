@@ -99,13 +99,13 @@
         "hyprland/workspaces": {
             "on-click": "activate",
             "all-outputs": true,
-            "sort-by-number": true,
+            "sort-by": "number",
             "format": "{id}",
             "persistent-workspaces": {
                  "*": 4
             },
-            "on-scroll-up": "hyprctl dispatch hl.dsp.focus({ workspace = \"e-1\" })",
-            "on-scroll-down": "hyprctl dispatch hl.dsp.focus({ workspace = \"e+1\" })"
+            "on-scroll-up": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'",
+            "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'"
         },
 
         "battery": {

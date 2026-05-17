@@ -95,7 +95,7 @@
     "hyprland/workspaces": {
         "format": "",
         "on-click": "activate",
-        "sort-by-number": true,
+        "sort-by": "number",
         "persistent-workspaces": {}
     },
 
