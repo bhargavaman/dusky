@@ -96,7 +96,7 @@
 		"format-icons": [
 			"󰤟", "󰤢", "󰤥", "󰤨"
 		],
-		"on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+		"on-click": "foot --app-id=dusky_network.sh $HOME/user_scripts/network_manager/dusky_network.sh",
 		"on-click-right": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
 		"tooltip-format": "<b>Gateway</b>: {gwaddr}",
 		"tooltip-format-ethernet": "<b>Interface</b>: {ifname}",

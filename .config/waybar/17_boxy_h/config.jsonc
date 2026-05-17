@@ -131,7 +131,7 @@
     "tooltip-format-disconnected": "Disconnected",
     "interval": 3,
     "spacing": 1,
-    "on-click": "uwsm-app -- kitty --class wifitui -e wifitui"
+    "on-click": "foot --app-id=dusky_network.sh $HOME/user_scripts/network_manager/dusky_network.sh"
   },
   "battery": {
     "format": "{icon} {capacity}%",
