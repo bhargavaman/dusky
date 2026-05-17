@@ -44,6 +44,7 @@ class MonitorData:
 
 @dataclass
 class ClientData:
+    address: str
     title: str
     app_class: str
     mon_id: int
@@ -57,6 +58,7 @@ class ClientData:
 
 @dataclass
 class GeneratedRule:
+    address: str
     title: str
     app_class: str
     rule_text: str
@@ -151,6 +153,7 @@ hl.window_rule({{
 }})"""
 
     return GeneratedRule(
+        address=client.address,
         title=client.title[:60] if client.title else "Unknown",
         app_class=client.app_class,
         rule_text=rule_text
@@ -203,6 +206,7 @@ def scan_windows() -> List[GeneratedRule]:
         workspace_info = c.get('workspace', {})
         
         client_data = ClientData(
+            address=c.get('address', ''),
             title=c.get('title', ''),
             app_class=app_class,
             mon_id=mon_id,
@@ -346,7 +350,30 @@ class DuskyTUI:
             self.scroll_offset = self.selected_row - max_display + 1
 
     def run(self) -> None:
+        self.stdscr.timeout(1000) # 1000ms (1 second) non-blocking timeout
+
         while True:
+            # --- REAL-TIME SCANNING & CURSOR RETENTION ---
+            old_address = None
+            if self.rules and 0 <= self.selected_row < len(self.rules):
+                old_address = self.rules[self.selected_row].address
+
+            # Rescan windows from Hyprland
+            self.rules = scan_windows()
+            self.item_count = len(self.rules)
+
+            # Re-anchor the cursor so it doesn't bounce when the list updates
+            if self.item_count == 0:
+                self.selected_row = 0
+            elif old_address:
+                new_idx = next((i for i, r in enumerate(self.rules) if r.address == old_address), -1)
+                if new_idx != -1:
+                    self.selected_row = new_idx
+                else:
+                    self.selected_row = min(self.selected_row, self.item_count - 1)
+            else:
+                self.selected_row = min(self.selected_row, max(0, self.item_count - 1))
+
             self.stdscr.erase()
             max_y, max_x = self.stdscr.getmaxyx()
             
@@ -435,9 +462,12 @@ class DuskyTUI:
             try:
                 ch = self.stdscr.getch()
             except curses.error:
-                continue
+                ch = -1
 
-            self.status_msg = ""
+            if ch == -1:
+                continue # Timeout hit, loop back to the top to rescan and redraw
+
+            self.status_msg = "" # Only clear the status message on an actual keypress
 
             match ch:
                 case curses.KEY_UP | 107: # 107 = 'k'
