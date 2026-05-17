@@ -441,7 +441,7 @@ def main() -> None:
     production_css = generate_production_css(domain, collected_rules, existing_content)
     preview_css = generate_preview_css(domain, collected_rules)
 
-    # Render Preview
+    # Render Previews
     console.print("\n")
     preview_panel = Panel(
         f"[bold white]{preview_css}[/]", 
@@ -450,6 +450,15 @@ def main() -> None:
         subtitle="[dim]Paste these into Stylus to test your newly added elements[/]"
     )
     console.print(preview_panel)
+    
+    console.print("\n")
+    production_panel = Panel(
+        f"[bold white]{production_css.strip()}[/]",
+        title="[bold green]📄 EXACT FILE OUTPUT (What will be saved)[/]",
+        border_style="green",
+        subtitle="[dim]This is the complete merged code that will be written to disk[/]"
+    )
+    console.print(production_panel)
 
     console.print("\n[dim]Your Managing/Production Template uses dynamic var(--...) variables.[/]")
     save = Confirm.ask(f"Do you want to apply and save this to [bold]{file_path}[/]?")
