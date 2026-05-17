@@ -185,13 +185,13 @@ end)
 
 hl.bind(
     "CTRL + ALT + R",
-    hl.dsp.exec_cmd(dusky_scripts .. "hypr/screen_rotate.sh -90"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/monitor/screen_rotate.sh -90"),
     { description = "Rotate Screen Clockwise", locked = true }
 )
 
 hl.bind(
     "CTRL + ALT + SHIFT + R",
-    hl.dsp.exec_cmd(dusky_scripts .. "hypr/screen_rotate.sh +90"),
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/monitor/screen_rotate.sh +90"),
     { description = "Rotate Screen Anti-Clockwise", locked = true }
 )
 

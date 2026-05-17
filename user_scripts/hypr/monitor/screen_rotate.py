@@ -18,7 +18,7 @@ Design principles:
 
 Hyprland IPC reference:
   hyprctl monitors -j  →  JSON list of active monitors
-  hyprctl keyword monitor NAME,WxH@HZ,XxY,SCALE,transform,T  →  apply rule
+  hyprctl eval 'hl.monitor({...})'  →  apply monitor rule via Lua (0.55+)
 
 Transform values (WL_OUTPUT_TRANSFORM_*):
     0 = normal        1 = 90°         2 = 180°        3 = 270°
@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -142,23 +143,29 @@ def hyprctl_json(args: list[str]) -> Any:
         die(f"Failed to parse hyprctl JSON: {exc}\n         Raw output: {raw[:300]!r}")
 
 
-def hyprctl_keyword(keyword: str, value: str) -> bool:
+def hyprctl_eval(lua_str: str) -> bool:
     """
-    Run `hyprctl keyword <keyword> <value>`.
-    Returns True if Hyprland acknowledged with 'ok'.
+    Run `hyprctl eval '<lua_str>'` — the Hyprland 0.55 runtime Lua API.
+
+    In 0.55, `hyprctl keyword monitor NAME,...` uses the deprecated hyprlang
+    comma-syntax; transforms are silently ignored.  `hyprctl eval` executes
+    Lua directly in the running compositor state and is the correct mechanism.
+
+    We don't rely on stdout for success — `hl.monitor()` returns nil, so eval
+    prints nothing useful.  Instead we check the exit code and let the caller
+    do IPC polling to confirm the change was applied.
     """
     try:
         proc = subprocess.run(
-            ["hyprctl", "keyword", keyword, value],
+            ["hyprctl", "eval", lua_str],
             capture_output=True,
             text=True,
             timeout=5,
         )
     except subprocess.TimeoutExpired:
-        die("hyprctl keyword timed out — compositor may be unresponsive.")
+        die("hyprctl eval timed out — compositor may be unresponsive.")
 
-    stdout = proc.stdout.strip().lower()
-    return proc.returncode == 0 and "ok" in stdout
+    return proc.returncode == 0
 
 
 # ── Mode resolution ────────────────────────────────────────────────────────────
@@ -306,19 +313,27 @@ def main() -> None:
     # ── 3. Resolve active mode string ────────────────────────────────────────
     active_mode = resolve_active_mode(focused)
 
-    # ── 4. Build the hyprctl keyword monitor payload ─────────────────────────
+    # ── 4. Build the Lua hl.monitor() call ───────────────────────────────────
     #
-    # Format (hyprlang, still accepted by hyprctl keyword in 0.55):
-    #   NAME, WxH@HZ, XxY, SCALE, transform, T
+    # hyprctl eval executes Lua directly in the running compositor (0.55+).
+    # hl.monitor() takes a table matching the Lua config format:
+    #   { output, mode, position, scale, transform }
     #
-    # Notes:
-    #   • No Hz suffix on mode — hyprctl expects "144.00" not "144.00Hz"
-    #   • Position uses 'x' separator: "0x0", "1920x0"
-    #   • Scale is a bare decimal
+    # IMPORTANT: mode must NOT have the "Hz" suffix.
+    # Position format is the string "XxY" e.g. "0x0", "1920x0".
+    # Scale is a bare number (Lua doesn't need quotes for numbers).
     #
     pos_str   = f"{x}x{y}"
     scale_str = format_scale(scale)
-    payload   = f"{name},{active_mode},{pos_str},{scale_str},transform,{new_transform}"
+
+    # Escape monitor name for Lua string literal (handles names with quotes,
+    # though connector names like eDP-1, DP-2 are always safe in practice).
+    lua_name = name.replace("\\", "\\\\").replace('"', '\\"')
+
+    lua_call = (
+        f'hl.monitor({{ output = "{lua_name}", mode = "{active_mode}", '
+        f'position = "{pos_str}", scale = {scale_str}, transform = {new_transform} }})'
+    )
 
     # ── 5. Log intent ────────────────────────────────────────────────────────
     print()
@@ -327,41 +342,50 @@ def main() -> None:
     log_info(f"Position  : {pos_str}   Scale: {scale_str}")
     log_info(f"Transform : {current_transform} → {new_transform}  "
              f"({direction:+d} × 90°)")
-    log_payload(payload)
+    log_payload(lua_call)
     print()
 
-    # ── 6. Apply via IPC ─────────────────────────────────────────────────────
-    success = hyprctl_keyword("monitor", payload)
-
-    if not success:
-        # Attempt one more query to detect if Hyprland quietly ignored it
-        # (the known transform-ignored regression in some older builds).
-        try:
-            after = hyprctl_json(["monitors"])
-            actual = next(
-                (int(m.get("transform", -1)) for m in after
-                 if m.get("name") == name),
-                -1,
-            )
-            if actual == new_transform:
-                # Succeeded despite a non-"ok" response (edge case in some builds)
-                success = True
-        except SystemExit:
-            pass  # die() was already called above; let it propagate
-
-    if not success:
+    # ── 6. Apply via hyprctl eval (Lua API) ──────────────────────────────────
+    eval_ok = hyprctl_eval(lua_call)
+    if not eval_ok:
         die(
-            "Hyprland rejected the monitor payload.\n"
-            "  Possible causes:\n"
-            "    • Monitor name mismatch (run 'hyprctl monitors' to verify)\n"
-            "    • Invalid mode string for this display\n"
-            "    • Compositor in a transient error state\n"
-            f"  Payload was: {payload}"
+            "hyprctl eval returned a non-zero exit code.\n"
+            "  Is Hyprland 0.55+ running and the socket accessible?\n"
+            f"  Lua: {lua_call}"
+        )
+
+    # ── 7. Poll IPC to confirm transform was actually applied ─────────────────
+    #
+    # Borrowed from adjust_scale.py: Wayland compositor state updates are async.
+    # Poll up to 2.5 s (25 × 100 ms) for the transform to change.
+    # This also catches the old "eval accepted but silently ignored" edge case.
+    #
+    actual_transform = current_transform
+    for _ in range(25):
+        time.sleep(0.1)
+        try:
+            polled = hyprctl_json(["monitors"])
+            for m in polled:
+                if m.get("name") == name:
+                    actual_transform = int(m.get("transform", current_transform))
+                    break
+        except SystemExit:
+            break  # die() already called inside hyprctl_json
+        if actual_transform != current_transform:
+            break
+
+    if actual_transform != new_transform:
+        die(
+            f"Transform did not change after eval "
+            f"(expected {new_transform}, IPC reports {actual_transform}).\n"
+            "  This may indicate the compositor overrode the value, or that\n"
+            "  'hyprctl eval' is not supported on your build.\n"
+            f"  Lua sent: {lua_call}"
         )
 
     log_ok(f"Rotation applied — transform {current_transform} → {new_transform}")
 
-    # ── 7. Optional desktop notification ────────────────────────────────────
+    # ── 8. Optional desktop notification ────────────────────────────────────
     _notify(name, new_transform, active_mode)
 
 
