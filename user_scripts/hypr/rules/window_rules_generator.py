@@ -17,7 +17,7 @@ from typing import List, Dict, Optional, Any
 # --- Configuration ---
 TARGET_FILE = os.path.expanduser("~/.config/hypr/edit_here/source/window_rules.lua")
 APP_TITLE = "Dusky Window Rule Generator"
-APP_VERSION = "v5.2.0 (Math-Perfected Edition)"
+APP_VERSION = "v5.3.0"
 
 @dataclass
 class MonitorData:
@@ -395,8 +395,14 @@ class DuskyTUI:
             border_line = "─" * (box_width - 2)
             c_mag = curses.color_pair(2)
             
-            # --- HEADER ---
+            # --- HEADER / TOP BORDER ---
             self.draw_safe(0, 0, f"┌{border_line}┐", c_mag)
+            
+            # Embed Keybinds into the top border (0 wasted lines)
+            keybinds = " [↑/↓] Nav  [Enter] Append  [c] Copy  [q] Quit "
+            kb_x = box_width - len(keybinds) - 2
+            if kb_x > 2:
+                self.draw_safe(0, kb_x, keybinds, curses.color_pair(1) | curses.A_BOLD)
             
             title_str = f" {APP_TITLE} "
             ver_str = f"{APP_VERSION} "
@@ -444,17 +450,15 @@ class DuskyTUI:
                     # Route to our shiny new tokenizer for rendering
                     self.draw_highlighted_lua(row_y, 2, rule_lines[i], box_width - 1)
 
+            # --- BOTTOM BORDER ---
             bot_y = preview_start_y + preview_h
             self.draw_safe(bot_y, 0, f"└{border_line}┘", c_mag)
-
-            # --- FOOTER ---
-            footer_text = " [↑/↓] Select  [Enter] Append  [c] Copy  [q] Quit "
-            self.draw_safe(bot_y + 1, 1, footer_text, curses.color_pair(1))
-
-            if self.status_msg:
-                self.draw_safe(bot_y + 2, 2, self.status_msg, curses.color_pair(5) | curses.A_BOLD)
-            else:
-                self.draw_safe(bot_y + 2, 2, f"Target: {TARGET_FILE}", curses.color_pair(3))
+            
+            # Embed Target/Status into the bottom border (0 wasted lines)
+            status_text = f" {self.status_msg} " if self.status_msg else f" Target: {TARGET_FILE} "
+            status_color = curses.color_pair(5) | curses.A_BOLD if self.status_msg else curses.color_pair(3)
+            if box_width > len(status_text) + 4:
+                self.draw_safe(bot_y, 2, status_text, status_color)
 
             self.stdscr.refresh()
 
