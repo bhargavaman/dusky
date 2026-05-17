@@ -218,7 +218,7 @@ declare -ra UPDATE_SEQUENCE=(
 
     "U | 015_set_thunar_terminal_kitty.sh"
     "U | 020_desktop_apps_username_setter.sh --quiet"
-#    "U | 025_configure_keyboard.sh"
+    "U | 025_configure_keyboard.sh"
 #    "U | 035_configure_uwsm_gpu.sh --auto"
 #    "U | 040_long_sleep_timeout.sh"
 #    "S | 045_battery_limiter.sh"
