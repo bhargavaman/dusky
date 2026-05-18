@@ -242,15 +242,19 @@ EXAMPLES:
     if ENGINE_TYPE == "lua":
         from python.engines.lua import HyprlandLuaEngine
         engine = HyprlandLuaEngine(config_path=str(TARGET_FILE))
-    
+
     elif ENGINE_TYPE == "monitor":
         from python.engines.monitor_engine import MonitorLuaEngine
         engine = MonitorLuaEngine(config_path=str(TARGET_FILE))
-        
+
     elif ENGINE_TYPE == "ini":
         from python.engines.ini import IniConfigEngine
         engine = IniConfigEngine(config_path=str(TARGET_FILE))
-    
+
+    elif ENGINE_TYPE == "systemd":
+        from python.engines.systemd import SystemdEngine
+        engine = SystemdEngine()
+
     else:
         print(f"[-] Fatal: Unknown ENGINE_TYPE '{ENGINE_TYPE}' specified in schema '{schema_path.name}'.")
         print("[i] Supported engines are: 'lua', 'ini'")
@@ -258,12 +262,12 @@ EXAMPLES:
 
     # --- 4. HEADLESS OPERATIONS ---
     if is_headless:
-        engine.load_state() 
+        engine.load_state()
 
         if args.export_state:
             print(json.dumps(engine.cache, indent=2))
             sys.exit(0)
-            
+
         if args.export_docs:
             print(f"# Configuration Reference: {APP_TITLE}\n")
             for tab_idx, items in SCHEMA.items():
