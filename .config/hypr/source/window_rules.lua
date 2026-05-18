@@ -1076,18 +1076,16 @@ hl.window_rule({
     center = true
 })
 
---- Dusky_control_center Script ---
+-- Dusky Control Center
 hl.window_rule({
-    name = "dusky_control_center.py",
+    name = "controlcenter",
     match = {
-        title = "^(Dusky Control Center)$",
-        class = "^(com.github.dusky.controlcenter)$"
+        class = "^(com\\.github\\.dusky\\.controlcenter)$",
     },
     float = true,
-    animation = "slide down",
-    size = {"(monitor_w*0.50)", "(monitor_h*0.92)"},
-    move = {"(monitor_w*0.05)", "(monitor_h*0.05)"},
-    center = true
+    size = {"monitor_w * 0.3958", "monitor_h * 0.9093"},
+    animation = "slide right",
+    dim_around = true,
 })
 
 --- Dusky_QuickPanal Script ---
