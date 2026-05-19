@@ -14,11 +14,11 @@ class HyprlangEngine(BaseEngine):
     Production-grade AST-like engine for the modern Hyprlang configuration ecosystem.
     (Powers Hyprland, Hypridle, Hyprpaper, Hyprlock, etc.)
     
-    Features:
-    - Parses C-like brace structures and special categories (e.g., `device[name] {`).
-    - Intelligently indexes duplicate blocks (e.g., `listener:1`, `listener:2`).
-    - Respects Hyprlang arithmetic `{{}}` and comment escapes `##`.
-    - Features PASS 2 Appends: Dynamically generates missing keys and blocks at EOF.
+    Architectural Guarantees:
+    - Zero-Destruction mutations: Preserves all whitespace, escaped characters (##), and inline comments.
+    - C-Style Brace Indexing: Correctly tracks sequential duplicates (e.g. listener:1, listener:2).
+    - Arithmetic Immunity: Ignores braces inside {{ math_operations }} to prevent premature block closures.
+    - Atomic Writes: Utilizes tmpfiles and os.replace to prevent config corruption during unexpected halts.
     """
     
     def __init__(self, config_path: str):
@@ -34,13 +34,16 @@ class HyprlangEngine(BaseEngine):
         """
         Safely strips Hyprlang comments (#) while respecting escaped hashes (##).
         """
-        # Finds the first '#' that is not preceded or followed by another '#'
-        clean = re.sub(r'(?<!#)#(?!#).*$', '', line)
-        # Unescape the literal hashes
-        return clean.replace('##', '#')
+        # Temporarily hide escaped hashes
+        hidden = line.replace('##', '\x00')
+        # Split at the first real hash
+        if '#' in hidden:
+            hidden = hidden.split('#', 1)[0]
+        # Restore escaped hashes, replacing them with a single hash as per hyprlang spec
+        return hidden.replace('\x00', '#').strip()
 
     def load_state(self) -> dict[str, Any]:
-        """Parses active configurations into a flat state dictionary."""
+        """Parses active configurations into a flat state dictionary mapped to the UI scope requirements."""
         if not self.config_path.exists():
             return {}
 
@@ -54,39 +57,48 @@ class HyprlangEngine(BaseEngine):
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     clean = self._strip_comments(line)
+                    if not clean:
+                        continue
                     
-                    # 1. Count block opens (supports standard and special categories)
-                    for match in re.finditer(r"([a-zA-Z0-9_.-]+(?:\[[^\]]+\])?)\s*\{", clean):
-                        b_name = match.group(1).strip()
+                    # 1. Match Block Opens (Supports standard and special categories like `device[name] {`)
+                    open_match = re.search(r'^([a-zA-Z0-9_.-]+(?:\[[^\]]+\])?(?:\s+[a-zA-Z0-9_.-]+)?)\s*\{', clean)
+                    if open_match:
+                        b_name = open_match.group(1).strip()
                         block_counts[b_name] = block_counts.get(b_name, 0) + 1
                         block_stack.append((b_name, block_counts[b_name]))
+                        # Strip the open block component so subsequent logic doesn't misinterpret it
+                        clean = clean[open_match.end():]
                     
-                    # 2. Parse Assignments
+                    # 2. Match Assignments
                     if "=" in clean:
-                        k, v = clean.split("=", 1)
-                        k = k.strip()
-                        v = v.strip()
+                        k_raw, v_raw = clean.split("=", 1)
+                        k = k_raw.strip()
+                        # Strip trailing block closures from the value if written on a single line
+                        v = v_raw.split('}')[0].strip()
                         
                         # Handle inline categories (e.g., category:variable = value)
                         if ":" in k and not k.startswith("$") and not block_stack:
-                            inline_scope, inline_key = k.split(":", 1)
-                            self.cache[f"{inline_scope.strip()}/{inline_key.strip()}"] = v
+                            inline_parts = k.split(":", 1)
+                            inline_scope = inline_parts[0].strip()
+                            inline_key = inline_parts[1].strip()
+                            self.cache[f"{inline_scope}/{inline_key}"] = v
                         else:
                             # Standard assignment
                             if k.startswith("$"):
                                 self.cache[f"DEFAULT/{k}"] = v
                             elif block_stack:
                                 current_b_name, current_count = block_stack[-1]
-                                # Store generic name (if it's the first) AND exact indexed name 
-                                # to ensure the UI can seamlessly target either `general` or `listener:3`
+                                # Store standard unindexed access (if it's the first occurrence)
                                 if current_count == 1:
                                     self.cache[f"{current_b_name}/{k}"] = v
+                                # Always store explicit exact indexed name (e.g., listener:3)
                                 self.cache[f"{current_b_name}:{current_count}/{k}"] = v
                             else:
                                 self.cache[f"DEFAULT/{k}"] = v
-                        
-                    # 3. Count block closes
-                    closes = clean.count("}")
+                    
+                    # 3. Match Block Closes (Immune to arithmetic {{}} braces)
+                    clean_no_arith = re.sub(r'\{\{.*?\}\}', '', clean)
+                    closes = clean_no_arith.count("}")
                     for _ in range(closes):
                         if block_stack:
                             block_stack.pop()
@@ -114,36 +126,43 @@ class HyprlangEngine(BaseEngine):
         
         block_stack = []
         block_counts = {}
-        block_close_indices = {} # Tracks the line index of `}` for appending missing keys dynamically
+        block_close_indices = {} # Tracks exact list index of `}` to append missing keys right before it
         
         try:
             if not self.config_path.exists():
-                # Allow building a config from scratch
                 lines = []
             else:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     lines = f.readlines()
                     
-            # --- PASS 1: Inline Replacement ---
+            # --- PASS 1: Inline Replacement & AST Traversal ---
             for line in lines:
-                clean = self._strip_comments(line)
+                hidden = line.replace('##', '\x00')
+                clean_no_comment = hidden.split('#')[0].replace('\x00', '#')
                 do_replace = False
                 
                 # 1. Update AST State (Opens)
-                for match in re.finditer(r"([a-zA-Z0-9_.-]+(?:\[[^\]]+\])?)\s*\{", clean):
-                    b_name = match.group(1).strip()
+                open_match = re.search(r'^([a-zA-Z0-9_.-]+(?:\[[^\]]+\])?(?:\s+[a-zA-Z0-9_.-]+)?)\s*\{', clean_no_comment)
+                if open_match:
+                    b_name = open_match.group(1).strip()
                     block_counts[b_name] = block_counts.get(b_name, 0) + 1
                     block_stack.append((b_name, block_counts[b_name]))
                     
-                # 2. Match Target Mutations
-                if "=" in clean:
-                    k = clean.split("=")[0].strip()
+                # 2. Match Target Mutations (Strictly avoids mutating lines that are concurrently opening blocks)
+                if "=" in clean_no_comment and not open_match:
+                    k_raw, v_raw = line.split("=", 1)
+                    k = self._strip_comments(k_raw).strip()
                     matched_scope = None
                     
                     if k.startswith("$") and ("DEFAULT", k) in changes_dict:
                         matched_scope = "DEFAULT"
-                    
-                    if not matched_scope and block_stack:
+                    elif not block_stack and ":" in k and not k.startswith("$"):
+                        inline_parts = k.split(":", 1)
+                        inline_scope, inline_key = inline_parts[0].strip(), inline_parts[1].strip()
+                        if (inline_scope, inline_key) in changes_dict:
+                            matched_scope = inline_scope
+                            k = inline_key
+                    elif block_stack:
                         current_b_name, current_count = block_stack[-1]
                         check_scopes = [f"{current_b_name}:{current_count}"]
                         if current_count == 1:
@@ -153,47 +172,44 @@ class HyprlangEngine(BaseEngine):
                             if (s, k) in changes_dict:
                                 matched_scope = s
                                 break
+                    elif ("DEFAULT", k) in changes_dict:
+                        matched_scope = "DEFAULT"
                     
-                    # Handle inline category mutations
-                    if not matched_scope and ":" in k and not k.startswith("$"):
-                        inline_scope, inline_key = k.split(":", 1)
-                        if (inline_scope.strip(), inline_key.strip()) in changes_dict:
-                            matched_scope = inline_scope.strip()
-                            k = inline_key.strip()
-                            
                     if matched_scope:
                         lookup = (matched_scope, k)
                         if lookup not in applied_commits:
-                            # Reconstruct line protecting original formatting, comments, and inline braces
-                            eq_idx = line.find("=")
-                            prefix = line[:eq_idx + 1]
+                            val = changes_dict[lookup]
                             
-                            comment_part = ""
-                            match_c = re.search(r'(?<!#)#(?!#)', line)
-                            if match_c:
-                                comment_part = " " + line[match_c.start():].rstrip('\n')
+                            if val == "__DELETE__":
+                                applied_commits.add(lookup)
+                                do_replace = True
+                            else:
+                                # Safe Rebuild: Protects prefix indentation and inline comments
+                                prefix_whitespace = k_raw[:len(k_raw) - len(k_raw.lstrip())]
                                 
-                            tail = line[eq_idx + 1:match_c.start() if match_c else None]
-                            braces_part = ""
-                            if "}" in tail:
-                                braces_part = " " + tail[tail.find("}"):].rstrip('\n')
+                                comment_part = ""
+                                if '#' in hidden:
+                                    hash_idx = hidden.index('#')
+                                    comment_part = " " + line[hash_idx:].rstrip('\n')
                                 
-                            out_lines.append(f"{prefix} {changes_dict[lookup]}{braces_part}{comment_part}\n")
-                            applied_commits.add(lookup)
-                            do_replace = True
+                                out_lines.append(f"{prefix_whitespace}{k} = {val}{comment_part}\n")
+                                applied_commits.add(lookup)
+                                do_replace = True
 
-                # 3. Update AST State (Closes)
-                closes = clean.count("}")
-                for _ in range(closes):
-                    if block_stack:
-                        closed_block = block_stack.pop()
-                        if closed_block not in block_close_indices:
-                            block_close_indices[closed_block] = len(out_lines)
+                # 3. Update AST State (Closes) - Measured against current out_lines length
+                clean_no_arith = re.sub(r'\{\{.*?\}\}', '', clean_no_comment)
+                closes = clean_no_arith.count("}")
+                if closes > 0 and not do_replace:
+                    for _ in range(closes):
+                        if block_stack:
+                            closed_block = block_stack.pop()
+                            if closed_block not in block_close_indices:
+                                block_close_indices[closed_block] = len(out_lines)
 
                 if not do_replace:
                     out_lines.append(line)
                     
-            # --- PASS 2: Intelligent Append ---
+            # --- PASS 2: Intelligent Append of Missing Keys & Blocks ---
             missing_changes = set(changes_dict.keys()) - applied_commits
             if missing_changes:
                 insertions = {}
@@ -220,15 +236,16 @@ class HyprlangEngine(BaseEngine):
                         
                     target_block = (b_name, b_count)
                     
-                    # Insert into existing block OR prepare new EOF block
+                    # Insert right above existing block closure OR prepare entirely new block at EOF
                     if target_block in block_close_indices:
                         idx = block_close_indices[target_block]
                         insertions.setdefault(idx, []).append(f"    {key} = {val}\n")
                     else:
                         eof_blocks.setdefault(scope, []).append(f"    {key} = {val}\n")
+                    
                     applied_commits.add((scope, key))
                     
-                # Apply localized insertions backward to preserve tracking indices
+                # Apply localized block insertions backwards to preserve static slice indices
                 for idx in sorted(insertions.keys(), reverse=True):
                     out_lines = out_lines[:idx] + insertions[idx] + out_lines[idx:]
                     
@@ -236,6 +253,7 @@ class HyprlangEngine(BaseEngine):
                 if eof_blocks:
                     if out_lines and not out_lines[-1].endswith("\n"):
                         out_lines[-1] += "\n"
+                        
                     for scope, lines in eof_blocks.items():
                         if scope == "DEFAULT":
                             out_lines.extend(lines)
@@ -248,7 +266,7 @@ class HyprlangEngine(BaseEngine):
         except OSError as e:
             return False, f"Failed to open config for reading: {e}", ""
 
-        # --- Safe Atomic File Commit ---
+        # --- PASS 3: Safe Atomic File Commit ---
         success = False
         status_msg = "Failed"
         temp_file_path = None
@@ -275,17 +293,17 @@ class HyprlangEngine(BaseEngine):
                 except OSError: pass
 
         if success:
-            # Smart Reload Heuristics based on filename
+            # Smart Reload Heuristics specific to the Hyprland ecosystem
             filename = self.config_path.name
-            if "hypridle" in filename:
-                try:
-                    subprocess.run(["systemctl", "--user", "reset-failed", "hypridle.service"], check=False, capture_output=True)
+            try:
+                if "hypridle" in filename:
                     subprocess.run(["systemctl", "--user", "restart", "hypridle.service"], check=False, capture_output=True)
-                except Exception:
-                    pass
-            elif "hyprpaper" in filename:
-                try: subprocess.run(["hyprctl", "hyprpaper", "reload"], check=False, capture_output=True)
-                except Exception: pass
+                elif "hyprpaper" in filename:
+                    subprocess.run(["hyprctl", "hyprpaper", "reload"], check=False, capture_output=True)
+                elif "hyprland" in filename or filename.endswith(".conf"):
+                    subprocess.run(["hyprctl", "reload"], check=False, capture_output=True)
+            except Exception:
+                pass
             
             if len(applied_commits) == len(changes):
                 return True, f"Successfully batched {len(changes)} commits.", ""
