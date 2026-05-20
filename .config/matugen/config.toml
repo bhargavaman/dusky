@@ -309,7 +309,7 @@ input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
   notify-send -i applications-graphics-symbolic "Theme Updated" || :
-  hyprctl reload || :
+  hyprctl reload config-only || :
 '''
 
 # [templates.papirus_icon_theme]
