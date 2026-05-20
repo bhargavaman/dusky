@@ -262,6 +262,9 @@ if command -v hyprctl &>/dev/null; then
     if ! hyprctl --batch "$HYPR_BATCH_CMD" &>/dev/null; then
         printf 'Warning: hyprctl batch command failed. Is Hyprland running?\n' >&2
     fi
+    
+    # Efficiently reload the config to catch the new Lua window rules without flickering monitors
+    hyprctl reload config-only &>/dev/null || true
 fi
 
 # Reload dynamic daemons
