@@ -31,10 +31,12 @@ readonly WAYBAR_DIR="${HOME}/.config/waybar"
 # Visual Constants
 readonly OP_ACTIVE_ON="0.85"
 readonly OP_INACTIVE_ON="0.85"
-readonly OP_MAXIMIZED_ON="0.45"
+readonly OP_SINGLE_ON="1.0"
+readonly OP_MAXIMIZED_ON="1.0"
 
 readonly OP_ACTIVE_OFF="1.0"
 readonly OP_INACTIVE_OFF="1.0"
+readonly OP_SINGLE_OFF="1.0"
 readonly OP_MAXIMIZED_OFF="1.0"
 
 readonly UI_ALPHA_ON="66"
@@ -185,6 +187,7 @@ if [[ "$TARGET_STATE" == "on" ]]; then
     NEW_ENABLED="true"
     NEW_ACTIVE="$OP_ACTIVE_ON"
     NEW_INACTIVE="$OP_INACTIVE_ON"
+    NEW_SINGLE="$OP_SINGLE_ON"
     NEW_MAXIMIZED="$OP_MAXIMIZED_ON"
     NEW_UI_ALPHA="$UI_ALPHA_ON"
     NOTIFY_MSG="Visuals: Max (Blur/Shadow ON)"
@@ -193,6 +196,7 @@ else
     NEW_ENABLED="false"
     NEW_ACTIVE="$OP_ACTIVE_OFF"
     NEW_INACTIVE="$OP_INACTIVE_OFF"
+    NEW_SINGLE="$OP_SINGLE_OFF"
     NEW_MAXIMIZED="$OP_MAXIMIZED_OFF"
     NEW_UI_ALPHA="$UI_ALPHA_OFF"
     NOTIFY_MSG="Visuals: Performance (Blur/Shadow OFF)"
@@ -211,7 +215,7 @@ atomic_sed "$CONFIG_FILE" \
     -e "/^[[:space:]]*shadow[[:space:]]*=[[:space:]]*{/,/^[[:space:]]*}/ s/^\([[:space:]]*enabled[[:space:]]*=[[:space:]]*\)[a-z][a-z]*/\1${NEW_ENABLED}/" \
     -e "s/^\([[:space:]]*active_opacity[[:space:]]*=[[:space:]]*\)[0-9][0-9.]*/\1${NEW_ACTIVE}/" \
     -e "s/^\([[:space:]]*inactive_opacity[[:space:]]*=[[:space:]]*\)[0-9][0-9.]*/\1${NEW_INACTIVE}/" \
-    -e "/name[[:space:]]*=[[:space:]]*\"single_window_style\"/,/^[[:space:]]*})/ s/^\([[:space:]]*opacity[[:space:]]*=[[:space:]]*\)[0-9.]*/\1${NEW_ACTIVE}/" \
+    -e "/name[[:space:]]*=[[:space:]]*\"single_window_style\"/,/^[[:space:]]*})/ s/^\([[:space:]]*opacity[[:space:]]*=[[:space:]]*\)[0-9.]*/\1${NEW_SINGLE}/" \
     -e "/name[[:space:]]*=[[:space:]]*\"maximized_window_style\"/,/^[[:space:]]*})/ s/^\([[:space:]]*opacity[[:space:]]*=[[:space:]]*\)[0-9.]*/\1${NEW_MAXIMIZED}/"
 
 # 2. Dynamic UI Targets

@@ -7,11 +7,11 @@ hl.config({
     -- GENERAL (Borders, Gaps, Colors)
     -- ==========================================
     general = {
-        border_size = 1, -- Size of the border around windows
-        gaps_in = 4, -- Gaps between windows
+        border_size = 2, -- Size of the border around windows
+        gaps_in = 3, -- Gaps between windows
         gaps_out = 8, -- Gaps between windows and monitor edges
-        float_gaps = 0, -- Gaps for floating windows (-1 means default)
-        gaps_workspaces = 0, -- Gaps between workspaces (stacks with gaps_out)
+        float_gaps = 2, -- Gaps for floating windows (-1 means default)
+        gaps_workspaces = 50, -- Gaps between workspaces (stacks with gaps_out)
 
         ["col.inactive_border"] = inverse_on_surface, -- Border color for inactive windows
         ["col.active_border"] = primary, -- Border color for the active window
@@ -29,23 +29,23 @@ hl.config({
     -- DECORATION (Rounding, Blur, Shadows)
     -- ==========================================
     decoration = {
-        rounding = 10, -- Rounded corners' radius (in layout px)
-        rounding_power = 2.5, -- Curve used for rounding (2.0 is circle, 4.0 squircle, 1.0 triangular)
+        rounding = 6, -- Rounded corners' radius (in layout px)
+        rounding_power = 2.0, -- Curve used for rounding (2.0 is circle, 4.0 squircle, 1.0 triangular)
         active_opacity = 0.85, -- Opacity of active windows [0.0 - 1.0]
         inactive_opacity = 0.85, -- Opacity of inactive windows [0.0 - 1.0]
         fullscreen_opacity = 1.0, -- Opacity of fullscreen windows [0.0 - 1.0]
         dim_modal = true, -- Enables dimming of parents of modal windows
         dim_inactive = true, -- Enables dimming of inactive windows
         dim_strength = 0.3, -- How much inactive windows should be dimmed [0.0 - 1.0]
-        dim_special = 0.8, -- How much to dim screen when special workspace is open [0.0 - 1.0]
+        dim_special = 0.7, -- How much to dim screen when special workspace is open [0.0 - 1.0]
         dim_around = 0.4, -- How much the dim_around window rule should dim by [0.0 - 1.0]
         screen_shader = "", -- Path to custom shader applied at the end of rendering
         border_part_of_window = true, -- Whether the window border should be a part of the window
 
         blur = {
             enabled = true, -- Enable kawase window background blur
-            size = 10, -- Blur size (distance)
-            passes = 2, -- Amount of passes to perform
+            size = 6, -- Blur size (distance)
+            passes = 3, -- Amount of passes to perform
             ignore_opacity = true, -- Make the blur layer ignore the opacity of the window
             new_optimizations = true, -- Enable further optimizations (massively improves performance)
             xray = false, -- Floating windows ignore tiled windows in blur (reduces overhead)
@@ -63,7 +63,7 @@ hl.config({
 
         shadow = {
             enabled = true, -- Enable drop shadows on windows
-            range = 10, -- Shadow range ("size") in layout px
+            range = 6, -- Shadow range ("size") in layout px
             render_power = 1, -- Falloff power (more power = faster falloff) [1 - 4]
             sharp = false, -- Make shadows sharp, akin to infinite render power
             color = "rgba(1a1a1aee)", -- Shadow's color. Alpha dictates opacity
@@ -187,7 +187,7 @@ hl.config({
 -- -------------------------------------------------------------------------------------------------
 
 -- Workspace-level: gaps + border (border_size is only valid here, not in hl.window_rule)
-hl.workspace_rule({ workspace = "w[tv1]s[false]", gaps_out = 8, gaps_in = 4, border_size = 1 })
+hl.workspace_rule({ workspace = "w[tv1]s[false]", gaps_out = 6, gaps_in = 4, border_size = 2 })
 hl.workspace_rule({ workspace = "f[1]s[false]",   gaps_out = 8, gaps_in = 4, border_size = 1 })
 
 -- Single tiled window
@@ -198,15 +198,15 @@ hl.window_rule({
     -- ROUNDING
     -- matches your global decoration.rounding = 10
     -- set to 0 for sharp corners on a lone window, or keep 10 to match global
-    rounding      = 10,
-    rounding_power = 2.5,
+    rounding      = 6,
+    rounding_power = 2.0,
     -- OPACITY
     -- format: "active [override] inactive [override] fullscreen [override]"
     -- "override" makes it absolute instead of multiplicative with other rules
     -- your global active_opacity and inactive_opacity are both 0.85
     -- using override here so it doesn't compound with the global value
     -- opacity       = "0.85 override 0.85 override 1.0 override",
-    opacity       = 0.85,
+    opacity       = 1.0,
 
     -- BLUR
     -- false = keep blur enabled (matches your global blur.enabled = true)
@@ -235,7 +235,7 @@ hl.window_rule({
     match = { float = true, workspace = "f[1]s[false]" },
 
     rounding      = 10,
-    opacity       = 0.45, -- override 0.85 override 1.0 override"
+    opacity       = 1.0, -- override 0.85 override 1.0 override"
     no_blur       = true,
 
     -- border_color = "rgb(ffffff) rgb(000000) 45deg",
@@ -260,9 +260,9 @@ hl.window_rule({
 -- Workspace-level: gaps + border thickness for the magic scratchpad
 hl.workspace_rule({
     workspace   = "special:magic",
-    gaps_in     = 26,    -- gap between windows inside the scratchpad
-    gaps_out    = 80,   -- large outer margin so it feels centered/floating, not edge-to-edge
-    border_size = 8,    -- slightly thicker than your global 1, makes it feel distinct
+    gaps_in     = 4,    -- gap between windows inside the scratchpad
+    gaps_out    = 20,   -- large outer margin so it feels centered/floating, not edge-to-edge
+    border_size = 3,    -- slightly thicker than your global 1, makes it feel distinct
 })
 
 -- Window-level: per-window appearance for everything inside special:magic
@@ -271,17 +271,17 @@ hl.window_rule({
     match          = { workspace = "special:magic" },
 
     -- ROUNDING: slightly more than global 10 for a softer "popup" feel
-    rounding       = 12,
-    rounding_power = 2.5,
+    rounding       = 6,
+    rounding_power = 2.0,
 
     -- OPACITY: more opaque than your global 0.85 so it pops against the dimmed background
     opacity        = 0.92,
 
     -- BORDER COLOR: secondary instead of primary so you can visually tell this isn't a normal window
-    border_color   = secondary,
+    border_color   = outline,
 
     -- BLUR: keep enabled to match your global blur.enabled = true
-    no_blur        = false,
+    no_blur        = true,
 })
 
 
