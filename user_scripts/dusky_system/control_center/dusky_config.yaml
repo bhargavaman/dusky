@@ -1657,7 +1657,7 @@ pages:
                 button_text: "Reset All"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force
                 terminal: false
         - type: section
           properties:
@@ -1673,7 +1673,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --default_apps"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --default_apps
                 terminal: false
             - type: button
               properties:
@@ -1684,7 +1684,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --monitors"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --monitors
                 terminal: false
             - type: button
               properties:
@@ -1695,7 +1695,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --appearance"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --appearance
                 terminal: false
             - type: button
               properties:
@@ -1706,7 +1706,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --workspace_rules"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --workspace_rules
                 terminal: false
             - type: button
               properties:
@@ -1717,7 +1717,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --keybinds"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --keybinds
                 terminal: false
             - type: button
               properties:
@@ -1728,7 +1728,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --input"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --input
                 terminal: false
             - type: button
               properties:
@@ -1739,7 +1739,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --trackpad"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --trackpad
                 terminal: false
             - type: button
               properties:
@@ -1750,7 +1750,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --window_rules"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --window_rules
                 terminal: false
             - type: button
               properties:
@@ -1761,7 +1761,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --autostart"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --autostart
                 terminal: false
             - type: button
               properties:
@@ -1772,7 +1772,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --environment_variables"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --environment_variables
                 terminal: false
             - type: button
               properties:
@@ -1783,7 +1783,7 @@ pages:
                 button_text: "Reset"
               on_press:
                 type: exec
-                command: foot --app-id=reset_configs sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --plugins"
+                command: $HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --plugins
                 terminal: false
   - type: section
     properties:
@@ -2907,7 +2907,7 @@ pages:
         button_text: "Reset"
       on_press:
         type: exec
-        command: kitty --class 005_hypr_custom_config_setup.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force"
+        command: "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force"
         terminal: false
     - type: button
       properties:
