@@ -18,8 +18,8 @@ readonly CONFIG_FILE="${HOME}/.config/hypr/edit_here/source/appearance.lua"
 readonly STATE_FILE="${HOME}/.config/dusky/settings/opacity_blur"
 
 # Mako Targets
-readonly MAKO_TEMPLATE="${HOME}/.config/matugen/templates/mako"
-readonly MAKO_GENERATED="${HOME}/.config/matugen/generated/mako-colors"
+readonly MAKO_TEMPLATE="${HOME}/.config/matugen/templates/mako.ini"
+readonly MAKO_GENERATED="${HOME}/.config/matugen/generated/mako-colors.ini"
 
 # Rofi Targets
 readonly ROFI_TEMPLATE="${HOME}/.config/matugen/templates/rofi-colors.rasi"
