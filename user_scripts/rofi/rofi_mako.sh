@@ -19,8 +19,7 @@ MENU_PAYLOAD=$(jq -r -n \
   # SAFELY define all the apps and modules we want to ignore
   def is_ignored:
     . == "OSD" or . == "dusky-keys" or . == "dusky-cava" or . == "dusky-cava-alert" or 
-    . == "dusky-glance-narrow" or . == "dusky-glance-wide" or . == "dusky-glance-timer" or 
-    . == "dusky-glance-alert" or . == "Spotify";
+    . == "dusky-glance" or . == "dusky-glance-alert" or . == "Spotify";
 
   def escape_pango: 
       if type == "string" then 
