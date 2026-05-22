@@ -398,41 +398,46 @@ waydroid_bind() {
 }
 
 res_mon() {
-    # Isolate shell options for predictable execution
+    # Isolate shell options for predictable execution and silence debug traces
     emulate -L zsh
+    setopt localoptions no_xtrace no_verbose
     
     # CRITICAL: Force standard numeric locale so floats use '.' reliably across 
     # all systems, while preserving UTF-8 for process names to prevent garbling.
     local LC_NUMERIC=C
     
-    local target_sort="cpu"
-    local ps_sort="-pcpu"
+    # Defaults: RAM Sort, 2s Interval, 15 Count, Clean Process Names
+    local target_sort="ram"
+    local ps_sort="-rss"
+    local cmd_col="comm="
     local arg
     local interval="2"
     local count="15"
     local -a plain_nums=()
 
-    # 1. Advanced Order-Agnostic Argument Tokenizer (Regex supports .5 and 0.5)
+    # 1. Advanced Order-Agnostic Argument Tokenizer
     for arg in "$@"; do
         case "${arg:l}" in
             help|-h|--help) 
                 print -P "\n%F{blue}::%f %Bres_mon%b — Live System Resource Monitor"
                 print -P "%F{238}-----------------------------------------------------------------------------%f"
-                print -P "%F{green}Usage:%f res_mon [sort_metric] [interval] [count]"
+                print -P "%F{green}Usage:%f res_mon [sort_metric] [display_mode] [interval] [count]"
                 print -P "       %F{242}(Arguments can be provided in ANY order)%f\n"
                 
-                print -P "%BMetrics:%b (Default: cpu)"
-                print -P "  %F{cyan}cpu%f                  - Sort by CPU usage percentage"
-                print -P "  %F{cyan}ram%f, %F{cyan}mem%f             - Sort by RAM usage\n"
+                print -P "%BMetrics:%b (Default: ram)"
+                print -P "  %F{cyan}ram%f, %F{cyan}mem%f             - Sort by RAM usage"
+                print -P "  %F{cyan}cpu%f                  - Sort by CPU usage percentage\n"
+                
+                print -P "%BDisplay:%b (Default: clean base name)"
+                print -P "  %F{cyan}path%f, %F{cyan}full%f, %F{cyan}args%f     - Show full command path and arguments\n"
                 
                 print -P "%BNumbers:%b (Defaults: 2s interval, 15 processes)"
                 print -P "  %F{cyan}<number>%f               - Sets the process count (e.g., 20)"
                 print -P "  %F{cyan}<number>s%f              - Sets the interval in seconds (e.g., 1s or .5s)\n"
                 
                 print -P "%BExamples:%b"
-                print -P "  %F{yellow}res_mon ram 5 1s%f       # Top 5 by RAM, updating every 1s"
-                print -P "  %F{yellow}res_mon 10 cpu .5s%f     # Top 10 by CPU, updating every 0.5s"
-                print -P "  %F{yellow}res_mon ram 1 5%f        # Smart fallback: Top 5 by RAM, 1s interval\n"
+                print -P "  %F{yellow}res_mon 5 1s%f           # Top 5 by RAM (default), updating every 1s"
+                print -P "  %F{yellow}res_mon 10 cpu path .5s%f  # Top 10 by CPU, full paths, updating every 0.5s\n"
                 return 0 
                 ;;
             cpu) 
@@ -442,6 +447,9 @@ res_mon() {
             ram|mem|memory) 
                 target_sort="ram"
                 ps_sort="-rss" 
+                ;;
+            path|full|args)
+                cmd_col="args="
                 ;;
             *[0-9]s) 
                 local possible_interval="${arg%s}"
@@ -494,6 +502,7 @@ res_mon() {
     fi
 
     local title_metric=$([[ "$target_sort" == "cpu" ]] && echo "CPU Sort" || echo "RAM Sort")
+    local output_str=""
 
     # Enter UI Context: Hide cursor (\e[?25l), Disable Wrap (\e[?7l), Enter Alt-Screen (\e[?1049h)
     printf "\e[?25l\e[?7l\e[?1049h"
@@ -518,10 +527,10 @@ res_mon() {
             # Generate horizontal separator dynamically using Zsh parameter expansion
             local sep_line=${(pl:term_cols::-:)}
 
-            # Hyper-optimized Procps pipeline extracting full args, truncated dynamically by Awk
-            local output_str
-            output_str="$(ps -e --sort="$ps_sort" -o pid=,pcpu=,pmem=,rss=,time=,args= 2>/dev/null | awk -v max="$active_count" -v cmd_len="$cmd_width" '
-                NR > max { exit }
+            # Hyper-optimized Procps pipeline extracting dynamic args, truncated precisely by Awk.
+            # Using 'next' instead of 'exit' prevents kernel SIGPIPE crashes on the upstream ps command.
+            output_str="$(ps -e --sort="$ps_sort" -o pid=,pcpu=,pmem=,rss=,time=,${cmd_col} 2>/dev/null | awk -v max="$active_count" -v cmd_len="$cmd_width" '
+                NR > max { next }
                 {
                     cmd = $6
                     for(i=7; i<=NF; i++) {
