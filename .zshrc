@@ -397,22 +397,15 @@ waydroid_bind() {
     fi
 }
 
-_res_mon_header() {
-    # Aligned precisely to exactly 77 characters to match the awk string byte-for-byte
-    print -P "%F{blue}::%f %B${1}%b (Update: ${2}s | Top: ${3})"
-    print -P "%F{238}-----------------------------------------------------------------------------%f"
-    print -P "%F{242}     PID    CPU%%    MEM%%    RAM(MB)       TIME   COMMAND%f"
-    print -P "%F{238}-----------------------------------------------------------------------------%f"
-}
-
 res_mon() {
     # Isolate shell options for predictable execution
     emulate -L zsh
     
     local target_sort="cpu"
-    local -i interval=2
-    local -i count=15
-    local arg show_help=0
+    local ps_sort="-pcpu"
+    local arg
+    local interval="2"
+    local count="15"
     local -a plain_nums=()
 
     _show_help() {
@@ -423,32 +416,44 @@ res_mon() {
         
         print -P "%BMetrics:%b (Default: cpu)"
         print -P "  %F{cyan}cpu%f                  - Sort by CPU usage percentage"
-        print -P "  %F{cyan}ram%f, %F{cyan}mem%f            - Sort by RAM usage\n"
+        print -P "  %F{cyan}ram%f, %F{cyan}mem%f             - Sort by RAM usage\n"
         
         print -P "%BNumbers:%b (Defaults: 2s interval, 15 processes)"
         print -P "  %F{cyan}<number>%f             - Sets the process count (e.g., 20)"
-        print -P "  %F{cyan}<number>s%f            - Sets the interval in seconds (e.g., 1s)\n"
+        print -P "  %F{cyan}<number>s%f            - Sets the interval in seconds (e.g., 1s or 0.5s)\n"
         
         print -P "%BExamples:%b"
         print -P "  %F{yellow}res_mon ram 5 1s%f     # Top 5 by RAM, updating every 1s"
-        print -P "  %F{yellow}res_mon 10 cpu 3s%f    # Top 10 by CPU, updating every 3s"
+        print -P "  %F{yellow}res_mon 10 cpu 0.5s%f  # Top 10 by CPU, updating every 0.5s"
         print -P "  %F{yellow}res_mon ram 1 5%f      # Smart fallback: Top 5 by RAM, 1s interval\n"
-        return 0
     }
 
-    # 1. Advanced Order-Agnostic Argument Tokenizer
+    # 1. Advanced Order-Agnostic Argument Tokenizer (Regex supports sub-second floats)
     for arg in "$@"; do
         case "${arg:l}" in
-            help|-h|--help) show_help=1 ;;
-            cpu) target_sort="cpu" ;;
-            ram|mem|memory) target_sort="ram" ;;
+            help|-h|--help) 
+                _show_help
+                return 0 
+                ;;
+            cpu) 
+                target_sort="cpu"
+                ps_sort="-pcpu" 
+                ;;
+            ram|mem|memory) 
+                target_sort="ram"
+                ps_sort="-rss" 
+                ;;
             *[0-9]s) 
-                # Explicit interval (e.g. '1s')
-                interval="${arg%s}" 
+                local possible_interval="${arg%s}"
+                if [[ "$possible_interval" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                    interval="$possible_interval"
+                else
+                    print -u2 -P "\n%F{red}✖ Error:%f Invalid interval format: '%F{yellow}$arg%f'"
+                    return 1
+                fi
                 ;;
             *)
-                if [[ "$arg" =~ ^[0-9]+$ ]]; then
-                    # Collect plain numbers for the intelligent fallback
+                if [[ "$arg" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                     plain_nums+=("$arg")
                 else
                     print -u2 -P "\n%F{red}✖ Error:%f Unknown argument: '%F{yellow}$arg%f'"
@@ -459,17 +464,16 @@ res_mon() {
         esac
     done
 
-    if (( show_help )); then
-        _show_help
-        return 0
-    fi
-
-    # 2. Intelligent Number Routing (The Fix)
+    # 2. Intelligent Number Routing
     if (( ${#plain_nums[@]} == 1 )); then
-        count="${plain_nums[1]}"
+        # If it contains a decimal, it implies an interval. Otherwise, count.
+        if [[ "${plain_nums[1]}" == *.* ]]; then
+            interval="${plain_nums[1]}"
+        else
+            count="${plain_nums[1]}"
+        fi
     elif (( ${#plain_nums[@]} >= 2 )); then
-        # If two plain numbers are passed (e.g., "1 5"), intelligently assign them.
-        # The larger number is inherently assumed to be the row count.
+        # The larger number inherently becomes the row count.
         if (( plain_nums[1] > plain_nums[2] )); then
             count="${plain_nums[1]}"
             interval="${plain_nums[2]}"
@@ -479,77 +483,71 @@ res_mon() {
         fi
     fi
 
-    local title_metric=""
-    local -i sort_col=2
-    if [[ "$target_sort" == "cpu" ]]; then
-        title_metric="CPU Sort"
-        sort_col=2
-    else
-        title_metric="RAM Sort"
-        sort_col=4
+    # Strip decimal from count if a user made a typo, and set hard interval floor
+    count=${count%.*} 
+    if (( interval < 0.1 )); then
+        interval=0.1
     fi
 
-    local -i lines_to_move=0
+    local title_metric=$([[ "$target_sort" == "cpu" ]] && echo "CPU Sort" || echo "RAM Sort")
 
-    # Hide cursor (\e[?25l) and DISABLE hardware line wrapping (\e[?7l)
-    printf "\e[?25l\e[?7l"
+    # Enter UI Context: Hide cursor (\e[?25l), Disable Wrap (\e[?7l), Enter Alt-Screen (\e[?1049h)
+    printf "\e[?25l\e[?7l\e[?1049h"
 
-    # Zsh native 'always' block guarantees clean teardown on Ctrl+C
+    # Zsh 'always' block guarantees perfectly clean terminal restoration on Ctrl+C
     {
         while true; do
-            # Dynamic Height Constraint: Prevent pushing off-screen on terminal resize
+            # Dynamic Dimensions: Read current terminal size every tick
             local -i term_lines=${LINES:-$(tput lines 2>/dev/null || echo 24)}
+            local -i term_cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+            
+            # Responsive constraints
             local -i active_count=$count
             local -i max_count=$(( term_lines - 6 ))
-            
             (( active_count > max_count )) && active_count=$max_count
             (( active_count < 1 )) && active_count=1
 
-            # Grab native procps-ng data
-            local raw_data="$(ps -e -o pid=,pcpu=,pmem=,rss=,time=,comm= 2>/dev/null)"
-            
-            # Format and Pipeline
-            local output_str=$(awk -v sort_col="$sort_col" '{
-                cmd=""; for(i=6;i<=NF;i++) cmd=cmd (i==6?"":" ") $i;
-                ram_mb=$4/1024.0;
-                printf "%s|%s|%s|%s|%s|%s\n", $1, $2, $3, ram_mb, $5, cmd
-            }' <<< "$raw_data" | sort -t '|' -k${sort_col} -nr | head -n "$active_count" | awk -F'|' '{
-                cpu_str = sprintf("%5.1f%%", $2)
-                mem_str = sprintf("%5.1f%%", $3)
-                
-                # ANSI Injection matched perfectly to the 77-char header
-                line = sprintf("\033[38;5;246m%8s\033[0m \033[38;5;220m%7s\033[0m \033[38;5;218m%7s\033[0m \033[38;5;213m%10.1f\033[0m \033[38;5;114m%10s\033[0m   \033[1;38;5;39m%-28s\033[0m", $1, cpu_str, mem_str, $4, $5, substr($6, 1, 28))
-                
-                if (NR == 1) {
-                    printf "%s", line
-                } else {
-                    printf "\n%s", line
+            # Dynamic string width for COMMAND column (49 is total chars of all other columns)
+            local -i cmd_width=$(( term_cols - 49 ))
+            (( cmd_width < 10 )) && cmd_width=10
+
+            # Generate dynamic width separator dynamically using Zsh parameter expansion
+            local sep_line=${(pl:term_cols::-:)}
+
+            # Hyper-optimized Procps pipeline extracting full args, truncated dynamically by Awk
+            local output_str
+            output_str="$(ps -e --sort="$ps_sort" -o pid=,pcpu=,pmem=,rss=,time=,args= 2>/dev/null | awk -v max="$active_count" -v cmd_len="$cmd_width" '
+                NR > max { exit }
+                {
+                    cmd = $6
+                    for(i=7; i<=NF; i++) cmd = cmd " " $i
+                    ram_mb = $4 / 1024.0
+                    cpu_str = sprintf("%5.1f%%", $2)
+                    mem_str = sprintf("%5.1f%%", $3)
+                    
+                    line = sprintf("\033[38;5;246m%8s\033[0m \033[38;5;220m%7s\033[0m \033[38;5;218m%7s\033[0m \033[38;5;213m%10.1f\033[0m \033[38;5;114m%10s\033[0m   \033[1;38;5;39m%-" cmd_len "s\033[0m", $1, cpu_str, mem_str, ram_mb, $5, substr(cmd, 1, cmd_len))
+                    
+                    if (NR == 1) printf "%s", line
+                    else printf "\n%s", line
                 }
-            }')
+            ')"
 
-            # Count rows to mathematically move the cursor accurately
-            local -a output_array
-            output_array=("${(@f)output_str}")
-            local -i actual_lines=${#output_array[@]}
-
-            if (( lines_to_move > 0 )); then
-                printf "\r\e[%dA\e[J" "$lines_to_move"
-            fi
-
-            _res_mon_header "$title_metric" "$interval" "$active_count"
-            printf "%s" "$output_str"
-
-            if (( actual_lines > 0 )); then
-                lines_to_move=$(( 4 + actual_lines - 1 ))
-            else
-                lines_to_move=4
-            fi
+            # UI Update Tick (Zero Flicker Overwrite)
+            printf "\e[H" # Seek cursor directly to 0,0
+            print -P "%F{blue}::%f %B${title_metric}%b (Update: ${interval}s | Top: ${active_count})"
+            print -P "%F{238}${sep_line}%f"
+            print -P "%F{242}     PID   CPU%%   MEM%%    RAM(MB)       TIME   COMMAND%f"
+            print -P "%F{238}${sep_line}%f"
+            printf "%s\n" "$output_str"
+            
+            # Wipe terminal artifacts explicitly if the process window dynamically shrinks
+            printf "\e[J" 
 
             sleep $interval
         done
     } always {
-        # Restore cursor (\e[?25h), ENABLE line wrap (\e[?7h), drop clean newline
-        printf "\e[?25h\e[?7h\n"
+        # Restore UI Context: Show Cursor (\e[?25h), Enable Wrap (\e[?7h), Exit Alt-Screen (\e[?1049l)
+        printf "\e[?25h\e[?7h\e[?1049l"
     }
 }
 
