@@ -120,6 +120,16 @@ SCHEMA = {
             extended_help="**Dashboard Anchor**\n\nThe exact quadrant of the physical screen where the Glance widget originates. Usually kept at `bottom-right` to stay out of the way of primary workspace tasks."
         ),
         ConfigItem(
+            label="Align",
+            key="text-alignment",
+            scope="app-name=dusky-glance",       
+            type_="cycle",
+            default="right",
+            options=["left", "center", "right"],
+            group="Geometry",
+            extended_help="**Text Justification**\n\nAligns the text to visually anchor against the screen edge (e.g. `right` if the widget is anchored `bottom-right`)."
+        ),
+        ConfigItem(
             label="Layer",
             key="layer",
             scope="app-name=dusky-glance",       
@@ -244,16 +254,6 @@ SCHEMA = {
             extended_help="**Icon Toggle**\n\nDetermines if Mako attempts to render external `.svg`/`.png` icons. This is typically OFF to prevent breaking the strict text formatting of the script payload."
         ),
         ConfigItem(
-            label="Align",
-            key="text-alignment",
-            scope="app-name=dusky-glance",       
-            type_="cycle",
-            default="right",
-            options=["left", "center", "right"],
-            group="Elements",
-            extended_help="**Text Justification**\n\nAligns the text to visually anchor against the screen edge (e.g. `right` if the widget is anchored `bottom-right`)."
-        ),
-        ConfigItem(
             label="Format",
             key="format",
             scope="app-name=dusky-glance",       
@@ -278,8 +278,9 @@ SCHEMA = {
             label="OnClick",
             key="on-button-left",
             scope="app-name=dusky-glance",       
-            type_="string",
+            type_="cycle",
             default="exec bash -c \"pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh\"",
+            options=["exec notify-send \"Toggle FullScreen Temperarily to hide the Overlay\"", "exec bash -c \"pkill rofi; uwsm-app -- $HOME/user_scripts/rofi/dusky_glance.sh\""],
             group="Triggers",
             extended_help="**Interactive Shell Hook**\n\nThe shell command executed when physically clicking the widget. By default, it spawns the larger Rofi master dashboard interface using UWSM."
         ),
