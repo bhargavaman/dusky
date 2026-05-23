@@ -256,6 +256,7 @@ class WallpaperApp:
             
             self.search_entry = self.Gtk.SearchEntry()
             self.search_entry.set_placeholder_text("Search... (Press /)")
+            self.search_entry.set_tooltip_text("Filter wallpapers by filename (Press / to focus)")
             self.search_entry.set_width_chars(26)  # Widened for comfort
             self.search_entry.get_style_context().add_class("search-bar")
             self.search_entry.connect("search-changed", self.on_search_changed)
@@ -267,12 +268,15 @@ class WallpaperApp:
             action_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=8)
             
             btn_fast = self.Gtk.Button(label="Fast Apply [Alt+H]")
+            btn_fast.set_tooltip_text("Apply wallpaper instantly without regenerating theme colors")
             btn_fast.connect("clicked", lambda w: self.trigger_action('fast'))
             
             btn_fav = self.Gtk.Button(label="Fav [Alt+U]")
+            btn_fav.set_tooltip_text("Toggle selected wallpaper as a favorite")
             btn_fav.connect("clicked", lambda w: self.trigger_action('fav'))
             
             btn_toggle = self.Gtk.Button(label="Toggle [Alt+T]")
+            btn_toggle.set_tooltip_text("Toggle view to show only favorite wallpapers")
             btn_toggle.connect("clicked", lambda w: self.trigger_action('toggle'))
 
             for btn in (btn_fast, btn_fav, btn_toggle):
@@ -317,9 +321,11 @@ class WallpaperApp:
 
             self.scrolled = self.Gtk.ScrolledWindow()
             self.scrolled.set_policy(self.Gtk.PolicyType.NEVER, self.Gtk.PolicyType.AUTOMATIC)
+            self.scrolled.set_hexpand(True)
+            self.scrolled.set_vexpand(True)
 
             self.flowbox = self.Gtk.FlowBox()
-            self.flowbox.set_valign(self.Gtk.Align.START)
+            self.flowbox.set_valign(self.Gtk.Align.START) # Keeps images anchored to the top perfectly
             self.flowbox.set_selection_mode(self.Gtk.SelectionMode.SINGLE)
             self.flowbox.set_min_children_per_line(3) 
             self.flowbox.set_max_children_per_line(30)
@@ -387,27 +393,62 @@ class WallpaperApp:
             background-color: shade(@window_bg_color, 0.94);
             padding: 6px 12px;
             border-bottom: 1px solid alpha(@window_fg_color, 0.08);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.03);
         }
-        .search-bar { border-radius: 8px; padding: 6px 10px; font-size: 0.95em; }
+        .search-bar { 
+            border-radius: 8px; 
+            padding: 6px 10px; 
+            font-size: 0.95em; 
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
         .action-btn {
             padding: 5px 12px; border-radius: 8px; font-weight: bold; font-size: 0.9em;
             background-color: alpha(@window_fg_color, 0.04);
             border: 1px solid alpha(@window_fg_color, 0.08);
             transition: all 0.2s ease;
         }
-        .action-btn:hover { background-color: alpha(@accent_color, 0.15); border-color: @accent_color; }
-        flowbox { background-color: @view_bg_color; padding: 10px; }
+        .action-btn:hover { 
+            background-color: alpha(@accent_color, 0.15); 
+            border-color: @accent_color; 
+        }
+        
+        /* FIX FOR BLACK BOTTOM AREA: 
+           When Flowbox shrinks (due to valign=START), it exposes the container underneath.
+           We force all underlying scroll/stack wrappers to inherit the view background color. */
+        stack, scrolledwindow, viewport {
+            background-color: @view_bg_color;
+        }
+        
+        flowbox { 
+            background-color: transparent; 
+            padding: 12px; 
+        }
         flowboxchild {
-            border-radius: 10px; padding: 4px; margin: 4px;
+            border-radius: 12px; padding: 6px; margin: 4px;
             background-color: transparent; transition: all 0.2s ease;
         }
-        flowboxchild:selected { background-color: @accent_bg_color; outline: 2px solid @accent_color; }
-        flowboxchild:hover { background-color: alpha(@accent_color, 0.1); }
-        .placeholder-box { background-color: alpha(@window_fg_color, 0.05); border-radius: 8px; }
+        flowboxchild:selected { 
+            background-color: @accent_bg_color; 
+            outline: 2px solid @accent_color;
+            outline-offset: -2px;
+            box-shadow: 0px 4px 12px alpha(@accent_color, 0.3);
+        }
+        flowboxchild:hover { 
+            background-color: alpha(@accent_color, 0.1); 
+        }
+        .placeholder-box { 
+            background-color: alpha(@window_fg_color, 0.05); 
+            border-radius: 10px; 
+        }
         .wallpaper-name-overlay {
             background-color: alpha(@window_bg_color, 0.85); color: @window_fg_color;
-            border-radius: 4px; padding: 3px 6px; font-size: 0.75em; font-weight: bold;
+            border-radius: 6px; padding: 4px 8px; font-size: 0.75em; font-weight: bold;
             box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        .heart-icon {
+            color: #f38ba8;
+            font-size: 1.5em;
+            text-shadow: 0px 2px 5px rgba(0,0,0,0.6);
         }
         .placeholder-icon { color: alpha(@window_fg_color, 0.4); margin-bottom: 10px; }
         .placeholder-title { font-size: 1.5em; font-weight: 800; color: alpha(@window_fg_color, 0.8); margin-bottom: 4px; }
@@ -565,9 +606,8 @@ class WallpaperApp:
                 # Override and scroll beautifully to the 1st or 2nd line.
                 if self.scrolled:
                     adj = self.scrolled.get_vadjustment()
-                    # RENDER_SIZE + margin is roughly the exact height of one row. 
-                    # Subtracting it perfectly drops the selection onto the second visual line.
-                    row_offset = RENDER_SIZE + 20 
+                    # Updated for slightly larger UI padding
+                    row_offset = RENDER_SIZE + 24 
                     target_y = alloc.y - row_offset
                     
                     lower = adj.get_lower()
@@ -612,8 +652,8 @@ class WallpaperApp:
         overlay.add(image)
 
         if rel_path in self.favorites:
-            heart = self.Gtk.Label(label="<span color='#f38ba8' size='large'>♥</span>")
-            heart.set_use_markup(True)
+            heart = self.Gtk.Label(label="♥")
+            heart.get_style_context().add_class("heart-icon")
             heart.set_halign(self.Gtk.Align.END)
             heart.set_valign(self.Gtk.Align.START)
             heart.set_margin_top(6)
