@@ -8,6 +8,7 @@
 # - Dynamically inherits Awww transitions from state.conf.
 # - Cleaned UI: Pango markup injected into Rofi to eliminate "crammed" text.
 # - Added Alt+R binding to Apply WITHOUT Matugen color regeneration.
+# - FIXED: awww query iteration logic now properly identifies active wallpaper.
 # -----------------------------------------------------------------------------
 
 set -Eeuo pipefail
@@ -648,7 +649,9 @@ get_active_wallpaper_filename() {
   local awww_out current_image
 
   # UWSM Wrap applied
-  if IFS= read -r awww_out < <(uwsm-app -- awww query 2>/dev/null); then
+  # FIX: Read the entire command output stream because `awww query` 
+  # often emits daemon status text on line 1 and the image on line 2+.
+  while IFS= read -r awww_out; do
     if [[ $awww_out == *image:* ]]; then
       current_image=${awww_out##*image: }
       current_image="${current_image#"${current_image%%[![:space:]]*}"}"
@@ -657,7 +660,8 @@ get_active_wallpaper_filename() {
       printf '%s\n' "${current_image##*/}"
       return 0
     fi
-  fi
+  # Fallback to direct awww call just in case UWSM parsing fails
+  done < <(uwsm-app -- awww query 2>/dev/null || awww query 2>/dev/null)
 
   return 1
 }
