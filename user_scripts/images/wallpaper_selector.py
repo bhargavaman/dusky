@@ -15,14 +15,9 @@ import fcntl
 import hashlib
 import threading
 import subprocess
+import argparse
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-
-import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('Gdk', '3.0')
-gi.require_version('GdkPixbuf', '2.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONSTANTS & PATHS ---
 HOME = Path.home()
@@ -38,25 +33,159 @@ THEME_CTL = HOME / "user_scripts/theme_matugen/theme_ctl.sh"
 
 CACHE_DIR = HOME / ".cache/rofi-wallpaper-thumbs/v4-300"
 THUMB_DIR = CACHE_DIR / "thumbs"
-LOCK_FILE = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "gtk-wallpaper-selector.lock"
+
+# Safe fallback for XDG_RUNTIME_DIR if run from raw TTY
+_xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+LOCK_FILE = Path(_xdg_runtime) / "gtk-wallpaper-selector.lock"
 GTK_CSS_PATH = HOME / ".config/gtk-3.0/gtk.css"
 
-# Optimised image parameters for compact view & dynamic shrinkability
 THUMB_SIZE = 240
 RENDER_SIZE = 145
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+IMAGE_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.webp', '.gif'})
 
-# Pre-compile regex for ultra-fast sorting operations
 _NATURAL_SORT_RE = re.compile(r'(\d+)')
 
 def natural_keys(text: str) -> list:
     """Algorithms for natural/version sorting (matches bash 'sort -V')."""
     return [int(c) if c.isdigit() else c.lower() for c in _NATURAL_SORT_RE.split(text)]
 
-class WallpaperApp(Gtk.Application):
+
+# ==============================================================================
+# HEADLESS CACHE MANAGER
+# ==============================================================================
+class CacheManager:
+    @staticmethod
+    def get_all_wallpapers() -> list[str]:
+        """Scans the directory following symlinks, returning sorted relative paths."""
+        wallpapers = []
+        if WALLPAPER_DIR.exists():
+            for root, _, files in os.walk(WALLPAPER_DIR, followlinks=True):
+                root_path = Path(root)
+                for f in files:
+                    if Path(f).suffix.lower() in IMAGE_EXTENSIONS:
+                        path = root_path / f
+                        wallpapers.append(str(path.relative_to(WALLPAPER_DIR)))
+        wallpapers.sort(key=natural_keys)
+        return wallpapers
+
+    @staticmethod
+    def get_thumb_path(rel_path: str) -> Path:
+        digest = hashlib.sha256(rel_path.encode('utf-8')).hexdigest()
+        return THUMB_DIR / f"{digest}.png"
+
+    @staticmethod
+    def generate_thumb_if_needed(rel_path: str) -> bool:
+        """
+        Idempotent thumbnail generation using Atomic POSIX writes.
+        Returns True if a new thumbnail was generated, False if already cached.
+        """
+        full_path = WALLPAPER_DIR / rel_path
+        thumb_path = CacheManager.get_thumb_path(rel_path)
+        
+        try:
+            # Check idempotency condition (O(1) filesystem stat)
+            if thumb_path.exists() and thumb_path.stat().st_mtime >= full_path.stat().st_mtime:
+                return False
+                
+            tmp_thumb_path = thumb_path.with_suffix('.tmp.png')
+            
+            # ImageMagick processing -> write to temp file
+            subprocess.run([
+                "nice", "-n", "19", "magick", "-limit", "thread", "1",
+                str(full_path), "-auto-orient", "-strip", 
+                "-thumbnail", f"{THUMB_SIZE}x{THUMB_SIZE}^", 
+                "-gravity", "center", "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}", 
+                str(tmp_thumb_path)
+            ], check=True, stderr=subprocess.DEVNULL)
+            
+            # Atomic POSIX rename prevents corrupted cache if process is SIGKILL'd
+            os.replace(tmp_thumb_path, thumb_path)
+            return True
+                
+        except subprocess.CalledProcessError:
+            print(f"Magick failed to process: {rel_path}")
+            if 'tmp_thumb_path' in locals() and tmp_thumb_path.exists():
+                tmp_thumb_path.unlink()
+        except Exception as e:
+            print(f"Error processing {rel_path}: {e}")
+            
+        return False
+
+    @staticmethod
+    def sweep_orphaned_cache(valid_wallpapers: list[str]):
+        """Garbage collection for deleted wallpapers."""
+        print("Sweeping orphaned cache files...")
+        valid_digests = {hashlib.sha256(w.encode('utf-8')).hexdigest() for w in valid_wallpapers}
+        orphans_removed = 0
+        
+        if THUMB_DIR.exists():
+            with os.scandir(THUMB_DIR) as it:
+                for entry in it:
+                    if entry.is_file() and entry.name.endswith('.png'):
+                        if entry.name.endswith('.tmp.png'):
+                            os.remove(entry.path)
+                            continue
+                            
+                        stem = entry.name[:-4]  # Remove .png
+                        if stem not in valid_digests:
+                            os.remove(entry.path)
+                            orphans_removed += 1
+                            
+        print(f"Orphans removed: {orphans_removed}")
+
+    @staticmethod
+    def precache_all():
+        """Headless multithreaded CLI cache generation mode."""
+        THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"Scanning directory: {WALLPAPER_DIR}")
+        
+        wallpapers = CacheManager.get_all_wallpapers()
+        print(f"Found {len(wallpapers)} valid images.")
+        
+        CacheManager.sweep_orphaned_cache(wallpapers)
+
+        print("Verifying cache and generating missing thumbnails...")
+        workers = min(os.cpu_count() or 4, 8)
+        generated_count = 0
+        
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(CacheManager.generate_thumb_if_needed, w): w for w in wallpapers}
+            
+            for i, future in enumerate(as_completed(futures), 1):
+                try:
+                    if future.result():
+                        generated_count += 1
+                    sys.stdout.write(f"\rProgress: [{i}/{len(wallpapers)}] | Generated: {generated_count} ")
+                    sys.stdout.flush()
+                except Exception as e:
+                    print(f"\nWorker exception on {futures[future]}: {e}")
+                    
+        print(f"\nDone! Pre-cached {generated_count} new/updated wallpapers. Cache is warm.")
+
+
+# ==============================================================================
+# GTK APPLICATION LOGIC
+# ==============================================================================
+class WallpaperApp:
     def __init__(self):
-        super().__init__(application_id='com.dusky.wallpaperselector',
-                         flags=Gio.ApplicationFlags.FLAGS_NONE)
+        # Deferred imports guarantee no graphical socket initializations in TTY/Cron
+        import gi
+        gi.require_version('Gtk', '3.0')
+        gi.require_version('Gdk', '3.0')
+        gi.require_version('GdkPixbuf', '2.0')
+        from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio
+        
+        self.Gtk = Gtk
+        self.Gdk = Gdk
+        self.GdkPixbuf = GdkPixbuf
+        self.GLib = GLib
+        
+        self.app = self.Gtk.Application(
+            application_id='com.dusky.wallpaperselector',
+            flags=Gio.ApplicationFlags.FLAGS_NONE
+        )
+        self.app.connect("activate", self.do_activate)
+        
         self.window = None
         self.flowbox = None
         self.search_entry = None
@@ -72,7 +201,6 @@ class WallpaperApp(Gtk.Application):
         self.current_generation = 0
         self.current_selected_child = None
         
-        # Concurrency constraints: High enough for speed, low enough to preserve desktop fluidity
         workers = min(os.cpu_count() or 4, 8)
         self.executor = ThreadPoolExecutor(max_workers=workers)
 
@@ -102,54 +230,48 @@ class WallpaperApp(Gtk.Application):
         FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
         try:
             with open(FAVORITES_FILE, 'w') as f:
-                for fav in sorted(list(self.favorites)):
-                    f.write(f"{fav}\n")
+                f.write("\n".join(sorted(self.favorites)) + "\n")
         except Exception as e:
             print(f"Error saving favorites: {e}")
 
-    def do_activate(self):
+    def do_activate(self, application):
         if not self.window:
-            self.window = Gtk.ApplicationWindow(application=self)
+            self.window = self.Gtk.ApplicationWindow(application=application)
             self.window.set_title("Wallpaper Selector")
             self.window.set_default_size(800, 600)
-            self.window.set_position(Gtk.WindowPosition.CENTER)
+            self.window.set_position(self.Gtk.WindowPosition.CENTER)
             
-            # Connect absolute kill-switch to prevent any background zombie processes
             self.window.connect("destroy", self.on_window_destroy)
             self.window.connect("key-press-event", self.on_key_press)
 
             self.setup_css()
 
-            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            vbox = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=0)
             self.window.add(vbox)
 
-            # --- HEADER / ACTION BAR ---
-            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+            # --- HEADER ---
+            header = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=15)
             header.set_name("header_bar")
             
-            # Left: Search
-            self.search_entry = Gtk.SearchEntry()
+            self.search_entry = self.Gtk.SearchEntry()
             self.search_entry.set_placeholder_text("Search... (Press /)")
-            # Slim design to prevent blocking horizontal window shrinking
             self.search_entry.set_width_chars(12) 
             self.search_entry.get_style_context().add_class("search-bar")
             self.search_entry.connect("search-changed", self.on_search_changed)
             header.pack_start(self.search_entry, False, False, 0)
             
-            # Center: Spacer to push buttons right dynamically
-            spacer = Gtk.Box()
+            spacer = self.Gtk.Box()
             header.pack_start(spacer, True, True, 0)
 
-            # Right: Action Buttons (Shortened labels to reduce width limits)
-            action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            action_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=8)
             
-            btn_fast = Gtk.Button(label="Fast Apply [Alt+H]")
+            btn_fast = self.Gtk.Button(label="Fast Apply [Alt+H]")
             btn_fast.connect("clicked", lambda w: self.trigger_action('fast'))
             
-            btn_fav = Gtk.Button(label="Fav [Alt+U]")
+            btn_fav = self.Gtk.Button(label="Fav [Alt+U]")
             btn_fav.connect("clicked", lambda w: self.trigger_action('fav'))
             
-            btn_toggle = Gtk.Button(label="Toggle [Alt+T]")
+            btn_toggle = self.Gtk.Button(label="Toggle [Alt+T]")
             btn_toggle.connect("clicked", lambda w: self.trigger_action('toggle'))
 
             for btn in (btn_fast, btn_fav, btn_toggle):
@@ -159,8 +281,8 @@ class WallpaperApp(Gtk.Application):
             header.pack_start(action_box, False, False, 0)
             vbox.pack_start(header, False, False, 0)
 
-            # --- SHORTCUT HELPER RIBBON (Aesthetic & Informative) ---
-            shortcuts_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+            # --- SHORTCUTS RIBBON ---
+            shortcuts_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=0)
             shortcuts_box.set_name("shortcuts_bar")
             
             shortcuts_data = [
@@ -173,36 +295,31 @@ class WallpaperApp(Gtk.Application):
                 ("Q", "Quit")
             ]
             
-            markup_parts = []
-            for key, desc in shortcuts_data:
-                markup_parts.append(
-                    f"<span background='#313244' foreground='#cdd6f4' font_family='monospace' size='7500'><b> {key} </b></span> "
-                    f"<span size='7800' foreground='#a6adc8'>{desc}</span>"
-                )
+            markup_parts = [
+                f"<span background='#313244' foreground='#cdd6f4' font_family='monospace' size='7500'><b> {k} </b></span> "
+                f"<span size='7800' foreground='#a6adc8'>{d}</span>"
+                for k, d in shortcuts_data
+            ]
             
-            shortcuts_label = Gtk.Label()
+            shortcuts_label = self.Gtk.Label()
             shortcuts_label.set_use_markup(True)
             shortcuts_label.set_markup("  •  ".join(markup_parts))
-            shortcuts_label.set_halign(Gtk.Align.CENTER)
+            shortcuts_label.set_halign(self.Gtk.Align.CENTER)
             
             shortcuts_box.pack_start(shortcuts_label, True, True, 0)
             vbox.pack_start(shortcuts_box, False, False, 0)
 
-            # --- STACK CONTAINER (Handles Empty State transitions natively) ---
-            self.stack = Gtk.Stack()
-            self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+            # --- STACK FOR GRID/EMPTY ---
+            self.stack = self.Gtk.Stack()
+            self.stack.set_transition_type(self.Gtk.StackTransitionType.CROSSFADE)
             self.stack.set_transition_duration(150)
 
-            # --- SCROLLED GRID (Inside Stack) ---
-            scrolled = Gtk.ScrolledWindow()
-            scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scrolled = self.Gtk.ScrolledWindow()
+            scrolled.set_policy(self.Gtk.PolicyType.NEVER, self.Gtk.PolicyType.AUTOMATIC)
 
-            # FlowBox with built-in sorting and ultra-fast filtering
-            self.flowbox = Gtk.FlowBox()
-            self.flowbox.set_valign(Gtk.Align.START)
-            self.flowbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
-            
-            # Allow the grid to explicitly shrink down to minimum 3 children
+            self.flowbox = self.Gtk.FlowBox()
+            self.flowbox.set_valign(self.Gtk.Align.START)
+            self.flowbox.set_selection_mode(self.Gtk.SelectionMode.SINGLE)
             self.flowbox.set_min_children_per_line(3) 
             self.flowbox.set_max_children_per_line(30)
             
@@ -213,24 +330,20 @@ class WallpaperApp(Gtk.Application):
             
             scrolled.add(self.flowbox)
 
-            # Add states to Stack
             self.stack.add_named(scrolled, "grid")
             self.stack.add_named(self._create_empty_state_placeholder(), "empty")
             
             vbox.pack_start(self.stack, True, True, 0)
-
             self.window.show_all()
             
-            # Kickoff the lazy loading system
+            # Initiate async load pipeline
             self.refresh_ui()
 
         self.window.present()
         self.flowbox.grab_focus()
 
     def on_window_destroy(self, widget):
-        """Absolute kill-switch: Cleans threads and locks immediately upon window close."""
         print("Shutting down... killing background workers.")
-        # Cancel any pending futures in Python 3.9+ to prevent thread hanging
         self.executor.shutdown(wait=False, cancel_futures=True)
         if self.lock_fd:
             try:
@@ -240,34 +353,28 @@ class WallpaperApp(Gtk.Application):
             except Exception:
                 pass
 
-    def _create_empty_state_placeholder(self) -> Gtk.Box:
-        """Constructs an aesthetic GTK view that displays when there are no matches."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_valign(Gtk.Align.CENTER)
+    def _create_empty_state_placeholder(self):
+        box = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_halign(self.Gtk.Align.CENTER)
+        box.set_valign(self.Gtk.Align.CENTER)
         
-        icon = Gtk.Image.new_from_icon_name("edit-find-symbolic", Gtk.IconSize.DIALOG)
+        icon = self.Gtk.Image.new_from_icon_name("edit-find-symbolic", self.Gtk.IconSize.DIALOG)
         icon.set_pixel_size(72)
         icon.get_style_context().add_class("placeholder-icon")
         
-        title = Gtk.Label(label="No Wallpapers Found")
+        title = self.Gtk.Label(label="No Wallpapers Found")
         title.get_style_context().add_class("placeholder-title")
         
-        subtitle = Gtk.Label(label="Try adjusting your search criteria or toggling your favorites view.")
+        subtitle = self.Gtk.Label(label="Try adjusting your search criteria or toggling your favorites view.")
         subtitle.get_style_context().add_class("placeholder-subtitle")
         
-        box.pack_start(icon, False, False, 0)
-        box.pack_start(title, False, False, 0)
-        box.pack_start(subtitle, False, False, 0)
+        for w in (icon, title, subtitle):
+            box.pack_start(w, False, False, 0)
         box.show_all()
         return box
 
-    # --- UI & LOGIC ---
-
     def setup_css(self):
-        """Injects custom UI polish on top of system styles."""
-        css_provider = Gtk.CssProvider()
-        
+        css_provider = self.Gtk.CssProvider()
         custom_css = """
         window { background-color: @window_bg_color; }
         #header_bar {
@@ -280,91 +387,45 @@ class WallpaperApp(Gtk.Application):
             padding: 6px 12px;
             border-bottom: 1px solid alpha(@window_fg_color, 0.08);
         }
-        .search-bar {
-            border-radius: 8px;
-            padding: 6px 10px;
-            font-size: 0.95em;
-        }
+        .search-bar { border-radius: 8px; padding: 6px 10px; font-size: 0.95em; }
         .action-btn {
-            padding: 5px 12px;
-            border-radius: 8px;
-            font-weight: bold;
-            font-size: 0.9em;
+            padding: 5px 12px; border-radius: 8px; font-weight: bold; font-size: 0.9em;
             background-color: alpha(@window_fg_color, 0.04);
             border: 1px solid alpha(@window_fg_color, 0.08);
             transition: all 0.2s ease;
         }
-        .action-btn:hover {
-            background-color: alpha(@accent_color, 0.15);
-            border-color: @accent_color;
-        }
-        flowbox {
-            background-color: @view_bg_color;
-            padding: 10px;
-        }
+        .action-btn:hover { background-color: alpha(@accent_color, 0.15); border-color: @accent_color; }
+        flowbox { background-color: @view_bg_color; padding: 10px; }
         flowboxchild {
-            border-radius: 10px;
-            padding: 4px;
-            margin: 4px;
-            background-color: transparent;
-            transition: all 0.2s ease;
+            border-radius: 10px; padding: 4px; margin: 4px;
+            background-color: transparent; transition: all 0.2s ease;
         }
-        flowboxchild:selected {
-            background-color: @accent_bg_color;
-            outline: 2px solid @accent_color;
-        }
-        flowboxchild:hover {
-            background-color: alpha(@accent_color, 0.1);
-        }
-        .placeholder-box {
-            background-color: alpha(@window_fg_color, 0.05);
-            border-radius: 8px;
-        }
+        flowboxchild:selected { background-color: @accent_bg_color; outline: 2px solid @accent_color; }
+        flowboxchild:hover { background-color: alpha(@accent_color, 0.1); }
+        .placeholder-box { background-color: alpha(@window_fg_color, 0.05); border-radius: 8px; }
         .wallpaper-name-overlay {
-            background-color: alpha(@window_bg_color, 0.85);
-            color: @window_fg_color;
-            border-radius: 4px;
-            padding: 3px 6px;
-            font-size: 0.75em;
-            font-weight: bold;
+            background-color: alpha(@window_bg_color, 0.85); color: @window_fg_color;
+            border-radius: 4px; padding: 3px 6px; font-size: 0.75em; font-weight: bold;
             box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.3);
         }
-        
-        /* Empty State Custom Styles */
-        .placeholder-icon {
-            color: alpha(@window_fg_color, 0.4);
-            margin-bottom: 10px;
-        }
-        .placeholder-title {
-            font-size: 1.5em;
-            font-weight: 800;
-            color: alpha(@window_fg_color, 0.8);
-            margin-bottom: 4px;
-        }
-        .placeholder-subtitle {
-            font-size: 1.0em;
-            color: alpha(@window_fg_color, 0.5);
-        }
+        .placeholder-icon { color: alpha(@window_fg_color, 0.4); margin-bottom: 10px; }
+        .placeholder-title { font-size: 1.5em; font-weight: 800; color: alpha(@window_fg_color, 0.8); margin-bottom: 4px; }
+        .placeholder-subtitle { font-size: 1.0em; color: alpha(@window_fg_color, 0.5); }
         """
 
         final_css = ""
         if GTK_CSS_PATH.exists():
-            try:
-                final_css += GTK_CSS_PATH.read_text(encoding='utf-8') + "\n"
-            except Exception as e:
-                print(f"Warning: Could not read {GTK_CSS_PATH}: {e}")
+            try: final_css += GTK_CSS_PATH.read_text(encoding='utf-8') + "\n"
+            except Exception as e: print(f"Warning: Could not read {GTK_CSS_PATH}: {e}")
 
         final_css += custom_css
 
         try:
             css_provider.load_from_data(final_css.encode('utf-8'))
-            Gtk.StyleContext.add_provider_for_screen(
-                Gdk.Screen.get_default(), 
-                css_provider, 
-                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            self.Gtk.StyleContext.add_provider_for_screen(
+                self.Gdk.Screen.get_default(), css_provider, self.Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
-        except Exception as e:
-            print(f"CSS Error: {e}")
+        except Exception as e: print(f"CSS Error: {e}")
 
     def sort_flowbox(self, child1, child2):
         key1 = natural_keys(getattr(child1, 'rel_path', ''))
@@ -372,21 +433,14 @@ class WallpaperApp(Gtk.Application):
         return -1 if key1 < key2 else (1 if key1 > key2 else 0)
 
     def filter_flowbox(self, child) -> bool:
-        """Native GTK fast-filtering for Search and Favorites toggle."""
         rel_path = getattr(child, 'rel_path', '')
-        
-        if self.show_only_favorites and rel_path not in self.favorites:
-            return False
-            
-        if self.search_query and self.search_query not in rel_path.lower():
-            return False
-            
+        if self.show_only_favorites and rel_path not in self.favorites: return False
+        if self.search_query and self.search_query not in rel_path.lower(): return False
         return True
 
     def _update_visibility_and_selection(self):
-        """Intelligently switch stack states and select the top match."""
-        first_visible = None
         has_visible = False
+        first_visible = None
         
         for child in self.flowbox.get_children():
             if self.filter_flowbox(child):
@@ -396,8 +450,7 @@ class WallpaperApp(Gtk.Application):
                 
         if has_visible:
             self.stack.set_visible_child_name("grid")
-            if first_visible:
-                self.flowbox.select_child(first_visible)
+            if first_visible: self.flowbox.select_child(first_visible)
         else:
             self.stack.set_visible_child_name("empty")
             
@@ -406,19 +459,16 @@ class WallpaperApp(Gtk.Application):
     def on_search_changed(self, widget):
         self.search_query = self.search_entry.get_text().lower()
         self.flowbox.invalidate_filter()
-        GLib.idle_add(self._update_visibility_and_selection)
+        self.GLib.idle_add(self._update_visibility_and_selection)
 
     def on_selection_changed(self, flowbox):
-        """Instantly show the wallpaper's name on the selected child, hide from others."""
         selected = flowbox.get_selected_children()
         
-        # Hide the label on the previously selected child
         if getattr(self, 'current_selected_child', None):
             if hasattr(self.current_selected_child, 'name_label'):
                 self.current_selected_child.name_label.hide()
                 
         if selected:
-            # Show the label on the newly selected child
             self.current_selected_child = selected[0]
             if hasattr(self.current_selected_child, 'name_label'):
                 self.current_selected_child.name_label.show()
@@ -426,36 +476,27 @@ class WallpaperApp(Gtk.Application):
             self.current_selected_child = None
 
     def refresh_ui(self):
-        """Discovers ALL wallpapers, establishes instant placeholders, and offloads rendering."""
         self.current_generation += 1
         
-        for child in self.flowbox.get_children():
-            self.flowbox.remove(child)
+        for child in self.flowbox.get_children(): self.flowbox.remove(child)
         self.ui_children.clear()
+        self.loaded_pixbufs.clear()  # Prevent strict memory leaks on reloads
 
-        self.wallpapers.clear()
-        if WALLPAPER_DIR.exists():
-            for root, dirs, files in os.walk(WALLPAPER_DIR, followlinks=True):
-                for f in files:
-                    path = Path(root) / f
-                    if path.suffix.lower() in IMAGE_EXTENSIONS:
-                        rel_path = str(path.relative_to(WALLPAPER_DIR))
-                        self.wallpapers.append(rel_path)
-        
-        self.wallpapers.sort(key=natural_keys)
+        THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        self.wallpapers = CacheManager.get_all_wallpapers()
 
         for rel_path in self.wallpapers:
-            child = Gtk.FlowBoxChild()
+            child = self.Gtk.FlowBoxChild()
             child.rel_path = rel_path
             
-            box = Gtk.Box()
+            box = self.Gtk.Box()
             box.set_size_request(RENDER_SIZE, RENDER_SIZE)
             box.get_style_context().add_class("placeholder-box")
             
-            spinner = Gtk.Spinner()
+            spinner = self.Gtk.Spinner()
             spinner.start()
-            spinner.set_halign(Gtk.Align.CENTER)
-            spinner.set_valign(Gtk.Align.CENTER)
+            spinner.set_halign(self.Gtk.Align.CENTER)
+            spinner.set_valign(self.Gtk.Align.CENTER)
             box.pack_start(spinner, True, True, 0)
             
             child.add(box)
@@ -463,103 +504,70 @@ class WallpaperApp(Gtk.Application):
             self.ui_children[rel_path] = child
 
         self.window.show_all()
-        
-        # Immediately apply filters and update empty state
         self.flowbox.invalidate_filter()
         self._update_visibility_and_selection()
 
-        THUMB_DIR.mkdir(parents=True, exist_ok=True)
         for rel_path in self.wallpapers:
-            self.executor.submit(self._process_single_image, rel_path, self.current_generation)
+            self.executor.submit(self._load_and_render_image, rel_path, self.current_generation)
 
-    # --- IMAGE PIPELINE ---
+    def _load_and_render_image(self, rel_path: str, generation: int):
+        if generation != self.current_generation: return
 
-    def get_thumb_path(self, rel_path: str) -> Path:
-        digest = hashlib.sha256(rel_path.encode('utf-8')).hexdigest()
-        return THUMB_DIR / f"{digest}.png"
-
-    def _process_single_image(self, rel_path: str, generation: int):
-        if generation != self.current_generation:
-            return
-
-        full_path = WALLPAPER_DIR / rel_path
-        thumb_path = self.get_thumb_path(rel_path)
+        CacheManager.generate_thumb_if_needed(rel_path)
+        thumb_path = CacheManager.get_thumb_path(rel_path)
 
         try:
-            needs_gen = not thumb_path.exists() or thumb_path.stat().st_mtime < full_path.stat().st_mtime
-            
-            if needs_gen:
-                subprocess.run([
-                    "nice", "-n", "19", "magick", "-limit", "thread", "1",
-                    str(full_path), "-auto-orient", "-strip", 
-                    "-thumbnail", f"{THUMB_SIZE}x{THUMB_SIZE}^", 
-                    "-gravity", "center", "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}", 
-                    str(thumb_path)
-                ], check=True, stderr=subprocess.DEVNULL)
-
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(thumb_path), RENDER_SIZE, RENDER_SIZE, True)
+            pixbuf = self.GdkPixbuf.Pixbuf.new_from_file_at_scale(str(thumb_path), RENDER_SIZE, RENDER_SIZE, True)
             self.loaded_pixbufs[rel_path] = pixbuf
-            
-            GLib.idle_add(self._update_ui_child, rel_path, pixbuf, generation)
+            self.GLib.idle_add(self._update_ui_child, rel_path, pixbuf, generation)
         except Exception as e:
-            print(f"Failed loading {rel_path}: {e}")
+            print(f"Failed loading {rel_path} into Pixbuf: {e}")
 
-    def _update_ui_child(self, rel_path: str, pixbuf: GdkPixbuf.Pixbuf, generation: int = -1):
-        if generation != -1 and generation != self.current_generation:
-            return False
+    def _update_ui_child(self, rel_path: str, pixbuf, generation: int = -1):
+        if generation != -1 and generation != self.current_generation: return False
 
         child = self.ui_children.get(rel_path)
         if not child: return False
 
-        for c in child.get_children():
-            child.remove(c)
-
+        for c in child.get_children(): child.remove(c)
         if not pixbuf: return False
 
-        image = Gtk.Image.new_from_pixbuf(pixbuf)
-        overlay = Gtk.Overlay()
+        image = self.Gtk.Image.new_from_pixbuf(pixbuf)
+        overlay = self.Gtk.Overlay()
         overlay.add(image)
 
-        # Favorite Heart Tracker
         if rel_path in self.favorites:
-            heart = Gtk.Label(label="<span color='#f38ba8' size='large'>♥</span>")
+            heart = self.Gtk.Label(label="<span color='#f38ba8' size='large'>♥</span>")
             heart.set_use_markup(True)
-            heart.set_halign(Gtk.Align.END)
-            heart.set_valign(Gtk.Align.START)
+            heart.set_halign(self.Gtk.Align.END)
+            heart.set_valign(self.Gtk.Align.START)
             heart.set_margin_top(6)
             heart.set_margin_end(6)
             overlay.add_overlay(heart)
 
-        # Base Name Overlay (Initially Hidden)
-        name_label = Gtk.Label(label=os.path.basename(rel_path))
+        name_label = self.Gtk.Label(label=os.path.basename(rel_path))
         name_label.get_style_context().add_class("wallpaper-name-overlay")
-        name_label.set_halign(Gtk.Align.END)
-        name_label.set_valign(Gtk.Align.END)
+        name_label.set_halign(self.Gtk.Align.END)
+        name_label.set_valign(self.Gtk.Align.END)
         name_label.set_margin_bottom(6)
         name_label.set_margin_end(6)
-        name_label.set_no_show_all(True) # Prevent showing up universally
+        name_label.set_no_show_all(True) 
         
-        # Keep a reference injected to manipulate easily on focus
         child.name_label = name_label
         overlay.add_overlay(name_label)
-
         overlay.show_all()
         child.add(overlay)
         
-        # Verify if it should immediately be visible after load
         if getattr(self, 'current_selected_child', None) == child:
             name_label.show()
 
         return False
-
-    # --- INTERACTION & BINDS ---
 
     def get_selected_path(self):
         selected = self.flowbox.get_selected_children()
         return getattr(selected[0], 'rel_path', None) if selected else None
 
     def trigger_action(self, action_type: str):
-        """Routing multiplexer for button clicks."""
         path = self.get_selected_path()
         match action_type:
             case 'fast':
@@ -569,122 +577,106 @@ class WallpaperApp(Gtk.Application):
             case 'toggle':
                 self.show_only_favorites = not self.show_only_favorites
                 self.flowbox.invalidate_filter()
-                GLib.idle_add(self._update_visibility_and_selection)
+                self.GLib.idle_add(self._update_visibility_and_selection)
 
     def on_child_activated(self, flowbox, child):
-        # A click automatically selects AND triggers applying.
         self.apply_wallpaper(getattr(child, 'rel_path', None), regen=True)
 
     def on_key_press(self, widget, event):
         keyval = event.keyval
         state = event.state
 
-        is_alt = (state & Gdk.ModifierType.MOD1_MASK) != 0
-        is_ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0
+        is_alt = (state & self.Gdk.ModifierType.MOD1_MASK) != 0
+        is_ctrl = (state & self.Gdk.ModifierType.CONTROL_MASK) != 0
         
-        # Quit Conditions
-        if keyval == Gdk.KEY_q and not is_alt and not is_ctrl and not self.search_entry.is_focus():
+        if keyval == self.Gdk.KEY_q and not is_alt and not is_ctrl and not self.search_entry.is_focus():
             self.window.close()
             return True
-        if keyval in (Gdk.KEY_c, Gdk.KEY_C) and is_ctrl:
+        if keyval in (self.Gdk.KEY_c, self.Gdk.KEY_C) and is_ctrl:
             self.window.close()
             return True
 
-        # Focus trap logic for Search Bar
         if self.search_entry.is_focus():
-            if keyval == Gdk.KEY_Escape:
-                self.search_entry.set_text("") # Clear search strictly on escape
+            if keyval == self.Gdk.KEY_Escape:
+                self.search_entry.set_text("") 
                 self.window.set_focus(None)
                 self.flowbox.grab_focus()
                 return True
             return False
 
-        # Keybinds avoiding full match-case due to specific combo dependencies
-        if keyval == Gdk.KEY_slash and not is_alt and not is_ctrl:
+        if keyval == self.Gdk.KEY_slash and not is_alt and not is_ctrl:
             self.search_entry.grab_focus()
             return True
             
-        if keyval in (Gdk.KEY_f, Gdk.KEY_F) and is_ctrl:
+        if keyval in (self.Gdk.KEY_f, self.Gdk.KEY_F) and is_ctrl:
             self.search_entry.grab_focus()
             return True
             
-        if keyval == Gdk.KEY_Escape:
+        if keyval == self.Gdk.KEY_Escape:
             self.search_entry.set_text("")
             self.flowbox.invalidate_filter()
             self.window.set_focus(None)
             self.flowbox.grab_focus()
             return True
 
-        if keyval in (Gdk.KEY_t, Gdk.KEY_T) and is_ctrl:
+        if keyval in (self.Gdk.KEY_t, self.Gdk.KEY_T) and is_ctrl:
             self.show_only_favorites = not self.show_only_favorites
             self.flowbox.invalidate_filter()
-            GLib.idle_add(self._update_visibility_and_selection)
+            self.GLib.idle_add(self._update_visibility_and_selection)
             return True
 
         rel_path = self.get_selected_path()
 
-        # Modern Python 3.10+ Pattern Matching for action keybinds
         match keyval:
-            case Gdk.KEY_Return | Gdk.KEY_KP_Enter:
+            case self.Gdk.KEY_Return | self.Gdk.KEY_KP_Enter:
                 if rel_path: self.apply_wallpaper(rel_path, regen=True)
                 return True
-            
-            case Gdk.KEY_h if is_alt:
+            case self.Gdk.KEY_h if is_alt:
                 if rel_path: self.apply_wallpaper(rel_path, regen=False)
                 return True
-            
-            case Gdk.KEY_u if is_alt:
+            case self.Gdk.KEY_u if is_alt:
                 if rel_path: self.toggle_favorite(rel_path)
                 return True
-            
-            case Gdk.KEY_t if is_alt:
+            case self.Gdk.KEY_t if is_alt:
                 self.show_only_favorites = not self.show_only_favorites
                 self.flowbox.invalidate_filter()
-                GLib.idle_add(self._update_visibility_and_selection)
+                self.GLib.idle_add(self._update_visibility_and_selection)
                 return True
-            
-            case Gdk.KEY_y if is_alt:
-                print("Cache rebuild requested. Deleting thumb cache and refreshing...")
-                for f in THUMB_DIR.glob("*.png"): f.unlink()
+            case self.Gdk.KEY_y if is_alt:
+                print("Rebuilding cache dynamically...")
+                CacheManager.precache_all()
                 self.refresh_ui()
                 return True
 
         return False
 
     def toggle_favorite(self, rel_path: str):
-        if rel_path in self.favorites:
-            self.favorites.remove(rel_path)
-        else:
-            self.favorites.add(rel_path)
-            
+        if rel_path in self.favorites: self.favorites.remove(rel_path)
+        else: self.favorites.add(rel_path)
         self._save_favorites()
-        
-        # In-place UI update for the heart icon
         if rel_path in self.loaded_pixbufs:
             self._update_ui_child(rel_path, self.loaded_pixbufs[rel_path], self.current_generation)
-            
-        # Instantly cull from view if we are strictly filtering for favorites
         if self.show_only_favorites:
             self.flowbox.invalidate_filter()
-            GLib.idle_add(self._update_visibility_and_selection)
+            self.GLib.idle_add(self._update_visibility_and_selection)
 
-    # --- BACKEND EXECUTION ---
-
-    def parse_state_conf(self) -> dict:
+    def parse_state_conf(self) -> dict[str, str]:
         state = {}
         if STATE_FILE.exists():
-            with open(STATE_FILE, 'r') as f:
-                for line in f:
+            try:
+                content = STATE_FILE.read_text(encoding='utf-8')
+                for line in content.splitlines():
                     line = line.strip()
                     if line and not line.startswith('#') and '=' in line:
                         k, v = line.split('=', 1)
                         state[k.strip()] = v.strip().strip("'").strip('"')
+            except Exception as e:
+                print(f"Error reading state file: {e}")
         return state
 
     def update_trackers(self, rel_path: str, theme_mode: str):
         basename = os.path.basename(rel_path)
         track_file = TRACK_LIGHT if theme_mode == "light" else TRACK_DARK
-        
         THEME_DIR.mkdir(parents=True, exist_ok=True)
         with open(track_file, 'w') as f: f.write(f"{basename}\n")
         with open(FAV_STATE_FILE, 'w') as f: f.write(f"{basename}\n")
@@ -698,7 +690,6 @@ class WallpaperApp(Gtk.Application):
             return
 
         print(f"Applying: {full_path} (Regen: {regen})")
-        
         state = self.parse_state_conf()
         theme_mode = state.get('THEME_MODE', 'dark')
         self.update_trackers(rel_path, theme_mode)
@@ -707,8 +698,7 @@ class WallpaperApp(Gtk.Application):
         
         def add_opt(key, flag):
             val = state.get(key, 'disable')
-            if val and val != 'disable':
-                awww_cmd.extend([flag, val])
+            if val and val != 'disable': awww_cmd.extend([flag, val])
 
         add_opt('AWWW_TRANS_TYPE', '--transition-type')
         add_opt('AWWW_TRANS_DURATION', '--transition-duration')
@@ -721,16 +711,30 @@ class WallpaperApp(Gtk.Application):
         def _exec_backend():
             try:
                 subprocess.run(awww_cmd, check=True)
-                if regen:
-                    subprocess.run([str(THEME_CTL), "refresh"], check=True)
+                if regen: subprocess.run([str(THEME_CTL), "refresh"], check=True)
             except subprocess.CalledProcessError as e:
                 print(f"Backend execution failed: {e}")
 
-        # The daemon thread runs the process completely detached from GTK UI logic
         threading.Thread(target=_exec_backend, daemon=True).start()
 
+    def run(self):
+        # We strip sys.argv because custom argparse flags will crash GTKApplication
+        return self.app.run([sys.argv[0]])
 
+
+# ==============================================================================
+# ENTRY POINT & CLI PARSING
+# ==============================================================================
 if __name__ == "__main__":
-    app = WallpaperApp()
-    exit_status = app.run(sys.argv)
-    sys.exit(exit_status)
+    parser = argparse.ArgumentParser(description="Dusky Theme GTK3 Wallpaper Selector")
+    parser.add_argument('--precache', action='store_true', help="Run silently in the background to generate caches and sweep orphans, then exit.")
+    
+    args, unknown = parser.parse_known_args()
+    
+    if args.precache:
+        CacheManager.precache_all()
+        sys.exit(0)
+    else:
+        selector = WallpaperApp()
+        exit_status = selector.run()
+        sys.exit(exit_status)
