@@ -7,8 +7,11 @@
 # - Synchronized with theme_ctl.sh state machine.
 # - Dynamically inherits Awww transitions from state.conf.
 # - Cleaned UI: Pango markup injected into Rofi to eliminate "crammed" text.
-# - Added Alt+R binding to Apply WITHOUT Matugen color regeneration.
+# - Added Alt+H binding to Apply WITHOUT Matugen color regeneration.
 # - FIXED: awww query iteration logic now properly identifies active wallpaper.
+# - FIXED: Universal scaling logic mapped dynamically to Hyprland dimensions.
+# - FIXED: Eliminated empty bottom gaps with strict shrink-wrap directives.
+# - REFACTORED: Instituted algorithmically immutable 8-item spatial geometry.
 # -----------------------------------------------------------------------------
 
 set -Eeuo pipefail
@@ -666,21 +669,44 @@ get_active_wallpaper_filename() {
   return 1
 }
 
+# -----------------------------------------------------------------------------
+# CORE GEOMETRIC MATRIX
+# -----------------------------------------------------------------------------
 get_dynamic_theme_str() {
   if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    local logical_height
-    logical_height=$(hyprctl monitors -j 2>/dev/null | jq -r '.[] | select(.focused == true) | (.height / .scale)' | cut -d. -f1)
+    local mon_info logical_width logical_height
+
+    # Extract robust logical integers accurately taking scaling into account
+    mon_info=$(hyprctl monitors -j 2>/dev/null | jq -r '.[] | select(.focused == true) | "\(.width / .scale | floor) \(.height / .scale | floor)"')
     
-    if [[ -n "$logical_height" && "$logical_height" =~ ^[0-9]+$ ]]; then
-      if (( logical_height <= 800 )); then
-        # High fractional scaling (e.g. 1080p @ 1.5x = 720p logical)
-        printf "%s" "window { height: 85%; width: 85%; } listview { columns: 4; lines: 3; } element-icon { size: 120px; }"
-        return 0
-      elif (( logical_height <= 1080 )); then
-        # Normal/slight fractional scaling
-        printf "%s" "window { height: 80%; width: 80%; } listview { columns: 4; lines: 3; } element-icon { size: 180px; }"
-        return 0
+    read -r logical_width logical_height <<< "$mon_info"
+
+    if [[ -n "$logical_width" && -n "$logical_height" && "$logical_width" =~ ^[0-9]+$ && "$logical_height" =~ ^[0-9]+$ ]]; then
+      local icon_size window_width_pct
+
+      # Epistemological constraint: We enforce a strict, immutable 4x2 topological matrix.
+      # To eradicate the spatial hypertrophy and nullify extraneous abyssal gaps at the 
+      # inferior boundary, we calculate icon dimensions strictly as a modest fraction of 
+      # the logical vertical axis, eschewing earlier cross-axis conflations.
+      icon_size=$(( (logical_height * 16) / 100 )) 
+      
+      # Bound the scalar to preserve absolute orthographic elegance.
+      (( icon_size < 100 )) && icon_size=100
+      (( icon_size > 220 )) && icon_size=220
+
+      # Enforce a constrained, sophisticated window width footprint. We dynamically 
+      # broaden the container strictly if the viewport transverses into portrait orientation.
+      if (( logical_width >= logical_height )); then
+        window_width_pct=50
+      else
+        window_width_pct=85
       fi
+
+      # The injection of `fixed-columns: true` and `fixed-height: true` structurally 
+      # amputates the renderer's propensity for generating vacant terminal space, 
+      # enforcing an unyielding 8-item spatial hegemony.
+      printf "%s" "window { width: ${window_width_pct}%; } listview { columns: 4; lines: 2; fixed-columns: true; fixed-height: true; } element-icon { size: ${icon_size}px; }"
+      return 0
     fi
   fi
   printf ""
@@ -805,6 +831,8 @@ show_menu() {
     fi
 
     # UWSM Wrap applied with Custom Keybindings mapping
+    # FIX: -no-fixed-num-lines acts as the primary shrink-wrap enforcer forcing Rofi
+    # to perfectly hug the items instead of drawing 100 empty placeholder lines!
     rofi_cmd=(
       uwsm-app -- rofi
       -dmenu
@@ -812,6 +840,7 @@ show_menu() {
       -i
       -show-icons
       -format i
+      -no-fixed-num-lines
       -p "$prompt"
       -mesg "$message"
       -kb-custom-1 "Alt+u"
@@ -908,7 +937,7 @@ show_menu() {
         fi
         ;;
       13)
-        # Alt+R -> Apply Without Matugen Regen
+        # Alt+H -> Apply Without Matugen Regen
         [[ -n $selection ]] || continue
         printf 'NO_REGEN\n%s\n' "$selection"
         return 0
@@ -953,7 +982,7 @@ apply_selection() {
 
   [[ -n $output ]] && log_output INFO "awww: " "$output"
 
-  # If Alt+R was pressed, exit here before Matugen engages.
+  # If Alt+H was pressed, exit here before Matugen engages.
   if [[ "$action" == "NO_REGEN" ]]; then
     notify "Wallpaper Applied" "Skipped Matugen regeneration."
     return 0
