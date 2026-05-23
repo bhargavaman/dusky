@@ -173,12 +173,14 @@ class WallpaperApp:
         gi.require_version('Gtk', '3.0')
         gi.require_version('Gdk', '3.0')
         gi.require_version('GdkPixbuf', '2.0')
-        from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio
+        gi.require_version('Pango', '1.0') # Loaded for UI text ellipsize safeties
+        from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio, Pango
         
         self.Gtk = Gtk
         self.Gdk = Gdk
         self.GdkPixbuf = GdkPixbuf
         self.GLib = GLib
+        self.Pango = Pango
         
         self.app = self.Gtk.Application(
             application_id='com.dusky.wallpaperselector',
@@ -262,9 +264,34 @@ class WallpaperApp:
             self.search_entry.connect("search-changed", self.on_search_changed)
             header.pack_start(self.search_entry, False, False, 0)
             
-            spacer = self.Gtk.Box()
-            header.pack_start(spacer, True, True, 0)
+            # --- SHORTCUTS IN HEADER ---
+            shortcuts_data = [
+                ("Enter", "Apply &amp; Theme"), # Fixed: Properly escaped ampersand to prevent GTK parse errors
+                ("Alt+H", "Fast Apply"),
+                ("Alt+U", "Favorite"),
+                ("Alt+T", "Toggle Favs"),
+                ("Alt+Y", "Rebuild Cache"),
+                ("Esc", "Reset"),
+                ("Q", "Quit")
+            ]
+            
+            markup_parts = [
+                f"<span background='#313244' foreground='#cdd6f4' font_family='monospace' size='7500'><b> {k} </b></span> "
+                f"<span size='7800' foreground='#a6adc8'>{d}</span>"
+                for k, d in shortcuts_data
+            ]
+            
+            shortcuts_label = self.Gtk.Label()
+            shortcuts_label.set_use_markup(True)
+            shortcuts_label.set_markup("  •  ".join(markup_parts))
+            shortcuts_label.set_halign(self.Gtk.Align.CENTER)
+            # Ellipsize prevents the label from pushing other UI elements offscreen if the window shrinks
+            shortcuts_label.set_ellipsize(self.Pango.EllipsizeMode.END) 
+            
+            # The shortcuts label elegantly absorbs the middle spacer area
+            header.pack_start(shortcuts_label, True, True, 0)
 
+            # --- ACTION BUTTONS ---
             action_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=8)
             
             btn_fast = self.Gtk.Button(label="Fast Apply [Alt+H]")
@@ -285,34 +312,6 @@ class WallpaperApp:
 
             header.pack_start(action_box, False, False, 0)
             vbox.pack_start(header, False, False, 0)
-
-            # --- SHORTCUTS RIBBON ---
-            shortcuts_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=0)
-            shortcuts_box.set_name("shortcuts_bar")
-            
-            shortcuts_data = [
-                ("Enter", "Apply & Theme"),
-                ("Alt+H", "Fast Apply"),
-                ("Alt+U", "Favorite"),
-                ("Alt+T", "Toggle Favs"),
-                ("Alt+Y", "Rebuild Cache"),
-                ("Esc", "Reset"),
-                ("Q", "Quit")
-            ]
-            
-            markup_parts = [
-                f"<span background='#313244' foreground='#cdd6f4' font_family='monospace' size='7500'><b> {k} </b></span> "
-                f"<span size='7800' foreground='#a6adc8'>{d}</span>"
-                for k, d in shortcuts_data
-            ]
-            
-            shortcuts_label = self.Gtk.Label()
-            shortcuts_label.set_use_markup(True)
-            shortcuts_label.set_markup("  •  ".join(markup_parts))
-            shortcuts_label.set_halign(self.Gtk.Align.CENTER)
-            
-            shortcuts_box.pack_start(shortcuts_label, True, True, 0)
-            vbox.pack_start(shortcuts_box, False, False, 0)
 
             # --- STACK FOR GRID/EMPTY ---
             self.stack = self.Gtk.Stack()
@@ -388,12 +387,6 @@ class WallpaperApp:
             background-color: shade(@window_bg_color, 0.97);
             padding: 10px 14px;
             border-bottom: 1px solid alpha(@window_fg_color, 0.1);
-        }
-        #shortcuts_bar {
-            background-color: shade(@window_bg_color, 0.94);
-            padding: 6px 12px;
-            border-bottom: 1px solid alpha(@window_fg_color, 0.08);
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.03);
         }
         .search-bar { 
             border-radius: 8px; 
