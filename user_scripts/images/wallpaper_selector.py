@@ -266,13 +266,10 @@ class WallpaperApp:
             
             # --- SHORTCUTS IN HEADER ---
             shortcuts_data = [
-                ("Enter", "Apply &amp; Theme"), # Fixed: Properly escaped ampersand to prevent GTK parse errors
                 ("Alt+H", "Fast Apply"),
                 ("Alt+U", "Favorite"),
                 ("Alt+T", "Toggle Favs"),
-                ("Alt+Y", "Rebuild Cache"),
-                ("Esc", "Reset"),
-                ("Q", "Quit")
+                ("Alt+Y", "Rebuild Cache")
             ]
             
             markup_parts = [
@@ -294,21 +291,13 @@ class WallpaperApp:
             # --- ACTION BUTTONS ---
             action_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=8)
             
-            btn_fast = self.Gtk.Button(label="Fast Apply [Alt+H]")
-            btn_fast.set_tooltip_text("Apply wallpaper instantly without regenerating theme colors")
-            btn_fast.connect("clicked", lambda w: self.trigger_action('fast'))
-            
-            btn_fav = self.Gtk.Button(label="Fav [Alt+U]")
-            btn_fav.set_tooltip_text("Toggle selected wallpaper as a favorite")
-            btn_fav.connect("clicked", lambda w: self.trigger_action('fav'))
-            
-            btn_toggle = self.Gtk.Button(label="Toggle [Alt+T]")
-            btn_toggle.set_tooltip_text("Toggle view to show only favorite wallpapers")
+            btn_toggle = self.Gtk.Button(label="♥")
+            btn_toggle.set_tooltip_text("Toggle view to show only favorite wallpapers [Alt+T]")
             btn_toggle.connect("clicked", lambda w: self.trigger_action('toggle'))
+            btn_toggle.get_style_context().add_class("action-btn")
+            btn_toggle.get_style_context().add_class("toggle-btn")
 
-            for btn in (btn_fast, btn_fav, btn_toggle):
-                btn.get_style_context().add_class("action-btn")
-                action_box.pack_start(btn, False, False, 0)
+            action_box.pack_start(btn_toggle, False, False, 0)
 
             header.pack_start(action_box, False, False, 0)
             vbox.pack_start(header, False, False, 0)
@@ -403,6 +392,11 @@ class WallpaperApp:
         .action-btn:hover { 
             background-color: alpha(@accent_color, 0.15); 
             border-color: @accent_color; 
+        }
+        .toggle-btn {
+            font-size: 1.15em;
+            padding: 4px 10px;
+            color: #f38ba8;
         }
         
         /* FIX FOR BLACK BOTTOM AREA: 
