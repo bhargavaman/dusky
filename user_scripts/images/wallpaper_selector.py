@@ -255,7 +255,7 @@ class WallpaperApp:
             
             self.search_entry = self.Gtk.SearchEntry()
             self.search_entry.set_placeholder_text("Search... (Press /)")
-            self.search_entry.set_width_chars(12) 
+            self.search_entry.set_width_chars(26)  # Widened for comfort
             self.search_entry.get_style_context().add_class("search-bar")
             self.search_entry.connect("search-changed", self.on_search_changed)
             header.pack_start(self.search_entry, False, False, 0)
@@ -439,6 +439,16 @@ class WallpaperApp:
         return True
 
     def _update_visibility_and_selection(self):
+        """O(1) Smart Grid Selection Updater. Prevents SearchEntry from destroying Grid Focus."""
+        selected = self.flowbox.get_selected_children()
+        current_selected = selected[0] if selected else None
+        
+        # O(1) Fast path: If current selection is still valid and visible, keep it!
+        if current_selected and self.filter_flowbox(current_selected):
+            self.stack.set_visible_child_name("grid")
+            return False
+            
+        # O(N) Fallback: Find the very first visible child (Happens during typing)
         has_visible = False
         first_visible = None
         
@@ -450,7 +460,8 @@ class WallpaperApp:
                 
         if has_visible:
             self.stack.set_visible_child_name("grid")
-            if first_visible: self.flowbox.select_child(first_visible)
+            if first_visible: 
+                self.flowbox.select_child(first_visible)
         else:
             self.stack.set_visible_child_name("empty")
             
@@ -475,6 +486,19 @@ class WallpaperApp:
         else:
             self.current_selected_child = None
 
+    def get_current_wallpaper_id(self) -> str:
+        """Parses active theme tracking to determine what wallpaper is currently live."""
+        state = self.parse_state_conf()
+        theme_mode = state.get('THEME_MODE', 'dark')
+        track_file = TRACK_LIGHT if theme_mode == "light" else TRACK_DARK
+        
+        if track_file.exists():
+            try:
+                return track_file.read_text(encoding='utf-8').strip()
+            except Exception as e:
+                print(f"Error reading track file: {e}")
+        return ""
+
     def refresh_ui(self):
         self.current_generation += 1
         
@@ -484,6 +508,9 @@ class WallpaperApp:
 
         THUMB_DIR.mkdir(parents=True, exist_ok=True)
         self.wallpapers = CacheManager.get_all_wallpapers()
+
+        current_id = self.get_current_wallpaper_id()
+        target_child = None
 
         for rel_path in self.wallpapers:
             child = self.Gtk.FlowBoxChild()
@@ -503,9 +530,30 @@ class WallpaperApp:
             self.flowbox.add(child)
             self.ui_children[rel_path] = child
 
+            # Match via ID (Theme_ctl handles full paths, GUI stores basenames - we check both to be safe)
+            if current_id and (rel_path == current_id or os.path.basename(rel_path) == current_id):
+                target_child = child
+
         self.window.show_all()
+        
+        # Inject the active wallpaper selection BEFORE filter validation
+        if target_child:
+            self.flowbox.select_child(target_child)
+            
         self.flowbox.invalidate_filter()
         self._update_visibility_and_selection()
+
+        # Idle execution guarantees GTK Layout is fully resolved before forcibly snatching focus
+        # This securely un-focuses the Search Bar and allows instant arrow-key navigation.
+        def _grab_focus():
+            selected = self.flowbox.get_selected_children()
+            if selected:
+                selected[0].grab_focus()
+            else:
+                self.flowbox.grab_focus()
+            return False
+            
+        self.GLib.idle_add(_grab_focus)
 
         for rel_path in self.wallpapers:
             self.executor.submit(self._load_and_render_image, rel_path, self.current_generation)
