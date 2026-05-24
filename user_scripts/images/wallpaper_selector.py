@@ -273,6 +273,9 @@ class WallpaperApp:
         
         self.btn_all = None
         self.btn_fav = None
+        self.btn_refresh = None
+        self.btn_settings = None
+        self.btn_help = None
         
         self.wallpapers = []
         self.favorites = set()
@@ -404,7 +407,7 @@ class WallpaperApp:
             self.btn_fav = self.Gtk.Button(label="♥")
             self.btn_fav.get_style_context().add_class("tab-btn")
             self.btn_fav.get_style_context().add_class("fav-btn")
-            self.btn_fav.set_tooltip_text("Show only favorite wallpapers [Alt+T]")
+            self.btn_fav.set_tooltip_text("Show only favorite wallpapers [Alt+P]")
             self.btn_fav.connect("clicked", lambda w: self.set_view_mode(True))
             
             if self.show_only_favorites:
@@ -419,35 +422,32 @@ class WallpaperApp:
             # 3. Right Box (Actions)
             right_box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=8)
             
-            btn_refresh = self.Gtk.Button()
-            btn_refresh.set_tooltip_text("Rebuild Cache [Alt+Y]")
-            btn_refresh.set_image(self.Gtk.Image.new_from_icon_name("view-refresh-symbolic", self.Gtk.IconSize.BUTTON))
-            btn_refresh.connect("clicked", lambda w: self.trigger_action('refresh'))
-            btn_refresh.get_style_context().add_class("action-btn")
-            btn_refresh.get_style_context().add_class("icon-btn")
+            self.btn_refresh = self.Gtk.Button()
+            self.btn_refresh.set_tooltip_text("Rebuild Cache [Alt+R]")
+            self.btn_refresh.set_image(self.Gtk.Image.new_from_icon_name("view-refresh-symbolic", self.Gtk.IconSize.BUTTON))
+            self.btn_refresh.connect("clicked", lambda w: self.trigger_action('refresh'))
+            self.btn_refresh.get_style_context().add_class("action-btn")
+            self.btn_refresh.get_style_context().add_class("icon-btn")
 
-            btn_settings = self.Gtk.Button()
-            btn_settings.set_tooltip_text("Preferences")
-            btn_settings.set_image(self.Gtk.Image.new_from_icon_name("preferences-system-symbolic", self.Gtk.IconSize.BUTTON))
-            btn_settings.connect("clicked", self.show_settings_popover)
-            btn_settings.get_style_context().add_class("action-btn")
-            btn_settings.get_style_context().add_class("icon-btn")
+            self.btn_settings = self.Gtk.Button()
+            self.btn_settings.set_tooltip_text("Preferences [Alt+O]")
+            self.btn_settings.set_image(self.Gtk.Image.new_from_icon_name("preferences-system-symbolic", self.Gtk.IconSize.BUTTON))
+            self.btn_settings.connect("clicked", self.show_settings_popover)
+            self.btn_settings.get_style_context().add_class("action-btn")
+            self.btn_settings.get_style_context().add_class("icon-btn")
 
-            btn_help = self.Gtk.Button()
-            btn_help.set_tooltip_text("Keyboard Shortcuts")
-            btn_help.set_image(self.Gtk.Image.new_from_icon_name("help-about-symbolic", self.Gtk.IconSize.BUTTON))
-            btn_help.connect("clicked", self.show_shortcuts_popover)
-            btn_help.get_style_context().add_class("action-btn")
-            btn_help.get_style_context().add_class("icon-btn")
+            self.btn_help = self.Gtk.Button()
+            self.btn_help.set_tooltip_text("Keyboard Shortcuts [F1]")
+            self.btn_help.set_image(self.Gtk.Image.new_from_icon_name("help-about-symbolic", self.Gtk.IconSize.BUTTON))
+            self.btn_help.connect("clicked", self.show_shortcuts_popover)
+            self.btn_help.get_style_context().add_class("action-btn")
+            self.btn_help.get_style_context().add_class("icon-btn")
 
-            right_box.pack_start(btn_refresh, False, False, 0)
-            right_box.pack_start(btn_settings, False, False, 0)
-            right_box.pack_start(btn_help, False, False, 0)
+            right_box.pack_start(self.btn_refresh, False, False, 0)
+            right_box.pack_start(self.btn_settings, False, False, 0)
+            right_box.pack_start(self.btn_help, False, False, 0)
 
             # --- GEOMETRY FIX ---
-            # To absolutely guarantee geographical centering, we discard the proportional expand logic. 
-            # GTK's native `set_center_widget` strictly reserves the mathematical middle for our tabs, 
-            # rendering the width discrepancies of left_box/right_box completely irrelevant.
             header.pack_start(left_box, False, False, 0)
             header.set_center_widget(center_box)
             header.pack_end(right_box, False, False, 0)
@@ -563,12 +563,14 @@ class WallpaperApp:
         
         shortcuts = [
             ("Apply & Regen Theme", "Enter / L-Click"),
-            ("Fast Apply", "Alt+H / R-Click"),
-            ("Toggle Favorite", "Alt+U / M-Click"),
-            ("Toggle Favorites View", "Alt+T"),
-            ("Rebuild Cache", "Alt+Y"),
+            ("Fast Apply", "Alt+S / R-Click"),
+            ("Toggle Favorite (Pin)", "Alt+A / M-Click"),
+            ("Toggle Favorites View", "Alt+P"),
+            ("Rebuild Cache", "Alt+R"),
+            ("Preferences", "Alt+O"),
+            ("Keyboard Shortcuts", "F1"),
             ("Focus Search", "Ctrl+F / /"),
-            ("Quit Selector", "Esc / Q")
+            ("Quit Selector", "Esc / Q / Ctrl+C")
         ]
         
         for i, (desc, keys) in enumerate(shortcuts):
@@ -1045,20 +1047,33 @@ class WallpaperApp:
         is_alt = (state & self.Gdk.ModifierType.MOD1_MASK) != 0
         is_ctrl = (state & self.Gdk.ModifierType.CONTROL_MASK) != 0
         
+        # --- GLOBAL BINDS (Work regardless of focus) ---
         if keyval == self.Gdk.KEY_Escape:
             if self.window:
                 self.window.close()
             return True
 
-        if keyval == self.Gdk.KEY_q and not is_alt and not is_ctrl and not self.search_entry.is_focus():
+        if keyval in (self.Gdk.KEY_q, self.Gdk.KEY_Q) and not is_alt and not is_ctrl and not self.search_entry.is_focus():
             if self.window:
                 self.window.close()
             return True
+            
         if keyval in (self.Gdk.KEY_c, self.Gdk.KEY_C) and is_ctrl:
             if self.window:
                 self.window.close()
             return True
 
+        if keyval == self.Gdk.KEY_F1:
+            if getattr(self, 'btn_help', None):
+                self.show_shortcuts_popover(self.btn_help)
+            return True
+
+        if keyval in (self.Gdk.KEY_o, self.Gdk.KEY_O) and is_alt:
+            if getattr(self, 'btn_settings', None):
+                self.show_settings_popover(self.btn_settings)
+            return True
+
+        # Ensure typing in the search box doesn't trigger app actions globally
         if self.search_entry.is_focus():
             return False
 
@@ -1070,26 +1085,27 @@ class WallpaperApp:
             self.search_entry.grab_focus()
             return True
 
-        if keyval in (self.Gdk.KEY_t, self.Gdk.KEY_T) and is_ctrl:
-            self.trigger_action('toggle')
-            return True
-
+        # --- CONTEXT BINDS ---
         rel_path = self.get_selected_path()
 
         match keyval:
             case self.Gdk.KEY_Return | self.Gdk.KEY_KP_Enter:
                 if rel_path: self.apply_wallpaper(rel_path, regen=True)
                 return True
-            case self.Gdk.KEY_h if is_alt:
+                
+            case self.Gdk.KEY_s | self.Gdk.KEY_S if is_alt:
                 if rel_path: self.apply_wallpaper(rel_path, regen=False)
                 return True
-            case self.Gdk.KEY_u if is_alt:
+                
+            case self.Gdk.KEY_a | self.Gdk.KEY_A if is_alt:
                 if rel_path: self.toggle_favorite(rel_path)
                 return True
-            case self.Gdk.KEY_t if is_alt:
+                
+            case self.Gdk.KEY_p | self.Gdk.KEY_P if is_alt:
                 self.trigger_action('toggle')
                 return True
-            case self.Gdk.KEY_y if is_alt:
+                
+            case self.Gdk.KEY_r | self.Gdk.KEY_R if is_alt:
                 self.trigger_action('refresh')
                 return True
 
