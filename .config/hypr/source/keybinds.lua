@@ -385,11 +385,22 @@ hl.bind(
 --     { description = "Clipboard History" }
 -- )
 
-hl.bind(
-    "SUPER + V",
-    hl.dsp.exec_cmd("~/user_scripts/clipboard/close_terminal_clipboard.sh foot --app-id=terminal_clipboard.sh ~/user_scripts/clipboard/terminal_clipboard.sh"),
-    { description = "Clipboard History" }
-)
+hl.bind("SUPER + V", function()
+    -- Kill any existing clipboard foot instance with SIGTERM (-15).
+    -- The '^foot' anchor is critical: it means only processes whose
+    -- cmdline STARTS with 'foot' are matched. The sh subprocess spawned
+    -- by os.execute starts with 'sh', so it can never self-match.
+    -- This eliminates the self-terminating sh -c wrapper bug.
+    os.execute("pkill -15 -f '^foot.*terminal_clipboard'")
+
+    -- Dispatch the fresh instance. hl.dispatch + exec_cmd spawns
+    -- foot directly without a sh -c wrapper, so there are no shell
+    -- chain issues here. os.getenv() expands $HOME safely in Lua.
+    hl.dispatch(hl.dsp.exec_cmd(
+        "foot --app-id=terminal_clipboard.sh " ..
+        os.getenv("HOME") .. "/user_scripts/clipboard/terminal_clipboard.sh"
+    ))
+end, { description = "Clipboard History" })
 
 
 hl.bind(
