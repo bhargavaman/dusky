@@ -69,15 +69,23 @@ class CacheManager:
         return wallpapers
 
     @staticmethod
+    def get_digest(rel_path: str) -> str:
+        """
+        Calculates SHA256 digest. 
+        Suffix _r24 ensures cache invalidation for the new rounded corners update,
+        while seamlessly allowing sweeping of the old squarish cache files.
+        """
+        return hashlib.sha256((rel_path + "_r24").encode('utf-8')).hexdigest()
+
+    @staticmethod
     def get_thumb_path(rel_path: str) -> Path:
-        digest = hashlib.sha256(rel_path.encode('utf-8')).hexdigest()
-        return THUMB_DIR / f"{digest}.png"
+        return THUMB_DIR / f"{CacheManager.get_digest(rel_path)}.png"
 
     @staticmethod
     def generate_thumb_if_needed(rel_path: str) -> bool:
         """
         Idempotent thumbnail generation using Atomic POSIX writes.
-        Returns True if a new thumbnail was generated, False if already cached.
+        Features zero-overhead native ImageMagick rounded-corner compositing.
         """
         full_path = WALLPAPER_DIR / rel_path
         thumb_path = CacheManager.get_thumb_path(rel_path)
@@ -89,12 +97,15 @@ class CacheManager:
                 
             tmp_thumb_path = thumb_path.with_suffix('.tmp.png')
             
-            # ImageMagick processing -> write to temp file
+            # ImageMagick processing -> create mask on the fly -> composite for rounded corners
             subprocess.run([
                 "nice", "-n", "19", "magick", "-limit", "thread", "1",
                 str(full_path), "-auto-orient", "-strip", 
                 "-thumbnail", f"{THUMB_SIZE}x{THUMB_SIZE}^", 
                 "-gravity", "center", "-extent", f"{THUMB_SIZE}x{THUMB_SIZE}", 
+                "(", "-size", f"{THUMB_SIZE}x{THUMB_SIZE}", "xc:none", "-fill", "white", 
+                "-draw", f"roundrectangle 0,0,{THUMB_SIZE-1},{THUMB_SIZE-1},24,24", ")",
+                "-alpha", "set", "-compose", "DstIn", "-composite",
                 str(tmp_thumb_path)
             ], check=True, stderr=subprocess.DEVNULL)
             
@@ -113,9 +124,9 @@ class CacheManager:
 
     @staticmethod
     def sweep_orphaned_cache(valid_wallpapers: list[str]):
-        """Garbage collection for deleted wallpapers."""
+        """Garbage collection for deleted wallpapers & outdated square thumbnails."""
         print("Sweeping orphaned cache files...")
-        valid_digests = {hashlib.sha256(w.encode('utf-8')).hexdigest() for w in valid_wallpapers}
+        valid_digests = {CacheManager.get_digest(w) for w in valid_wallpapers}
         orphans_removed = 0
         
         if THUMB_DIR.exists():
@@ -475,13 +486,14 @@ class WallpaperApp:
             padding: 12px; 
         }
         flowboxchild {
-            border-radius: 12px; padding: 6px; margin: 4px;
+            /* Increased roundness to compliment the newly rounded imagery concentrically */
+            border-radius: 20px; padding: 6px; margin: 4px;
             background-color: transparent; transition: all 0.2s ease;
+            border: 2px solid transparent; 
         }
         flowboxchild:selected { 
-            background-color: @accent_bg_color; 
-            outline: 2px solid @accent_color;
-            outline-offset: -2px;
+            background-color: alpha(@accent_color, 0.15); 
+            border: 2px solid @accent_color;
             box-shadow: 0px 4px 12px alpha(@accent_color, 0.3);
         }
         flowboxchild:hover { 
@@ -489,7 +501,8 @@ class WallpaperApp:
         }
         .placeholder-box { 
             background-color: alpha(@window_fg_color, 0.05); 
-            border-radius: 10px; 
+            /* Matches the new inner rounded visual scale smoothly */
+            border-radius: 14px; 
         }
         .wallpaper-name-overlay {
             background-color: alpha(@window_bg_color, 0.85); color: @window_fg_color;
@@ -707,16 +720,18 @@ class WallpaperApp:
             heart.get_style_context().add_class("heart-icon")
             heart.set_halign(self.Gtk.Align.END)
             heart.set_valign(self.Gtk.Align.START)
-            heart.set_margin_top(6)
-            heart.set_margin_end(6)
+            # Tweaked margins to not brush the rounded corners
+            heart.set_margin_top(8)
+            heart.set_margin_end(8)
             overlay.add_overlay(heart)
 
         name_label = self.Gtk.Label(label=os.path.basename(rel_path))
         name_label.get_style_context().add_class("wallpaper-name-overlay")
         name_label.set_halign(self.Gtk.Align.END)
         name_label.set_valign(self.Gtk.Align.END)
-        name_label.set_margin_bottom(6)
-        name_label.set_margin_end(6)
+        # Tweaked margins to not brush the rounded corners
+        name_label.set_margin_bottom(8)
+        name_label.set_margin_end(8)
         name_label.set_no_show_all(True) 
         
         child.name_label = name_label
