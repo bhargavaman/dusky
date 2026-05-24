@@ -650,7 +650,6 @@ cmd_preview() {
         printf '  \e[33mj / k\e[0m       : Move Cursor Down / Up\n'
         printf '  \e[33mg / G\e[0m       : Top / Bottom of list\n'
         printf '  \e[33mCtrl-D/U\e[0m    : Half page Down / Up\n'
-        printf '  \e[33mh / l\e[0m       : Move cursor Left / Right (in prompt)\n'
         printf '  \e[33m/\e[0m           : Enter Search mode (Esc to exit search)\n\n'
         printf '  \e[36m[ SELECTION ]\e[0m\n'
         printf '  \e[33mv / V\e[0m       : Toggle selection under cursor\n'
@@ -957,8 +956,6 @@ show_menu() {
             --bind="ctrl-c:execute-silent($cap)+abort" \
             --bind="j:down" \
             --bind="k:up" \
-            --bind="h:backward-char" \
-            --bind="l:forward-char" \
             --bind="g:first" \
             --bind="G:last" \
             --bind="J:toggle-down" \
