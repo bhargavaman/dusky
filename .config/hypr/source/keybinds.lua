@@ -400,7 +400,7 @@ hl.bind("SUPER + V", function()
         "foot --app-id=terminal_clipboard.sh " ..
         os.getenv("HOME") .. "/user_scripts/clipboard/terminal_clipboard.sh"
     ))
-end, { description = "Clipboard History" })
+end, { description = "Clipboard History", submap_universal = true })
 
 
 hl.bind(
@@ -1155,16 +1155,6 @@ local alt_passthrough_apps = {
 -- =============================================================================
 
 hl.define_submap("apps_passthru", function()
-
-    -- ─── Toggle clipboard off ────────────────────────────────────────────────
-    hl.bind("SUPER + V", function()
-        os.execute("pkill -15 -f '^foot.*terminal_clipboard'")
-        hl.dispatch(hl.dsp.exec_cmd(
-            "foot --app-id=terminal_clipboard.sh " ..
-            os.getenv("HOME") .. "/user_scripts/clipboard/terminal_clipboard.sh"
-        ))
-    end, { description = "Clipboard History (passthrough submap)" })
-
 
     -- ─── Workspace switching ─────────────────────────────────────────────────
     local _ws = dusky_scripts .. "hypr/multi_monitor_workspace.sh"
