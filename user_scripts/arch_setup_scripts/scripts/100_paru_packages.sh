@@ -106,7 +106,9 @@ declare -ar PACKAGES=(
 
 # snapshot & limine
   "limine-mkinitcpio-hook"
-  "limine-snapper-sync"
+
+# limine snapshot sync
+#  "limine-snapper-sync"
 )
 
 # Delay before auto-retrying

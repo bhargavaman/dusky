@@ -83,7 +83,10 @@ declare -ar pkgs_productivity=(
 
 # Group 14: Limine and snapshot
 declare -ar pkgs_btrfs_snapshot=(
-  "limine" "efibootmgr" "efitools" "kernel-modules-hook" "btrfs-progs" "snapper" "snap-pac" "jdk-openjdk" "mtools"
+  "limine" "efibootmgr" "efitools" "kernel-modules-hook" "btrfs-progs" "snapper"
+
+  # for limine snapshot configuration
+  # "snap-pac" "jdk-openjdk" "mtools"
 )
 
 declare -ar GROUP_LABELS=(
