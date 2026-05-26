@@ -547,19 +547,24 @@ hl.bind(
     { description = "Close Window", submap_universal = true }
 )
 
+-- ----
+-- Bind this at your own risk (In Beta)
+-- ----
+--
 -- /user_scripts/tools/workspace/close-workspace.sh -- Working Feature but Unsure
 -- hl.bind(
 --     "SUPER + SHIFT + C",
 --     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
 --     { description = "Close Workspace", submap_universal = true }
 -- )
-
--- /user_scripts/tools/workspace/close-workspace.sh -- Working Feature but Unsure
+-- ----
+-- /user_scripts/tools/workspace/safety-close.sh -- Working Feature but Unsure
 -- hl.bind(
 --     "SUPER + SHIFT + B",
---     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
+--     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/safety-close.sh"),
 --     { description = "Safety Close Window", submap_universal = true }
 -- )
+-- ----
 
 hl.bind(
     "SUPER + A",
