@@ -38,7 +38,7 @@ ESP_CAPACITY_WARN=""
 
 cleanup() {
     local f
-    for f in "${ACTIVE_TEMP_FILES[@]}\"; do
+    for f in "${ACTIVE_TEMP_FILES[@]}"; do
         [[ -n "$f" && -f "$f" ]] && sudo rm -f "$f" 2>/dev/null || true
     done
     kill "${SUDO_PID:-}" 2>/dev/null || true
