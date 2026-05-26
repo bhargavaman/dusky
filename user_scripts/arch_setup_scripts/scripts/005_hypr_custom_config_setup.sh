@@ -1076,9 +1076,9 @@ EOF
 --   decorate        (bool)    -- Enable/disable decorations (shadows, etc.).
 --   animation       (string)  -- Override workspace switch animation style.
 -- ==============================================================================
-hl.workspace_rule({ workspace = "1", layout = "scrolling", persistent = false })
+hl.workspace_rule({ workspace = "1", layout = "dwindle", persistent = false })
 hl.workspace_rule({ workspace = "2", layout = "dwindle", persistent = false })
-hl.workspace_rule({ workspace = "3", layout = "monocle", persistent = false })
+hl.workspace_rule({ workspace = "3", layout = "dwindle", persistent = false })
 hl.workspace_rule({ workspace = "4", layout = "dwindle", persistent = false })
 hl.workspace_rule({ workspace = "5", layout = "dwindle", persistent = false })
 hl.workspace_rule({ workspace = "6", layout = "dwindle", persistent = false })
@@ -1308,7 +1308,7 @@ hl.config({
         -- clean up empty scratchpads
         close_special_on_empty    = true,
         -- steal focus on activation
-        focus_on_activate         = false,
+        focus_on_activate         = true,
         -- 0 = stay behind | 1 = take over | 2 = swap fs
         on_focus_under_fullscreen = 2,
     },
