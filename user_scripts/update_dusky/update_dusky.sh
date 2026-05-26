@@ -88,6 +88,8 @@ set -euo pipefail
 shopt -s inherit_errexit 2>/dev/null || true
 shopt -s extglob 2>/dev/null || true
 
+export PYTHONUNBUFFERED=1 # Unbuffer Python outputs explicitly ensuring real-time log piping.
+
 if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 3) )); then
     printf 'Error: Bash 5.3+ required (found %s)\n' "$BASH_VERSION" >&2
     exit 1
@@ -371,6 +373,7 @@ declare -gA COLLISION_MOVED_PATHS=()
 declare -ga HARD_FAILED_SCRIPTS=()
 declare -ga SOFT_FAILED_SCRIPTS=()
 declare -ga SKIPPED_SCRIPTS=()
+declare -ga EXECUTED_SCRIPTS=()
 
 declare -ga CHANGE_PATHS=()
 declare -gA CHANGE_STATUS=()
@@ -873,7 +876,10 @@ resolve_and_validate_manifest() {
                 done
                 local choice=""
                 while true; do
-                    read -r -p "Which one should be executed? (1-${#matches[@]}): " choice
+                    if ! read -r -p "Which one should be executed? (1-${#matches[@]}): " choice; then
+                        log ERROR "Input interrupted. Aborting."
+                        exit 1
+                    fi
                     if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#matches[@]})); then
                         script_path="${matches[$((choice-1))]}"
                         log OK "Selected: $script_path"
@@ -926,7 +932,10 @@ resolve_and_validate_manifest() {
             printf '  2) Run with Python\n'
             local int_choice=""
             while true; do
-                read -r -p "Select interpreter (1-2): " int_choice
+                if ! read -r -p "Select interpreter (1-2): " int_choice; then
+                    log ERROR "Input interrupted. Aborting."
+                    exit 1
+                fi
                 case "$int_choice" in
                     1) resolved_interpreter="$BASH_BIN"; break ;;
                     2) resolved_interpreter="python"; needs_python=true; break ;;
@@ -1229,7 +1238,33 @@ acquire_lock() {
         if [[ -n "$summary" ]]; then
             log WARN "Processes currently holding the lock:"
             log RAW "${summary%$'\n'}"
+        else
+            log WARN "No live lock holder could be identified."
         fi
+
+        if [[ -t 0 && "$OPT_FORCE" != true && "$OPT_DRY_RUN" != true ]]; then
+            local choice=""
+            log INFO "The lock itself can only be safely cleared by acquiring it, not by deleting the path."
+            if ! read -r -p "If you are sure no other instance is still active, retry acquiring the lock now? [y/N]: " choice; then
+                choice="n"
+            fi
+            
+            case "${choice,,}" in
+                y|yes)
+                    log INFO "Waiting up to 2 seconds for lock..."
+                    if flock -w 2 "$LOCK_FD"; then
+                        log WARN "Lock became available after user-confirmed retry."
+                        return 0
+                    fi
+                    log ERROR "Lock is still held by another process."
+                    return 1
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
+        fi
+        
         return 1
     fi
 
@@ -1489,7 +1524,9 @@ get_repo_state() {
 
         if [[ -t 0 && "$OPT_FORCE" != true ]]; then
             printf '\n%s[GIT LOCK DETECTED]%s A previous Git operation may have crashed and left a stale lock behind.\n' "$CLR_YLW" "$CLR_RST"
-            read -r -t "$PROMPT_TIMEOUT_SHORT" -p "Do you want to clear the lock and continue? [y/N] " prompt_ans || prompt_ans="n"
+            if ! read -r -t "$PROMPT_TIMEOUT_SHORT" -p "Do you want to clear the lock and continue? [y/N] " prompt_ans; then
+                prompt_ans="n"
+            fi
 
             if [[ "$prompt_ans" =~ ^[Yy]$ ]]; then
                 can_auto_delete=true
@@ -1981,7 +2018,9 @@ handle_unrelated_upstream_history() {
             "$CLR_GRN" "$CLR_RST"
         printf '     Current tracked files and Git history will be backed up before reset.\n\n'
 
-        read -r -t "$PROMPT_TIMEOUT_LONG" -p "Choice [1-2] (default: 1): " sync_choice 2>/dev/null || sync_choice="1"
+        if ! read -r -t "$PROMPT_TIMEOUT_LONG" -p "Choice [1-2] (default: 1): " sync_choice; then
+            sync_choice="1"
+        fi
     elif [[ "$OPT_ALLOW_DIVERGED_RESET" == true ]]; then
         sync_choice="2"
     else
@@ -2621,7 +2660,9 @@ initial_clone() {
 
     if [[ -t 0 && "$OPT_FORCE" != true ]]; then
         printf '\n'
-        read -r -t "$PROMPT_TIMEOUT_LONG" -p "Clone from ${REPO_URL}? [y/N] " do_clone || do_clone="n"
+        if ! read -r -t "$PROMPT_TIMEOUT_LONG" -p "Clone from ${REPO_URL}? [y/N] " do_clone; then
+            do_clone="n"
+        fi
         do_clone="${do_clone:-n}"
     fi
 
@@ -2830,7 +2871,9 @@ pull_updates() {
             printf '  %s2) Reset to upstream [RECOMMENDED]%s\n' "$CLR_GRN" "$CLR_RST"
             printf '     Your uncommitted tweaks will be backed up and auto-restored where safe.\n'
             printf '  3) Attempt rebase (may fail)\n\n'
-            read -r -t "$PROMPT_TIMEOUT_LONG" -p "Choice [1-3] (default: 1): " sync_choice 2>/dev/null || sync_choice="1"
+            if ! read -r -t "$PROMPT_TIMEOUT_LONG" -p "Choice [1-3] (default: 1): " sync_choice; then
+                sync_choice="1"
+            fi
         elif [[ "$OPT_ALLOW_DIVERGED_RESET" == true ]]; then
             sync_choice="2"
         else
@@ -3008,6 +3051,7 @@ execute_scripts() {
             esac
 
             if ((rc == 0)); then
+                EXECUTED_SCRIPTS+=("$script")
                 break
             fi
 
@@ -3029,7 +3073,10 @@ execute_scripts() {
             if [[ -t 0 && "$OPT_FORCE" != true && "$OPT_DRY_RUN" != true ]]; then
                 local _fail_choice=""
                 printf '\n%s[ACTION REQUIRED]%s Script execution failed: %s\n' "$CLR_YLW" "$CLR_RST" "$script"
-                read -r -p "Do you want to [S]kip, [R]etry, or [Q]uit? (s/r/q): " _fail_choice
+                
+                if ! read -r -p "Do you want to [S]kip, [R]etry, or [Q]uit? (s/r/q): " _fail_choice; then
+                    _fail_choice="q"
+                fi
 
                 case "${_fail_choice,,}" in
                     s|skip)
@@ -3071,6 +3118,10 @@ print_summary() {
     fi
     SUMMARY_PRINTED=true
 
+    local duration=$SECONDS
+    local minutes=$((duration / 60))
+    local seconds=$((duration % 60))
+
     printf '\n'
     log SECTION "Summary"
 
@@ -3083,30 +3134,46 @@ print_summary() {
     fi
 
     if ((${#HARD_FAILED_SCRIPTS[@]} > 0)); then
-            log ERROR "${#HARD_FAILED_SCRIPTS[@]} required script(s) failed:"
-            local fs=""
-            for fs in "${HARD_FAILED_SCRIPTS[@]}"; do
-                log RAW "    • $fs"
-            done
-        elif [[ "$SYNC_FAILED" != true && ( "$CURRENT_PHASE" == "script execution" || "$CURRENT_PHASE" == "summary" || "$CURRENT_PHASE" == "cleanup" ) ]]; then
-            log OK "All required operations completed successfully."
-        fi
+        log ERROR "${#HARD_FAILED_SCRIPTS[@]} required script(s) failed:"
+        local fs=""
+        for fs in "${HARD_FAILED_SCRIPTS[@]}"; do
+            log RAW "    • $fs"
+        done
+    elif [[ "$SYNC_FAILED" != true && ( "$CURRENT_PHASE" == "script execution" || "$CURRENT_PHASE" == "summary" || "$CURRENT_PHASE" == "cleanup" ) ]]; then
+        log OK "All required operations completed successfully."
+    fi
 
-        if ((${#SOFT_FAILED_SCRIPTS[@]} > 0)); then
-            log WARN "${#SOFT_FAILED_SCRIPTS[@]} script(s) soft failed (ignored):"
-            local fs=""
-            for fs in "${SOFT_FAILED_SCRIPTS[@]}"; do
-                log RAW "    • $fs"
-            done
-        fi
+    if ((${#SOFT_FAILED_SCRIPTS[@]} > 0)); then
+        log WARN "${#SOFT_FAILED_SCRIPTS[@]} script(s) soft failed (ignored):"
+        local fs=""
+        for fs in "${SOFT_FAILED_SCRIPTS[@]}"; do
+            log RAW "    • $fs"
+        done
+    fi
 
-        if ((${#SKIPPED_SCRIPTS[@]} > 0)); then
-            log INFO "${#SKIPPED_SCRIPTS[@]} script(s) skipped:"
-            local fs=""
-            for fs in "${SKIPPED_SCRIPTS[@]}"; do
-                log RAW "    • $fs"
-            done
-        fi
+    if ((${#SKIPPED_SCRIPTS[@]} > 0)); then
+        log INFO "${#SKIPPED_SCRIPTS[@]} script(s) skipped:"
+        local fs=""
+        for fs in "${SKIPPED_SCRIPTS[@]}"; do
+            log RAW "    • $fs"
+        done
+    fi
+
+    if ((${#EXECUTED_SCRIPTS[@]} > 0)); then
+        log OK "${#EXECUTED_SCRIPTS[@]} script(s) executed successfully."
+    fi
+
+    log INFO "Execution Time: ${minutes}m ${seconds}s"
+
+    if ((${#HARD_FAILED_SCRIPTS[@]} > 0 || ${#SOFT_FAILED_SCRIPTS[@]} > 0 || ${#SKIPPED_SCRIPTS[@]} > 0)); then
+        log INFO "You can run the missing scripts individually from their respective directories:"
+        local sdir=""
+        for sdir in "${SCRIPT_SEARCH_DIRS[@]}"; do
+            if [[ -d "$sdir" ]]; then
+                log RAW "    • ${sdir}/"
+            fi
+        done
+    fi
 
     if [[ -n "$LOG_FILE" ]]; then
         log INFO "Log saved to: $LOG_FILE"
@@ -3182,7 +3249,9 @@ main() {
         printf '\n%sNote:%s Avoid interrupting the update while it'\''s running.\n' "${CLR_YLW}" "${CLR_RST}"
         printf 'Interruptions during git operations can leave the repository in a broken state.\n\n'
         local start_confirm=""
-        read -r -p "Start the update? [y/N] " start_confirm
+        if ! read -r -p "Start the update? [y/N] " start_confirm; then
+            start_confirm="n"
+        fi
         if [[ ! "$start_confirm" =~ ^[Yy]$ ]]; then
             printf 'Update cancelled.\n'
             exit 0
@@ -3248,7 +3317,9 @@ main() {
             fi
 
             if ((sync_rc == SYNC_RC_RECOVERABLE)) && [[ -t 0 ]]; then
-                read -r -t "$PROMPT_TIMEOUT_SHORT" -p "Continue with local scripts? [y/N] " cont || cont="n"
+                if ! read -r -t "$PROMPT_TIMEOUT_SHORT" -p "Continue with local scripts? [y/N] " cont; then
+                    cont="n"
+                fi
             else
                 cont="n"
             fi
