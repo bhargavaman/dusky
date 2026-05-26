@@ -361,7 +361,12 @@ rebuild_initramfs() {
 
 configure_sync_daemon() {
     local conf_file="/etc/limine-snapper-sync.conf" root_subvol root_subvol_path tmp
-    [[ -f "$conf_file" ]] || fatal "$conf_file not found."
+    
+    # Gracefully recreate the file if it was wiped by a previous --auto run
+    if [[ ! -f "$conf_file" ]]; then
+        sudo touch "$conf_file"
+        info "Regenerated missing $conf_file."
+    fi
 
     root_subvol="$(get_root_subvolume_path || true)"
     root_subvol_path="${root_subvol:+/$root_subvol}"
