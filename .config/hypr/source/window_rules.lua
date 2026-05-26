@@ -1179,14 +1179,15 @@ hl.window_rule({
     center = true
 })
 
---- Thunar rename ---
+--- Thunar rename dialog ---
 hl.window_rule({
-    name = "float_thunar_rename",
+    name = "thunar_rename_dialog",
     match = {
-        class = "Thunar",
+        class = "^(thunar|Thunar)$",
         title = "^Rename.*$"
     },
-    float = true
+    float = true,
+    center = true,
 })
 
 --- System benchmarking script ---
