@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# offline_pacman_packages.sh  —  v6.1 (Dynamic Pathing & Smart Permissions)
+# 010_download_pacman_packages.sh  —  v6.2 (Forensic Pacman 7.1.0 Polish + POSIX Strict)
 #
 # Factory script: resolves the FULL transitive dependency closure of all
 # defined package groups, downloads them into a local directory, then builds
@@ -107,11 +107,16 @@ declare -g INTERACTIVE_MODE=1
 declare -g IS_ELEVATED=0
 
 # ==============================================================================
-# SECTION 3 — STRICT MODE
+# SECTION 3 — STRICT MODE & LOCALE ENFORCEMENT
 # ==============================================================================
 
 set -Eeuo pipefail
 shopt -s inherit_errexit
+
+# Enforce strict POSIX locale to guarantee predictable pacman string parsing.
+# Prevents catastrophic whitelist bloat if host system language is non-English.
+export LC_ALL=C
+export LANG=C
 
 # ==============================================================================
 # SECTION 4 — COLORS & LOGGING
@@ -321,11 +326,14 @@ _build_master_list() {
 # ==============================================================================
 
 _pacman_isolated() {
+  # --disable-sandbox resolves filesystem/syscall blocks under Pacman 7.1.0
+  # --disable-download-timeout prevents mirror trickles from aborting massive syncs
   pacman \
     --dbpath    "${ISOLATED_DB_DIR}"   \
     --gpgdir    '/etc/pacman.d/gnupg' \
     --config    "${ISOLATED_DB_DIR}/pacman.conf" \
     --disable-sandbox                 \
+    --disable-download-timeout        \
     --noconfirm                       \
     --color     auto                  \
     "$@"
@@ -453,7 +461,7 @@ _prune_orphans() {
   done < <(find "${OFFLINE_REPO_DIR}" -maxdepth 1 -name '*.sig' -type f)
 
   if (( del_count > 0 )); then
-    log_ok "Pruned ${del_count} orphaned file(s). Freed ~${del_bytes} bytes."
+    log_ok "Pruned ${del_count} orphaned file(s). Freed ~$( _human_bytes "$del_bytes" )."
   else
     log_ok "No orphans found."
   fi
