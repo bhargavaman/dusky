@@ -3,6 +3,10 @@
 # Enforce strict error handling, uninitialized variable detection, and pipeline safety
 set -euo pipefail
 
+# Enforce strict POSIX locale for predictable parsing
+export LC_ALL=C
+export LANG=C
+
 # --- Constants & Configuration ---
 readonly WORKSPACE="/mnt/zram1/dusky_iso"
 readonly OFFLINE_REPO="/srv/offline-repo"
@@ -36,14 +40,17 @@ echo "      AUR directory object count:      $(ls -lah "${OFFLINE_REPO}/aur/" | 
 
 # --- Phase 1: Dependency Resolution ---
 echo -e "\n[*] Enforcing archiso dependency..."
-sudo pacman -Sy --needed --noconfirm archiso
+# Use -S instead of -Sy to prevent host system partial upgrades.
+sudo pacman -S --needed --noconfirm archiso
 
 # --- Phase 2: ZRAM Clean Room Setup ---
 echo "[*] Constructing ZRAM workspace architecture..."
 mkdir -p "${WORKSPACE}"
 
 echo "[*] Cloning 'releng' blueprint..."
-cp -r /usr/share/archiso/configs/releng "${WORKSPACE}/profile"
+# CRITICAL: -a (archive) is strictly required here to preserve permissions/symlinks. 
+# cp -r will corrupt the releng baseline and cause mkarchiso to fail.
+cp -a /usr/share/archiso/configs/releng "${WORKSPACE}/profile"
 
 echo "[*] Injecting airootfs staging directory..."
 mkdir -p "${WORKSPACE}/profile/airootfs/root/arch_install"
