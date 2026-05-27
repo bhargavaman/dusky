@@ -127,18 +127,6 @@ if [[ -n "$ROOT_SUBVOL" ]]; then
     CMDLINE_BASE="${CMDLINE_BASE} rootflags=subvol=${ROOT_SUBVOL}"
 fi
 
-# 2f. ASPM (Power Saving) Prompt
-ASPM_STR=""
-if [[ -t 0 ]]; then
-    printf "\n${C_BOLD}--- Kernel Power Optimization ---${C_RESET}\n"
-    read -r -p "Enable PCIe ASPM Force? (Recommended for Laptop Battery Life) [y/N]: " response
-    if [[ "$response" =~ ^[yY] ]]; then
-        ASPM_STR="pcie_aspm=force"
-        log_info "PCIe ASPM enabled."
-    fi
-fi
-[[ -n "$ASPM_STR" ]] && CMDLINE_BASE="${CMDLINE_BASE} ${ASPM_STR}"
-
 log_success "Topology mapped securely. Base kernel command line established."
 
 # ==============================================================================
