@@ -1,0 +1,145 @@
+# =============================================================================
+# Pacman/Expac Utility: Unified Package Querying (Platinum Edition)
+# Usage: pkg <command> [count]
+# =============================================================================
+
+# DRY Header Helper — defined once at source time.
+# Args: $1 = title string, $2 = count integer
+_pkg_header() {
+    print -P "\n%F{blue}::%f %B${1}%b (Top ${2})"
+    print -P "%F{238}------------------------------------------------------------%f"
+    # Precisely aligned header: 19 chars (Date) + 2 spaces + 8 chars (Size) + 2 spaces + Package
+    print -P "%F{242}INSTALL DATE             SIZE  PACKAGE%f"
+    print -P "%F{238}------------------------------------------------------------%f"
+}
+
+pkg() {
+    # 1. Dependency Validation
+    if (( ! $+commands[expac] )); then
+        print -u2 -P "\n%F{red}✖ Error:%f 'expac' is not installed."
+        print -u2 -P "  Please install it first: %F{cyan}sudo pacman -S expac%f\n"
+        return 1
+    fi
+
+    # 2. State Initialization
+    local target="all"
+    local metric=""
+    local -i count=20
+    local -i show_help=0
+
+    if (( $# == 0 )); then
+        show_help=1
+    fi
+
+    # 3. Argument Tokenizer: Case-insensitive, order-agnostic
+    for arg in "$@"; do
+        case "${arg:l}" in
+            help|-h|--help)
+                show_help=1
+                ;;
+            explicit|user)
+                target="explicit"
+                ;;
+            all)
+                target="all"
+                ;;
+            hogs|size)
+                metric="size"
+                ;;
+            new|recent|latest)
+                metric="new"
+                ;;
+            old|ancient)
+                metric="old"
+                ;;
+            *)
+                if [[ "$arg" =~ ^[1-9][0-9]*$ ]]; then
+                    count="$arg"
+                else
+                    print -u2 -P "\n%F{red}✖ Error:%f Unknown argument or invalid count: '%F{yellow}$arg%f'"
+                    print -u2 -P "  Run %F{green}pkg help%f for usage details.\n"
+                    return 1
+                fi
+                ;;
+        esac
+    done
+
+    # 4. Help Menu Overlay
+    if (( show_help )); then
+        print -P "\n%F{blue}::%f %Bpkg%b — Advanced Package Query Tool"
+        print -P "%F{238}------------------------------------------------------------%f"
+        print -P "%F{green}Usage:%f pkg [target] [metric] [count]"
+        print -P "       %F{242}(Arguments can be provided in ANY order)%f\n"
+        
+        print -P "%BTargets:%b (Default: all)"
+        print -P "  %F{cyan}all%f                  - System-wide packages (includes dependencies)"
+        print -P "  %F{cyan}explicit%f, %F{cyan}user%f       - Only packages you explicitly installed\n"
+        
+        print -P "%BMetrics:%b (Default: size)"
+        print -P "  %F{cyan}size%f, %F{cyan}hogs%f           - Sort by installed size (largest first)"
+        print -P "  %F{cyan}new%f, %F{cyan}recent%f, %F{cyan}latest%f - Sort by installation date (newest first)"
+        print -P "  %F{cyan}old%f, %F{cyan}ancient%f        - Sort by installation date (oldest first)\n"
+        
+        print -P "%BExamples:%b"
+        print -P "  %F{yellow}pkg explicit new 20%f  # Top 20 most recently explicitly installed"
+        print -P "  %F{yellow}pkg 50 size%f          # Top 50 largest packages overall"
+        print -P "  %F{yellow}pkg old%f              # Top 20 oldest packages overall\n"
+        return 0
+    fi
+
+    # Set default metric
+    [[ -z "$metric" ]] && metric="size"
+
+    # 5. Dynamic Pipeline Construction
+    # We lock expac to ALWAYS output: Date | Size(bytes) | Name
+    local -a expac_args=(--timefmt='%Y-%m-%d %H:%M:%S' '%l|%m|%n')
+    local -a sort_cmd
+    local title_metric=""
+
+    # We sort against specific pipe-delimited columns (-t '|')
+    case "$metric" in
+        size)
+            title_metric="Largest"
+            sort_cmd=(sort -t '|' -k2 -rn) # Sort numerically by column 2 (Size)
+            ;;
+        new)
+            title_metric="Newest"
+            sort_cmd=(sort -t '|' -k1 -r)  # Sort reverse-chronologically by column 1 (Date)
+            ;;
+        old)
+            title_metric="Oldest"
+            sort_cmd=(sort -t '|' -k1)     # Sort chronologically by column 1 (Date)
+            ;;
+    esac
+
+    local title_full=""
+    if [[ "$target" == "explicit" ]]; then
+        title_full="${title_metric} Explicitly Installed Packages"
+    else
+        title_full="${title_metric} Installed Packages (Overall)"
+    fi
+
+    # 6. Core Execution Pipeline
+    _pkg_header "$title_full" "$count"
+
+    # Raw ANSI color injection via Awk stream processing
+    # $1 = Date(Grey), $2 = Size(Yellow), $3 = Name(Bold Arch Blue)
+    local awk_color='{ printf "\033[38;5;246m%s\033[0m  \033[38;5;220m%s\033[0m  \033[1;38;5;39m%s\033[0m\n", $1, $2, $3 }'
+
+    # Notice the `numfmt --padding=8`. This guarantees right-alignment of sizes (e.g. '  4.8GiB') without needing `column`
+    if [[ "$target" == "explicit" ]]; then
+        pacman -Qeq | expac "${expac_args[@]}" - 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
+    else
+        expac "${expac_args[@]}" 2>/dev/null | "${sort_cmd[@]}" | head -n "$count" | numfmt --to=iec-i --suffix=B --field=2 --delimiter='|' --padding=8 | awk -F '|' "$awk_color"
+    fi
+
+    print ""
+}
+
+# Native Zsh tab-completion — proper named function, unambiguously correct.
+_pkg() {
+    _arguments \
+        "1:command:(hogs size all explicit user new recent latest old ancient help)" \
+        "2:count: "
+}
+compdef _pkg pkg
