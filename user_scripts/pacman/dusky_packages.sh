@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Dusky Package Atlas (Platinum Edition - Revision 18 - Bash Apex)
+# Dusky Package Atlas (Platinum Edition - Revision 19 - Centered Apex)
 # Architecture: Translated 1:1 from ZSH to universally compliant Bash.
 #               Fully supports CLI fallback pipeline, Wayland wl-copy integration,
 #               and a dedicated --desktop flag for GUI application launchers.
@@ -166,7 +166,8 @@ bash -c "$DUSKY_PKG_PREVIEW" _ "$pkg" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})
         date_desc) prompt_str="   Newest (Date) ❯ " ;;
     esac
 
-    local visual_header=$(printf "\033[1;37m%-27s\033[0m \033[38;5;238m│\033[0m \033[38;5;242m%-11s\033[0m \033[38;5;238m│\033[0m \033[38;5;242m%-5s\033[0m \033[38;5;238m│\033[0m \033[38;5;242m%10s\033[0m" "PACKAGE" "VERSION" "DATE" "SIZE")
+    # Perfectly Centered Header Strings (Math verified against layout boundaries: 27 | 11 | 5 | 10)
+    local visual_header=$(printf "\033[1;37m          PACKAGE          \033[0m \033[38;5;238m│\033[0m \033[38;5;242m  VERSION  \033[0m \033[38;5;238m│\033[0m \033[38;5;242m DATE\033[0m \033[38;5;238m│\033[0m \033[38;5;242m   SIZE   \033[0m")
 
     local fzf_choice
     fzf_choice=$(bash -c "$DUSKY_PKG_LIST" _ "$init_mode" "$init_target" | fzf --ansi \
