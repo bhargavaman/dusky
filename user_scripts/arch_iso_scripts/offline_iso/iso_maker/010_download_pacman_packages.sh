@@ -59,7 +59,6 @@ declare -ar pkgs_audio=(
 declare -ar pkgs_filesystem=(
   "btrfs-progs" "compsize" "zram-generator" "udisks2" "udiskie" "dosfstools" "ntfs-3g" "xdg-user-dirs" "usbutils" "gnome-disk-utility" "unzip" "zip" "unrar" "7zip" "cpio" "file-roller" "rsync" "nfs-utils" "nilfs-utils" "smartmontools" "dmraid" "hdparm" "hwdetect" "lsscsi" "sg3_utils" "cpupower" "dust" "dkms"
   "thunar" "thunar-archive-plugin" "file-roller" "thunar-volman" "thunar-media-tags-plugin" "thunar-shares-plugin" "thunar-vcs-plugin" "tumbler" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib" "libgsf" "libgepub" "libopenraw" "resvg" "gvfs" "gvfs-mtp" "gvfs-nfs" "gvfs-smb" "gvfs-gphoto2" "gvfs-afc" "gvfs-dnssd" "catfish" "gnome-keyring" "meld" "xreader" "imagemagick"
-#  "nemo" "nemo-fileroller" "file-roller" "gvfs" "gvfs-smb" "gvfs-mtp" "gvfs-gphoto2" "gvfs-nfs" "gvfs-afc" "gvfs-dnssd" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib" "libgsf" "gnome-epub-thumbnailer" "resvg" "nemo-terminal" "nemo-python" "nemo-compare" "meld" "nemo-media-columns" "nemo-audio-tab" "nemo-image-converter" "nemo-emblems" "nemo-repairer" "nemo-share" "python-gobject" "dconf-editor" "xreader" "nemo-pastebin"
 )
 
 declare -ar pkgs_network=(
@@ -83,7 +82,6 @@ declare -ar pkgs_sysadmin=(
 )
 
 declare -ar pkgs_gnome=(
-  #"gnome-text-editor"
   "snapshot" "cameractrls" "loupe" "mousepad" "gnome-calculator" "gnome-clocks"
 )
 
@@ -391,17 +389,15 @@ _init_isolated_db() {
   mkdir -p -- "${ISOLATED_DB_DIR}/local" "${ISOLATED_DB_DIR}/sync" "${ISOLATED_DB_DIR}/pacman.d"
 
   if (( REPO_MODE == 2 )); then
-    log_step "Generating pacman.conf with CachyOS v3 prioritization & Architecture override..."
+    log_step "Generating pacman.conf with CachyOS v3 prioritization & UI enhancements..."
     
-    # CRITICAL FIX: To prevent standard pacman from substituting '$arch' with 'x86_64_v3' 
-    # and causing 404s on standard Arch Linux mirrors, we must duplicate the host's mirrorlists
-    # into the sandbox and surgically hardcode '$arch' -> 'x86_64'.
     find /etc/pacman.d -maxdepth 1 -type f -exec cp {} "${ISOLATED_DB_DIR}/pacman.d/" \;
     find "${ISOLATED_DB_DIR}/pacman.d" -type f -exec sed -i 's/\$arch/x86_64/g' {} +
 
-    # We must ensure there are no single quotes used in the comments inside this awk block.
-    # Single quotes in comments will terminate the awk script string for Bash and cause unbound variable crashes.
     awk -v sandbox="${ISOLATED_DB_DIR}" '
+    /^#?VerbosePkgLists/ { print "VerbosePkgLists"; next }
+    /^#?Color/ { print "Color\nILoveCandy"; next }
+    /^#?ParallelDownloads/ { print "ParallelDownloads = 10"; next }
     /^\[options\]/ {
         print
         print "Architecture = x86_64_v3 x86_64"
@@ -422,12 +418,12 @@ _init_isolated_db() {
         print "Server = https://mirror.cachyos.org/repo/x86_64_v3/$repo"
         print ""
         print "[cachyos]"
-        print "SigLevel = Optional TrustAll"
         print "Server = https://mirror.cachyos.org/repo/x86_64/$repo"
         print "# ----------------------------------------"
         print ""
+        print "[core]"
+        next
     }
-    # Safely ignore any existing cachyos repos if the script is run natively on a CachyOS host
     /^\[cachyos/ {
         skip_cachy = 1
         next
@@ -439,10 +435,7 @@ _init_isolated_db() {
         next
     }
     {
-        # Force all Include statements to read our isolated hardcoded files
         gsub("/etc/pacman.d/", sandbox "/pacman.d/")
-        
-        # Hardcode any inline Server definitions to x86_64
         if ($0 ~ /^\s*Server\s*=/) {
             gsub("\\$arch", "x86_64")
         }
@@ -450,16 +443,17 @@ _init_isolated_db() {
     }
     ' /etc/pacman.conf | grep -vE '^\s*(IgnorePkg|IgnoreGroup)\s*=' > "${ISOLATED_DB_DIR}/pacman.conf"
   else
-    log_step "Generating standard pacman.conf..."
-    grep -vE '^\s*(IgnorePkg|IgnoreGroup)\s*=' /etc/pacman.conf > "${ISOLATED_DB_DIR}/pacman.conf"
+    log_step "Generating standard pacman.conf with UI enhancements..."
+    awk -v sandbox="${ISOLATED_DB_DIR}" '
+    /^#?VerbosePkgLists/ { print "VerbosePkgLists"; next }
+    /^#?Color/ { print "Color\nILoveCandy"; next }
+    /^#?ParallelDownloads/ { print "ParallelDownloads = 10"; next }
+    { print }
+    ' /etc/pacman.conf | grep -vE '^\s*(IgnorePkg|IgnoreGroup)\s*=' > "${ISOLATED_DB_DIR}/pacman.conf"
   fi
   
   log_step "Downloading sync databases into sandbox..."
-  if (( REPO_MODE == 2 )); then
-    _pacman_isolated -Sy || die "Sync failed. (Double check internet connection and host keyring)."
-  else
-    _pacman_isolated -Sy || die "Sync failed. Check internet connection."
-  fi
+  _pacman_isolated -Sy || die "Sync failed. (Check internet connection or host keyring)."
   
   log_ok "Sandbox ready."
 }
