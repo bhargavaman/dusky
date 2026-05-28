@@ -166,6 +166,7 @@ hl.on("hyprland.start", function()
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --uptime")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --workspace")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --clock")
+    hl.exec_cmd('foot --hold --title "Dusky Orchestra" bash -c "~/user_scripts/arch_setup_scripts/ORCHESTRA.sh"')
 
 end)
 
@@ -315,6 +316,3 @@ require("source.window_rules")
 -- and rules are already available. Uses globals from default_apps.lua.
 require("source.keybinds")
 
-hl.on("hyprland.start", function()
-    hl.exec_cmd('foot --hold --title "Dusky Orchestra" bash -c "~/user_scripts/arch_setup_scripts/ORCHESTRA.sh"')
-end)
