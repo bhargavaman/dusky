@@ -284,15 +284,14 @@ run_pacman() {
     tee -- "$stderr_file" <"$stderr_pipe" >&2 &
     tee_pid=$!
 
-    # FIXED: Removed the buggy extra_args expansion that passed empty strings to pacman
     if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1; then
-      if script -q -c "env LC_ALL=C pacman $*" /dev/null 2>"$stderr_pipe"; then
+      if script -q -c "env LC_ALL=C pacman ${extra_args[*]:-} $*" /dev/null 2>"$stderr_pipe"; then
         rc=0
       else
         rc=$?
       fi
     else
-      if command env LC_ALL=C pacman "$@" 2>"$stderr_pipe"; then
+      if command env LC_ALL=C pacman "${extra_args[@]:-}" "$@" 2>"$stderr_pipe"; then
         rc=0
       else
         rc=$?
