@@ -234,19 +234,28 @@ backup_file() {
 # ==============================================================================
 
 check_network() {
+    # We must explicitly check a domain name to ensure DNS resolution works.
+    # If DNS is broken, pacman will hang trying to resolve mirror addresses.
+    # 
+    # We wrap commands in the GNU 'timeout' utility to forcefully kill them
+    # at the OS level if the system's DNS resolver (getaddrinfo) blocks indefinitely, 
+    # which is a common cause of script hangs.
+    
+    local test_domain="archlinux.org"
+
     if command -v curl &>/dev/null; then
-        if curl --silent --max-time 5 --head "https://archlinux.org" &>/dev/null; then
+        if timeout -k 2 5 curl --silent --max-time 5 --head "https://${test_domain}" &>/dev/null; then
             return 0
         fi
     fi
 
     if command -v wget &>/dev/null; then
-        if wget --quiet --spider --timeout=5 "https://archlinux.org" &>/dev/null; then
+        if timeout -k 2 5 wget --quiet --spider --timeout=5 "https://${test_domain}" &>/dev/null; then
             return 0
         fi
     fi
 
-    if ping -c 1 -W 3 8.8.8.8 &>/dev/null; then
+    if timeout -k 2 5 ping -c 1 -W 3 "${test_domain}" &>/dev/null; then
         return 0
     fi
 
@@ -333,6 +342,8 @@ ONLINE_MIRRORLIST_EOF
     log_info "Online mirrorlist written successfully."
     log_step "Syncing Package Databases"
 
+    log_info "Verifying network connectivity and DNS resolution..."
+
     if check_network; then
         log_info "Network reachable. Running 'pacman -Syy'..."
         local pacman_exit=0
@@ -345,7 +356,7 @@ ONLINE_MIRRORLIST_EOF
             log_warn "Your configuration files are correctly written."
         fi
     else
-        log_warn "Network not reachable — skipping 'pacman -Syy'."
+        log_warn "Network or DNS not reachable — skipping 'pacman -Syy'."
         log_warn "Once connected, run: sudo pacman -Syy"
     fi
 
