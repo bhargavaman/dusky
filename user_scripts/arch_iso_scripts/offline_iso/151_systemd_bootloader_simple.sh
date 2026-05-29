@@ -1,182 +1,205 @@
 #!/usr/bin/env bash
-# -----------------------------------------------------------------------------
-# Script: 006_systemd_bootloader.sh
-# Description: Automates systemd-boot configuration for Arch/Hyprland.
-#              FIXED: Now includes Btrfs subvolume handling (rootflags=subvol=@).
-# -----------------------------------------------------------------------------
+# ==============================================================================
+# Script: 151_systemd_bootloader_simple.sh
+# Description: Automated, dynamically-mapped systemd-boot configuration.
+# Architecture: UEFI -> systemd-boot -> Plain BTRFS
+# Standard: systemd v260.1+ (UAPI.1 Boot Loader Specification)
+# ==============================================================================
 
 set -euo pipefail
-
-# --- Configuration ---
-# [FIX APPLIED]: Added 'rootflags=subvol=@' so the kernel finds /sbin/init inside the subvolume
-readonly BASE_PARAMS="rw loglevel=3 zswap.enabled=0 rootfstype=btrfs rootflags=subvol=@ fsck.mode=skip"
-readonly LOADER_CONF="/boot/loader/loader.conf"
-readonly ENTRY_CONF="/boot/loader/entries/arch.conf"
+export LC_ALL=C
 
 # --- Visuals ---
-if [[ -t 1 ]]; then
-    readonly C_RESET=$'\033[0m'
-    readonly C_BLUE=$'\033[1;34m'
-    readonly C_GREEN=$'\033[1;32m'
-    readonly C_YELLOW=$'\033[1;33m'
-    readonly C_RED=$'\033[1;31m'
-else
-    readonly C_RESET='' C_BLUE='' C_GREEN='' C_YELLOW='' C_RED=''
-fi
+readonly C_BOLD=$'\033[1m'
+readonly C_RESET=$'\033[0m'
+readonly C_BLUE=$'\033[1;34m'
+readonly C_GREEN=$'\033[1;32m'
+readonly C_YELLOW=$'\033[1;33m'
+readonly C_RED=$'\033[1;31m'
 
 log_info()    { printf "${C_BLUE}[INFO]${C_RESET} %s\n" "$*"; }
 log_success() { printf "${C_GREEN}[OK]${C_RESET} %s\n" "$*"; }
 log_warn()    { printf "${C_YELLOW}[WARN]${C_RESET} %s\n" "$*" >&2; }
 log_error()   { printf "${C_RED}[ERROR]${C_RESET} %s\n" "$*" >&2; }
 
-# --- Cleanup Trap ---
 cleanup() {
     local exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
-        log_error "Script failed (Exit Code: $exit_code)."
+        log_error "Script failed at line ${BASH_LINENO[0]} (Exit Code: $exit_code)."
     fi
 }
 trap cleanup EXIT
 
 # ==============================================================================
-# 1. Environment Checks
+# 1. Environment & Pre-Flight Checks
 # ==============================================================================
 
-# Root Check
 if [[ $EUID -ne 0 ]]; then
-    log_error "Must run as root."
+    log_error "This script must be run as root within the arch-chroot."
     exit 1
 fi
 
-# UEFI Check
 if [[ ! -d /sys/firmware/efi/efivars ]]; then
-    log_warn "No UEFI variables found in /sys/firmware/efi/efivars."
-    log_warn "System appears to be BIOS/Legacy. This script requires UEFI."
-    exit 0
-fi
-
-# /boot Mount Check (ESP)
-if ! mountpoint -q /boot; then
-    log_error "/boot is NOT a mountpoint."
-    log_error "Please mount your EFI partition (ESP) to /boot before running this script."
+    log_error "No UEFI variables found. systemd-boot strictly requires UEFI mode."
     exit 1
 fi
 
-log_success "UEFI detected and /boot is mounted."
-sleep 1
-
-# ==============================================================================
-# 2. Installation
-# ==============================================================================
-
-log_info "Installing efibootmgr..."
-pacman -S --needed --noconfirm efibootmgr >/dev/null
-sleep 1
-
-log_info "Installing systemd-boot to /boot..."
-# Attempt install; check if already installed if fail
-if ! bootctl install --esp-path=/boot >/dev/null 2>&1; then
-    if ! bootctl is-installed --esp-path=/boot >/dev/null 2>&1; then
-         log_error "bootctl install failed. Ensure /boot is a valid FAT32 partition."
-         exit 1
-    fi
-fi
-log_success "systemd-boot binary installed."
-sleep 1
-
-log_info "Writing global $LOADER_CONF..."
-cat > "$LOADER_CONF" <<EOF
-default  arch.conf
-timeout  1
-console-mode max
-editor   no
-EOF
-sleep 1
-
-# ==============================================================================
-# 3. Kernel Configuration
-# ==============================================================================
-
-log_info "Detecting root partition..."
-
-# 1. Find device (raw)
-ROOT_DEV_RAW=$(findmnt -n -o SOURCE /)
-# 2. Sanitize (Strip Btrfs brackets if present)
-ROOT_DEV="${ROOT_DEV_RAW%[*}"
-
-log_info "Found Root Device: $ROOT_DEV"
-
-if [[ ! -b "$ROOT_DEV" ]]; then
-    log_error "Device '$ROOT_DEV' is not a valid block device."
+ESP_MNT="/boot"
+if ! mountpoint -q "$ESP_MNT"; then
+    log_error "$ESP_MNT is NOT a mountpoint. Ensure your FAT32 ESP is mounted."
     exit 1
 fi
 
-# 3. Get PARTUUID (Allow failure check)
-set +e
-ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$ROOT_DEV")
-BLKID_EXIT=$?
-set -e
-
-if [[ $BLKID_EXIT -ne 0 ]] || [[ -z "$ROOT_PARTUUID" ]]; then
-    log_error "Could not get PARTUUID for $ROOT_DEV."
-    log_warn "Ensure disk is GPT formatted."
+ESP_FSTYPE=$(findmnt -n -o FSTYPE "$ESP_MNT" 2>/dev/null || true)
+if [[ ! "$ESP_FSTYPE" =~ ^(vfat|fat32)$ ]]; then
+    log_error "$ESP_MNT is formatted as $ESP_FSTYPE, but systemd-boot requires FAT32."
     exit 1
 fi
 
-log_success "Root PARTUUID: $ROOT_PARTUUID"
-sleep 1
+log_info "Ensuring necessary bootloader packages..."
+pacman -S --needed --noconfirm efibootmgr gawk >/dev/null
 
-# --- Microcode Detection ---
-UCODE_STR=""
-if [[ -f "/boot/intel-ucode.img" ]]; then
-    UCODE_STR="initrd  /intel-ucode.img"
-    log_info "Intel Microcode detected."
-elif [[ -f "/boot/amd-ucode.img" ]]; then
-    UCODE_STR="initrd  /amd-ucode.img"
-    log_info "AMD Microcode detected."
+# ==============================================================================
+# 2. Dynamic Topology Traversal (Plain BTRFS)
+# ==============================================================================
+
+log_info "Analyzing filesystem topology..."
+
+RAW_ROOT_MNT=$(findmnt -n -e -o SOURCE -T /)
+ROOT_BLK_DEV="${RAW_ROOT_MNT%%\[*}"
+ROOT_UUID=$(findmnt -n -e -o UUID -T / || true)
+
+if [[ -z "$ROOT_UUID" || "$ROOT_UUID" == "-" ]]; then
+    ROOT_UUID=$(blkid -s UUID -o value "$ROOT_BLK_DEV")
 fi
-sleep 1
+[[ -z "$ROOT_UUID" ]] && { log_error "Could not resolve root BTRFS UUID."; exit 1; }
 
-# --- ASPM Prompt ---
+ROOT_OPTS=$(findmnt -n -e -o OPTIONS -T /)
+ROOT_SUBVOL=""
+if [[ "$ROOT_OPTS" =~ subvol=([^,]+) ]]; then
+    ROOT_SUBVOL="${BASH_REMATCH[1]}"
+fi
+
+CMDLINE_BASE="rw loglevel=3 zswap.enabled=0 rootfstype=btrfs fsck.mode=skip root=UUID=${ROOT_UUID}"
+
+if [[ -n "$ROOT_SUBVOL" ]]; then
+    CMDLINE_BASE="${CMDLINE_BASE} rootflags=subvol=${ROOT_SUBVOL}"
+fi
+
+log_success "Topology mapped. Base kernel command line established."
+
+# --- ASPM Power Saving Prompt ---
 ASPM_STR=""
 if [[ -t 0 ]]; then
     printf "\n${C_YELLOW}--- Power Saving ---${C_RESET}\n"
     read -r -p "Enable 'pcie_aspm=force'? (Recommended for laptops) [y/N]: " response
     if [[ "$response" =~ ^[yY] ]]; then
         ASPM_STR="pcie_aspm=force"
+        CMDLINE_BASE="${CMDLINE_BASE} ${ASPM_STR}"
         log_info "ASPM enabled."
     else
         log_info "ASPM disabled."
     fi
 else
-    log_warn "Non-interactive: Skipping ASPM."
+    log_warn "Non-interactive mode: Skipping ASPM prompt."
 fi
-sleep 1
-
-# --- Generate Config ---
-log_info "Generating $ENTRY_CONF..."
-
-FINAL_OPTIONS="root=PARTUUID=${ROOT_PARTUUID} ${BASE_PARAMS}"
-[[ -n "$ASPM_STR" ]] && FINAL_OPTIONS+=" ${ASPM_STR}"
-
-{
-    printf "title   Arch Linux\n"
-    printf "linux   /vmlinuz-linux\n"
-    [[ -n "$UCODE_STR" ]] && printf "%s\n" "$UCODE_STR"
-    printf "initrd  /initramfs-linux.img\n"
-    printf "options %s\n" "$FINAL_OPTIONS"
-} > "$ENTRY_CONF"
-
-sleep 1
 
 # ==============================================================================
-# 4. Finalize
+# 3. Systemd-Boot Installation (v260.1 Standard)
 # ==============================================================================
 
-log_info "Enabling systemd-boot-update.service..."
+log_info "Deploying systemd-boot to $ESP_MNT..."
+
+if bootctl is-installed --esp-path="$ESP_MNT" >/dev/null 2>&1; then
+    log_info "Existing systemd-boot detected. Performing update..."
+    bootctl update --esp-path="$ESP_MNT" --variables=yes --efi-boot-option-description-with-device=yes
+else
+    log_info "Performing fresh systemd-boot installation..."
+    if ! bootctl install --esp-path="$ESP_MNT" --variables=yes --efi-boot-option-description-with-device=yes; then
+        log_warn "Installation returned non-zero (common on restricted firmware). Verifying deployment..."
+        if ! bootctl is-installed --esp-path="$ESP_MNT" >/dev/null 2>&1; then
+             log_error "bootctl installation failed completely."
+             exit 1
+        fi
+    fi
+fi
+
+log_success "systemd-boot binaries deployed. Early-boot entropy seeded automatically."
+
+LOADER_CONF="$ESP_MNT/loader/loader.conf"
+cat > "$LOADER_CONF" <<EOF
+default  @saved
+timeout  2
+console-mode max
+editor   no
+EOF
+
+# ==============================================================================
+# 4. Deferred Hook Bridging & BLS Generation
+# ==============================================================================
+
+log_info "Staging kernels for deferred mkinitcpio generation..."
+
+declare -a KERNELS=()
+for kdir in /usr/lib/modules/*; do
+    if [[ -f "$kdir/pkgbase" && -f "$kdir/vmlinuz" ]]; then
+        KNAME="$(<"$kdir/pkgbase")"
+        KERNELS+=("$KNAME")
+        
+        log_info "Copying kernel binary for '$KNAME' to $ESP_MNT/vmlinuz-$KNAME..."
+        cp -p "$kdir/vmlinuz" "$ESP_MNT/vmlinuz-$KNAME"
+    fi
+done
+
+if (( ${#KERNELS[@]} == 0 )); then
+    log_error "No valid kernel payloads found in /usr/lib/modules. pacstrap failure?"
+    exit 1
+fi
+
+shopt -s nullglob
+UCODES=("$ESP_MNT"/*-ucode.img)
+shopt -u nullglob
+
+mkdir -p "$ESP_MNT/loader/entries"
+
+for KNAME in "${KERNELS[@]}"; do
+    ENTRY_FILE="$ESP_MNT/loader/entries/arch-${KNAME}.conf"
+    FALLBACK_FILE="$ESP_MNT/loader/entries/arch-${KNAME}-fallback.conf"
+    
+    log_info "Generating BLS Type #1 entries for: Arch Linux ($KNAME)"
+
+    # --- Primary Entry ---
+    {
+        printf "title   Arch Linux (%s)\n" "$KNAME"
+        printf "linux   /vmlinuz-%s\n" "$KNAME"
+        
+        for ucode in "${UCODES[@]}"; do
+            printf "initrd  /%s\n" "${ucode##*/}"
+        done
+        
+        printf "initrd  /initramfs-%s.img\n" "$KNAME"
+        printf "options %s\n" "$CMDLINE_BASE"
+    } > "$ENTRY_FILE"
+
+    # --- Fallback Entry ---
+    {
+        printf "title   Arch Linux (%s - Fallback Recovery)\n" "$KNAME"
+        printf "linux   /vmlinuz-%s\n" "$KNAME"
+        
+        for ucode in "${UCODES[@]}"; do
+            printf "initrd  /%s\n" "${ucode##*/}"
+        done
+        
+        printf "initrd  /initramfs-%s-fallback.img\n" "$KNAME"
+        printf "options %s\n" "$CMDLINE_BASE"
+    } > "$FALLBACK_FILE"
+done
+
+# ==============================================================================
+# 5. Lifecycle Hooks
+# ==============================================================================
+
+log_info "Enabling systemd-boot-update.service (Auto-updates bootloader)..."
 systemctl enable systemd-boot-update.service >/dev/null 2>&1 || true
 
-log_success "Setup complete. Configuration verified."
-printf "   Loader: %s\n" "$LOADER_CONF"
-printf "   Entry:  %s\n" "$ENTRY_CONF"
-printf "   Params: %s\n" "$FINAL_OPTIONS"
+log_success "Systemd-Boot orchestration complete. Kernels staged for mkinitcpio."
