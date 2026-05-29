@@ -1499,32 +1499,6 @@ hl.config({
         workspace_swipe_forever = false,             -- If enabled, swiping will not clamp at the neighboring workspaces but continue.
         workspace_swipe_use_r = false,               -- If enabled, swiping will use the r prefix instead of the m prefix for finding workspaces.
         close_max_timeout = 1000                     -- The timeout for a window to close when using a 1:1 gesture, in ms.
-    },
-
-    -- ---------------------------------------------------------------------------------------------
-    -- 4. NEW GESTURE BINDINGS (0.55+ Overhaul)
-    -- ---------------------------------------------------------------------------------------------
-    gesture = {
-        -- --- 3-Finger Gestures (Navigation) ---
-        
-        -- Replicates native 1:1 smooth swiping between workspaces (Highly Intuitive)
-        "3, horizontal, workspace",
-        
-        -- Swipe up for Overview / Mission Control (hyprexpo)
-        "3, up, hyprexpo:expo, toggle",
-        
-        -- Swipe down to drop into a Special Workspace (Scratchpad/Terminal)
-        "3, down, togglespecialworkspace",
-
-        -- --- 4-Finger Gestures (Media & Brightness) ---
-        
-        -- Horizontal for Brightness
-        "4, left, exec, brightnessctl -e4 -n2 set 10%-",
-        "4, right, exec, brightnessctl -e4 -n2 set 10%+",
-
-        -- Vertical for Volume
-        "4, up, exec, wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 10%+",
-        "4, down, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 10%-"
     }
 })
 EOF
