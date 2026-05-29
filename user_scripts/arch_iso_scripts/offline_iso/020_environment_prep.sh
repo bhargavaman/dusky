@@ -1,198 +1,196 @@
 #!/usr/bin/env bash
-# ==============================================================================
-#  ARCH ORCHESTRATOR - INLINE CREDENTIAL INGESTION (010)
-#  Context: Collects credentials and stages them for Phase 2 chroot extraction.
-# ==============================================================================
-set -Eeuo pipefail
-IFS=$'\n\t'
+# -----------------------------------------------------------------------------
+# MODULE: LIVE ENVIRONMENT PREP (OFFLINE SAFE)
+# Description: Font, Cowspace, Battery, Time, Keyring
+# -----------------------------------------------------------------------------
+set -euo pipefail
 
-# ── 1. Pre-Flight Checks ──────────────────────────────────────────────────────
-if (( EUID != 0 )); then
-    printf "\e[1;31m[ERROR]\e[0m This script must be run as root.\n" >&2
-    exit 1
-fi
+readonly C_BOLD=$'\033[1m'
+readonly C_GREEN=$'\033[32m'
+readonly C_YELLOW=$'\033[33m'
+readonly C_BLUE=$'\033[34m'
+readonly C_RED=$'\033[31m'
+readonly C_RESET=$'\033[0m'
 
-if [[ ! -t 0 ]]; then
-    printf "\e[1;31m[ERROR]\e[0m Interactive TTY required to securely collect credentials.\n" >&2
-    exit 1
-fi
+msg_info() { printf '%b[INFO]%b %s\n' "$C_BLUE" "$C_RESET" "$1"; }
+msg_ok()   { printf '%b[OK]%b   %s\n' "$C_GREEN" "$C_RESET" "$1"; }
+msg_warn() { printf '%b[WARN]%b %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
+msg_err()  { printf '%b[ERR ]%b %s\n' "$C_RED" "$C_RESET" "$1" >&2; }
+die()      { msg_err "$1"; exit 1; }
 
-# ── 2. Term & Basic ANSI Colors (TTY Safe) ────────────────────────────────────
-readonly RESET='\e[0m'
-readonly C_CYAN='\e[1;36m'
-readonly C_GREEN='\e[1;32m'
-readonly C_RED='\e[1;31m'
-readonly C_YELLOW='\e[1;33m'
-readonly C_WHITE='\e[1;37m'
-readonly C_BOLD='\e[1m'
+usage() {
+    cat <<'EOF'
+Usage: 002_environment_prep.sh [--auto|-a] [--cowspace SIZE]
 
-trap 'printf "${RESET}\n"; exit 130' INT
+Options:
+  -a, --auto          Run autonomously with no interactive prompts.
+  --cowspace SIZE     Resize Arch ISO cowspace to SIZE (example: 500M, 1G).
+  -h, --help          Show this help.
 
-clear_screen() {
-    # Clears the screen and the scrollback buffer for a true "page" refresh
-    printf '\e[H\e[2J\e[3J'
+Environment variables:
+  AUTO_MODE=1         Same as --auto
+  COWSPACE_SIZE=1G    Same as --cowspace 1G
+EOF
 }
 
-print_header() {
-    printf "\n${C_CYAN}================================================================\n"
-    printf "                  DUSKY AUTOMATED INSTALLER\n"
-    printf "================================================================${RESET}\n\n"
+is_yes() {
+    case "${1:-}" in
+        [Yy]|[Yy][Ee][Ss]) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
-# ── 3. Credential Ingestion (Wizard UI) ───────────────────────────────────────
-declare INGESTED_USER=""
-declare INGESTED_PASS=""
-declare INGESTED_PASS_VERIFY=""
+valid_cowspace() {
+    [[ "${1:-}" =~ ^[0-9]+[GgMm]$ ]]
+}
 
-# Master loop to allow restarting the process if the user rejects the final review
-while true; do
+AUTO_MODE="${AUTO_MODE:-0}"
+case "$AUTO_MODE" in
+    1|true|TRUE|yes|YES|y|Y) AUTO_MODE=1 ;;
+    *) AUTO_MODE=0 ;;
+esac
 
-    # ── 3a. Username Page ─────────────────────────────────────────────────────────
-    while true; do
-        clear_screen
-        print_header
-        
-        printf "  ${C_WHITE}Welcome. Please provide your system credentials upfront.${RESET}\n\n"
-        
-        printf "${C_CYAN}"
-        cat << 'EOF'
-          _   _ ___ ___ ___ _  _   _   __  __ ___ 
-         | | | / __| __| _ \ \| | /_\ |  \/  | __|
-         | |_| \__ \ _||   / .` |/ _ \| |\/| | _| 
-          \___/|___/___|_|_\_|\_/_/ \_\_|  |_|___|
-EOF
-        printf "${RESET}\n\n"
-        
-        printf "    ==> Enter desired username: "
-        read -r INGESTED_USER || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
+COWSPACE_SIZE="${COWSPACE_SIZE:-}"
 
-        if [[ -z "$INGESTED_USER" ]]; then
-            printf "\n  ${C_RED}[!] Username cannot be empty.${RESET}\n"
-            sleep 1.5
-        elif [[ "$INGESTED_USER" == "root" ]]; then
-            printf "\n  ${C_RED}[!] Cannot use 'root' as the target user.${RESET}\n"
-            sleep 1.5
-        elif [[ ! "$INGESTED_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-            printf "\n  ${C_RED}[!] Invalid username. Must start with a lowercase letter or underscore,\n"
-            printf "      and contain only lowercase letters, numbers, hyphens, or underscores.${RESET}\n"
-            sleep 3
-        elif (( ${#INGESTED_USER} > 32 )); then
-            printf "\n  ${C_RED}[!] Username is too long (maximum 32 characters).${RESET}\n"
-            sleep 1.5
-        else
-            break
-        fi
-    done
-
-    # ── 3b. Password Page ─────────────────────────────────────────────────────────
-    while true; do
-        clear_screen
-        print_header
-        
-        printf "  ${C_GREEN}[✓] Account targeted for: ${C_BOLD}%s${RESET}\n" "$INGESTED_USER"
-        printf "  ${C_WHITE}The same password is used for LUKS2 encryption, root, and user.${RESET}\n\n"
-        
-        printf "${C_CYAN}"
-        cat << 'EOF'
-          ___  _   ___ _____      _____  ___ ___ 
-         | _ \/_\ / __/ __\ \    / / _ \| _ \   \
-         |  _/ _ \\__ \__ \\ \/\/ / (_) |   / |) |
-         |_|/_/ \_\___/___/ \_/\_/ \___/|_|_\___/
-EOF
-        printf "${RESET}\n\n"
-        
-        printf "    ==> Enter password: "
-        read -rs INGESTED_PASS || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
-        echo
-
-        if [[ -z "$INGESTED_PASS" ]]; then
-            printf "\n  ${C_RED}[!] Password cannot be empty.${RESET}\n"
-            sleep 1.5
-            continue
-        fi
-
-        printf "    ==> Verify password: "
-        read -rs INGESTED_PASS_VERIFY || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
-        echo
-
-        if [[ "$INGESTED_PASS" != "$INGESTED_PASS_VERIFY" ]]; then
-            printf "\n  ${C_RED}[!] Passwords do not match. Please try again.${RESET}\n"
-            unset INGESTED_PASS INGESTED_PASS_VERIFY
-            sleep 1.5
-        else
-            break
-        fi
-    done
-
-    # ── 3c. Review & Confirm Page ─────────────────────────────────────────────────
-    clear_screen
-    print_header
-    
-    printf "${C_CYAN}"
-    cat << 'EOF'
-          ___  _____   _____  ___      __
-         | _ \| __\ \ / /_ _|| __|\/\/ /
-         |   /| _| \ V / | | | _|\    / 
-         |_|_\|___| \_/ |___||___|\/\/  
-EOF
-    printf "${RESET}\n\n"
-
-    printf "  ${C_WHITE}Please review your configuration before staging:${RESET}\n\n"
-    printf "      Username :  ${C_BOLD}${C_GREEN}%s${RESET}\n" "$INGESTED_USER"
-    printf "      Password :  ${C_BOLD}${C_GREEN}********${RESET}\n\n"
-    
-    printf "    ==> Are these details correct? [Y/n]: "
-    read -r CONFIRM_CHOICE || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
-
-    # Default to "Yes" if they just hit Enter, or explicitly type 'y' / 'yes'
-    if [[ -z "$CONFIRM_CHOICE" || "${CONFIRM_CHOICE,,}" == "y" || "${CONFIRM_CHOICE,,}" == "yes" ]]; then
-        break # Everything is correct, exit the master loop and proceed
-    else
-        printf "\n  ${C_YELLOW}[*] No problem. Let's try that again...${RESET}\n"
-        unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY
-        sleep 1.5
-        # Loop continues, taking them back to the Username page
-    fi
-
+while (($#)); do
+    case "$1" in
+        -a|--auto|auto)
+            AUTO_MODE=1
+            ;;
+        --cowspace)
+            (($# >= 2)) || die "--cowspace requires a value"
+            COWSPACE_SIZE="${2// /}"
+            shift
+            ;;
+        --cowspace=*)
+            COWSPACE_SIZE="${1#*=}"
+            COWSPACE_SIZE="${COWSPACE_SIZE// /}"
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "Unknown option: $1"
+            ;;
+    esac
+    shift
 done
 
-# ── 4. Secure State Persistence ───────────────────────────────────────────────
-clear_screen
-print_header
+(( EUID == 0 )) || die "This script must be run as root."
 
-printf "  ${C_GREEN}[✓] Account created for: ${C_BOLD}%s${RESET}\n" "$INGESTED_USER"
-printf "  ${C_GREEN}[✓] Password verified successfully!${RESET}\n\n"
+printf '%b=== PRE-INSTALL ENVIRONMENT SETUP ===%b\n' "$C_BOLD" "$C_RESET"
 
-printf "  ${C_YELLOW}[*] Staging credentials for Phase 2...${RESET}\n"
-sleep 0.8
-
-readonly CREDS_FILE="$(pwd)/.arch_credentials"
-
-# Use 'install -m 600' to atomically create the file with restrictive permissions
-# from birth. This eliminates the TOCTOU race that exists with 'touch + chmod'.
-install -m 600 /dev/null "$CREDS_FILE"
-
-# We use printf %q to ensure passwords with special characters (spaces, quotes,
-# etc.) are safely escaped to prevent bash injection vulnerabilities downstream.
-if ! cat <<EOF > "$CREDS_FILE"
-export TARGET_USER=$(printf '%q' "$INGESTED_USER")
-export USER_PASS=$(printf '%q' "$INGESTED_PASS")
-export ROOT_PASS=$(printf '%q' "$INGESTED_PASS")
-export AUTO_MODE=1
-EOF
-then
-    printf "\n  ${C_RED}[ERROR] Failed to write credentials file. Aborting.${RESET}\n" >&2
-    rm -f "$CREDS_FILE"
-    exit 1
+if (( AUTO_MODE == 0 )) && [[ ! -t 0 ]]; then
+    msg_info "No interactive terminal detected; enabling autonomous mode."
+    AUTO_MODE=1
 fi
 
-# Clear sensitive variables from process memory now that they have been persisted.
-unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY
+if (( AUTO_MODE == 0 )); then
+    AUTO_REPLY=""
+    if ! read -r -p ":: Run in autonomous mode (no further prompts)? [y/N]: " AUTO_REPLY; then
+        AUTO_REPLY=""
+    fi
+    if is_yes "$AUTO_REPLY"; then
+        AUTO_MODE=1
+        msg_info "Autonomous mode enabled."
+    fi
+else
+    msg_info "Autonomous mode enabled."
+fi
 
-printf "\n${C_GREEN}================================================================\n"
-printf " [*] Credentials secured. Yielding back to orchestrator...\n"
-printf "================================================================${RESET}\n\n"
+# 1. Console Font
+msg_info "Setting console font..."
+setfont latarcyrheb-sun32 || msg_warn "Could not set font. Continuing..."
 
-# Pause briefly so the user can read the success prompt before the orchestrator takes over
-sleep 1.5
-exit 0
+# 2. Battery Threshold
+BAT_DIR=""
+if [[ -d /sys/class/power_supply ]]; then
+    BAT_DIR=$(find /sys/class/power_supply -maxdepth 1 -name "BAT*" -print -quit)
+fi
+
+if [[ -n "$BAT_DIR" ]]; then
+    BAT_CTRL="$BAT_DIR/charge_control_end_threshold"
+    if [[ -f "$BAT_CTRL" ]]; then
+        if [[ -w "$BAT_CTRL" ]]; then
+            CURRENT_THRESHOLD=""
+            if [[ -r "$BAT_CTRL" ]]; then
+                CURRENT_THRESHOLD=$(<"$BAT_CTRL")
+            fi
+
+            if [[ "$CURRENT_THRESHOLD" == "60" ]]; then
+                msg_info "Battery limit already set to 60%."
+            else
+                echo "60" > "$BAT_CTRL"
+                msg_ok "Battery limit set to 60%."
+            fi
+        else
+            msg_warn "Battery threshold control exists but is not writable. Skipping."
+        fi
+    else
+        msg_info "Battery detected, but charge threshold control is unsupported. Skipping."
+    fi
+else
+    msg_info "No battery detected. Skipping battery threshold."
+fi
+
+# 3. Cowspace
+COWSPACE_PATH="/run/archiso/cowspace"
+if mountpoint -q "$COWSPACE_PATH" 2>/dev/null; then
+    TOTAL_RAM=$(free -h | awk '/^Mem:/ {print $2}')
+    CURRENT_COW=$(df -h "$COWSPACE_PATH" | awk 'NR==2 {print $2}')
+
+    msg_info "System RAM: $TOTAL_RAM | Current Cowspace: $CURRENT_COW"
+
+    USER_COW="${COWSPACE_SIZE// /}"
+
+    if [[ -n "$USER_COW" ]]; then
+        if ! valid_cowspace "$USER_COW"; then
+            msg_warn "Invalid Cowspace value '$USER_COW'. Skipping resize."
+            USER_COW=""
+        fi
+    elif (( AUTO_MODE )); then
+        msg_info "Autonomous mode: keeping current Cowspace ($CURRENT_COW)."
+    else
+        if ! read -r -p ":: Enter new Cowspace size (e.g. 1G) [Leave empty to keep default]: " USER_COW; then
+            USER_COW=""
+        fi
+        USER_COW="${USER_COW// /}"
+
+        if [[ -z "$USER_COW" ]]; then
+            msg_info "No input detected. Keeping current Cowspace ($CURRENT_COW)."
+        elif ! valid_cowspace "$USER_COW"; then
+            msg_warn "Invalid format '$USER_COW'. Skipping resize."
+            USER_COW=""
+        fi
+    fi
+
+    if [[ -n "$USER_COW" ]]; then
+        msg_info "Resizing Cowspace to $USER_COW..."
+        if mount -o remount,size="$USER_COW" "$COWSPACE_PATH"; then
+            NEW_SIZE=$(df -h "$COWSPACE_PATH" | awk 'NR==2 {print $2}')
+            msg_ok "Cowspace successfully resized: $NEW_SIZE"
+        else
+            msg_warn "Remount failed. Keeping previous size."
+        fi
+    fi
+else
+    msg_info "Cowspace mount not detected. Skipping Cowspace handling."
+fi
+
+# 4. Time
+msg_info "Configuring Time (NTP)..."
+timedatectl set-ntp true
+
+# 5. Pacman Init (Offline Safe)
+msg_info "Initializing Local Pacman Keys..."
+
+msg_info "1/2: pacman-key --init"
+pacman-key --init
+sleep 1
+
+msg_info "2/2: pacman-key --populate archlinux"
+pacman-key --populate archlinux
+sleep 1
+
+msg_ok "Environment Ready."
