@@ -43,6 +43,8 @@ print_header() {
 declare INGESTED_USER=""
 declare INGESTED_PASS=""
 declare INGESTED_PASS_VERIFY=""
+declare INGESTED_ENCRYPT=""
+declare ENCRYPT_TEXT=""
 
 # Master loop to allow restarting the process if the user rejects the final review
 while true; do
@@ -90,7 +92,7 @@ EOF
         print_header
         
         printf "  ${C_GREEN}[✓] Account targeted for: ${C_BOLD}%s${RESET}\n" "$INGESTED_USER"
-        printf "  ${C_WHITE}The same password is used for LUKS2 encryption, root, and user.${RESET}\n\n"
+        printf "  ${C_WHITE}The same password is used for root and user (and encryption, if enabled).${RESET}\n\n"
         
         printf "${C_CYAN}"
         cat << 'EOF'
@@ -123,8 +125,45 @@ EOF
             break
         fi
     done
+    
+    # ── 3c. Encryption Page ───────────────────────────────────────────────────────
+    while true; do
+        clear_screen
+        print_header
 
-    # ── 3c. Review & Confirm Page ─────────────────────────────────────────────────
+        printf "  ${C_GREEN}[✓] Account targeted for: ${C_BOLD}%s${RESET}\n" "$INGESTED_USER"
+        printf "  ${C_GREEN}[✓] Password verified.${RESET}\n\n"
+
+        printf "${C_CYAN}"
+        cat << 'EOF'
+          ___ _  _  ___ _____   _____ _____ 
+         | __| \| |/ __| _ \ \ / / _ \_   _|
+         | _|| .` | (__|   /\ V /|  _/ | |  
+         |___|_|\_|\___|_|_\ |_| |_|   |_|  
+EOF
+        printf "${RESET}\n\n"
+
+        printf "  ${C_WHITE}Would you like to encrypt your root partition (LUKS2)?${RESET}\n"
+        printf "  If yes, the password you just entered will be used to unlock the drive.\n\n"
+
+        printf "    ==> Encrypt system? [Y/n]: "
+        read -r INGESTED_ENCRYPT_INPUT || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
+
+        if [[ -z "$INGESTED_ENCRYPT_INPUT" || "${INGESTED_ENCRYPT_INPUT,,}" == "y" || "${INGESTED_ENCRYPT_INPUT,,}" == "yes" ]]; then
+            INGESTED_ENCRYPT=1
+            ENCRYPT_TEXT="Yes (LUKS2)"
+            break
+        elif [[ "${INGESTED_ENCRYPT_INPUT,,}" == "n" || "${INGESTED_ENCRYPT_INPUT,,}" == "no" ]]; then
+            INGESTED_ENCRYPT=0
+            ENCRYPT_TEXT="No (Plain BTRFS)"
+            break
+        else
+            printf "\n  ${C_RED}[!] Invalid choice. Please enter Y or n.${RESET}\n"
+            sleep 1.5
+        fi
+    done
+
+    # ── 3d. Review & Confirm Page ─────────────────────────────────────────────────
     clear_screen
     print_header
     
@@ -138,8 +177,9 @@ EOF
     printf "${RESET}\n\n"
 
     printf "  ${C_WHITE}Please review your configuration before staging:${RESET}\n\n"
-    printf "      Username :  ${C_BOLD}${C_GREEN}%s${RESET}\n" "$INGESTED_USER"
-    printf "      Password :  ${C_BOLD}${C_GREEN}********${RESET}\n\n"
+    printf "      Username   :  ${C_BOLD}${C_GREEN}%s${RESET}\n" "$INGESTED_USER"
+    printf "      Password   :  ${C_BOLD}${C_GREEN}********${RESET}\n"
+    printf "      Encryption :  ${C_BOLD}${C_GREEN}%s${RESET}\n\n" "$ENCRYPT_TEXT"
     
     printf "    ==> Are these details correct? [Y/n]: "
     read -r CONFIRM_CHOICE || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
@@ -149,7 +189,7 @@ EOF
         break # Everything is correct, exit the master loop and proceed
     else
         printf "\n  ${C_YELLOW}[*] No problem. Let's try that again...${RESET}\n"
-        unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY
+        unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY INGESTED_ENCRYPT ENCRYPT_TEXT INGESTED_ENCRYPT_INPUT
         sleep 1.5
         # Loop continues, taking them back to the Username page
     fi
@@ -178,6 +218,7 @@ if ! cat <<EOF > "$CREDS_FILE"
 export TARGET_USER=$(printf '%q' "$INGESTED_USER")
 export USER_PASS=$(printf '%q' "$INGESTED_PASS")
 export ROOT_PASS=$(printf '%q' "$INGESTED_PASS")
+export ENCRYPT_ROOT=$(printf '%q' "$INGESTED_ENCRYPT")
 export AUTO_MODE=1
 EOF
 then
@@ -187,7 +228,7 @@ then
 fi
 
 # Clear sensitive variables from process memory now that they have been persisted.
-unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY
+unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY INGESTED_ENCRYPT INGESTED_ENCRYPT_INPUT ENCRYPT_TEXT
 
 printf "\n${C_GREEN}================================================================\n"
 printf " [*] Credentials secured. Yielding back to orchestrator...\n"

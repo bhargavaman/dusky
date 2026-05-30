@@ -136,8 +136,25 @@ teardown_state() {
 # --- Root Device Resolution ---
 determine_root_partition() {
     local auto_mode="$1"
+    local use_crypt=0
 
-    if [[ -b "/dev/mapper/cryptroot" ]]; then
+    # Determine encryption intent gracefully if state file isn't present
+    if [[ "${ENCRYPT_ROOT:-}" == "1" ]]; then
+        use_crypt=1
+    elif [[ "${ENCRYPT_ROOT:-}" == "0" ]]; then
+        use_crypt=0
+    elif [[ -b "/dev/mapper/cryptroot" ]]; then
+        use_crypt=1
+    else
+        use_crypt=0
+    fi
+
+    if (( use_crypt == 1 )); then
+        if [[ ! -b "/dev/mapper/cryptroot" ]]; then
+            echo -e "${C_RED}Critical: LUKS encryption expected but /dev/mapper/cryptroot not found. Aborting.${C_RESET}"
+            exit 1
+        fi
+        
         MAPPED_ROOT="/dev/mapper/cryptroot"
         local mapped_name="${MAPPED_ROOT##*/}"
         local backing_part=""
@@ -153,7 +170,7 @@ determine_root_partition() {
 
         ROOT_PART=$(readlink -f "$backing_part")
     else
-        echo -e "${C_YELLOW}>> /dev/mapper/cryptroot not found. Assuming unencrypted root.${C_RESET}"
+        echo -e "${C_YELLOW}>> Encryption disabled state detected. Seeking unencrypted root...${C_RESET}"
         if (( auto_mode == 1 )); then
             if [[ -n "${PROVISIONED_ROOT_PART:-}" && -b "$PROVISIONED_ROOT_PART" ]]; then
                 ROOT_PART=$(readlink -f "$PROVISIONED_ROOT_PART")
