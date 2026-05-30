@@ -8,6 +8,7 @@
 set -euo pipefail
 
 readonly CONFIG_FILE="/etc/sysctl.d/99-vm-zram-parameters.conf"
+readonly MGLRU_CONFIG="/etc/tmpfiles.d/99-mglru-optimize.conf"
 readonly SCRIPT_NAME="${0##*/}"
 
 # --- Strict Path Resolution (Coreutils required) ---
@@ -75,7 +76,6 @@ ZRAM_MAX_PRIO=""
 OTHER_MAX_PRIO=""
 
 if [[ $(< /proc/meminfo) =~ MemTotal:[[:space:]]+([0-9]+) ]]; then
-    # BASH_REMATCH[1] is in KB. Divide by 1024^2 for GB.
     SYSTEM_RAM_GB=$(( BASH_REMATCH[1] / 1048576 ))
 else
     die "FATAL: Could not parse /proc/meminfo natively."
@@ -108,7 +108,7 @@ declare -i EXPECTED_SCALE_FACTOR
 declare -i EXPECTED_DIRTY_BYTES
 declare -i EXPECTED_DIRTY_BG_BYTES
 
-# The 30 GB Demarcation Line (Hardened for MB variance)
+# The 30 GB Demarcation Line
 if [[ "$MODE" == "AGGRESSIVE" ]] || [[ "$MODE" == "AUTO" && SYSTEM_RAM_GB -ge 30 ]]; then
     EXPECTED_MODE="ABSOLUTE_MAX (32GB+)"
     EXPECTED_SWAPPINESS=150
@@ -129,6 +129,7 @@ fi
 readonly EXPECTED_PAGE_CLUSTER=0
 readonly EXPECTED_BOOST_FACTOR=0
 readonly EXPECTED_MAX_MAP_COUNT=16777216
+readonly EXPECTED_MGLRU_TTL=100  # CPU Shield: Prevents ZRAM from thrashing hot memory pages
 
 # --- 5. Generation & Verification ---
 log_info "Initializing Platinum ZRAM & VM Policy Optimizer..."
@@ -156,8 +157,10 @@ fi
 
 # Secure temp file generation
 tmpfile="$(umask 077 && mktemp)"
-trap 'rm -f "$tmpfile"' EXIT
+tmpfile_mglru="$(umask 077 && mktemp)"
+trap 'rm -f "$tmpfile" "$tmpfile_mglru"' EXIT
 
+# --- SYSCTL Payload ---
 cat > "$tmpfile" <<EOF
 # Managed by ${SCRIPT_NAME}
 # Scope: Comprehensive ZRAM & Desktop Performance VM policy
@@ -181,17 +184,26 @@ vm.compaction_proactiveness = 0
 vm.max_map_count = ${EXPECTED_MAX_MAP_COUNT}
 EOF
 
+# --- MGLRU Payload ---
+cat > "$tmpfile_mglru" <<EOF
+# Managed by ${SCRIPT_NAME}
+# Scope: MGLRU ZRAM Thrash Protection (CPU Shield)
+w /sys/kernel/mm/lru_gen/min_ttl_ms - - - - ${EXPECTED_MGLRU_TTL}
+EOF
+
 # Dry Run Check
 if (( DRY_RUN == 1 )); then
-    log_info "DRY RUN EXECUTED. Generated configuration:"
-    echo "------------------------------------------------------"
+    log_info "DRY RUN EXECUTED. Generated configurations:"
+    echo -e "\n${C_BOLD}[ ${CONFIG_FILE} ]${C_RESET}"
     cat "$tmpfile"
-    echo "------------------------------------------------------"
+    echo -e "\n${C_BOLD}[ ${MGLRU_CONFIG} ]${C_RESET}"
+    cat "$tmpfile_mglru"
     exit 0
 fi
 
+# --- Apply Sysctl ---
 if [[ -f "$CONFIG_FILE" ]] && cmp -s "$tmpfile" "$CONFIG_FILE"; then
-    log_info "Configuration file already matches desired state. No disk write needed."
+    log_info "Sysctl configuration already matches desired state."
 else
     install -Dm0644 "$tmpfile" "$CONFIG_FILE"
     log_success "Configuration written to ${CONFIG_FILE}"
@@ -200,7 +212,22 @@ fi
 log_info "Applying sysctl parameters to live kernel..."
 sysctl --load "$CONFIG_FILE" >/dev/null || die "Failed to apply sysctl settings."
 
-# Hardened Live Verification
+# --- Apply MGLRU Tmpfiles ---
+if [[ -d "/sys/kernel/mm/lru_gen" ]]; then
+    if [[ -f "$MGLRU_CONFIG" ]] && cmp -s "$tmpfile_mglru" "$MGLRU_CONFIG"; then
+        log_info "MGLRU configuration already matches desired state."
+    else
+        install -Dm0644 "$tmpfile_mglru" "$MGLRU_CONFIG"
+        log_success "MGLRU Protection written to ${MGLRU_CONFIG}"
+    fi
+    
+    log_info "Applying MGLRU parameters to live kernel..."
+    systemd-tmpfiles --create "$MGLRU_CONFIG" || log_warn "Failed to apply systemd-tmpfiles for MGLRU."
+else
+    log_warn "MGLRU is not enabled in this kernel. Skipping min_ttl_ms protection."
+fi
+
+# --- Hardened Live Verification ---
 actual_swappiness="$(< /proc/sys/vm/swappiness)"
 actual_vfs="$(< /proc/sys/vm/vfs_cache_pressure)"
 
@@ -215,6 +242,16 @@ fi
 log_success "Verified live kernel values:"
 log_success "  vm.swappiness = ${actual_swappiness}"
 log_success "  vm.vfs_cache_pressure = ${actual_vfs}"
+
+if [[ -f "/sys/kernel/mm/lru_gen/min_ttl_ms" ]]; then
+    actual_ttl="$(< /sys/kernel/mm/lru_gen/min_ttl_ms)"
+    if [[ "$actual_ttl" == "$EXPECTED_MGLRU_TTL" ]]; then
+        log_success "  MGLRU min_ttl_ms = ${actual_ttl} (Thrash Protection Active)"
+    else
+        log_warn "  MGLRU min_ttl_ms verification failed. Read: ${actual_ttl}"
+    fi
+fi
+
 log_success "  Active Tuning Profile: [${C_BOLD}${EXPECTED_MODE}${C_RESET}]"
 
 exit 0
