@@ -559,25 +559,25 @@ EOF
 hl.bind(
     "SUPER + Q",
     hl.dsp.exec_cmd(terminal),
-    { description = "Launch Terminal" }
+    { description = "Launch Terminal", submap_universal = true  }
 )
 
 hl.bind(
     "SUPER + W",
     hl.dsp.exec_cmd(browser),
-    { description = "Launch Browser" }
+    { description = "Launch Browser", submap_universal = true  }
 )
 
 hl.bind(
     "SUPER + E",
     hl.dsp.exec_cmd(fileManager),
-    { description = "File Manager" }
+    { description = "File Manager", submap_universal = true  }
 )
 
 hl.bind(
     "SUPER + R",
     hl.dsp.exec_cmd(textEditor),
-    { description = "Open Text Editor" }
+    { description = "Open Text Editor", submap_universal = true  }
 )
 EOF
             ;;
