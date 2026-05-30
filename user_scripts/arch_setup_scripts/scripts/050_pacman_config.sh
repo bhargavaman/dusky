@@ -108,20 +108,9 @@ if [[ -z "${TARGET_OS}" ]]; then
     log_info "Analyzing system state to determine optimal configuration..."
     
     if grep -qi "ID=cachyos" /etc/os-release 2>/dev/null; then
-        if (( AUTO_MODE == 1 )); then
-            log_info "Pure CachyOS detected and --auto flag passed. Aborting silently to preserve system integrity."
-            exit 0
-        else
-            log_warn "Pure CachyOS detected!"
-            log_warn "Applying this script on CachyOS will severely break its custom packaging."
-            read -r -p "Are you absolutely sure you want to proceed? [y/N]: " response
-            if [[ ! "${response}" =~ ^[Yy]$ ]]; then
-                log_info "Aborting pacman configuration update."
-                exit 0
-            fi
-            log_warn "Proceeding at your own risk..."
-            TARGET_OS="cachyos"
-        fi
+        log_info "Pure CachyOS detected. CachyOS manages its own pacman configuration."
+        log_info "Aborting pacman configuration update to preserve system integrity."
+        exit 0
     elif pacman -Qq cachyos-mirrorlist &>/dev/null; then
         log_ok "Franken-Arch detected (CachyOS packages found on Standard Arch)."
         TARGET_OS="cachyos"
