@@ -71,20 +71,20 @@ if [[ "$target_type" == "REMOTE" ]]; then
     if [[ -z "$target" ]]; then
         cmd="$render_hist"
     else
-        # Bulletproof remote escaping for paths with spaces, quotes, and tildes
+        # Bulletproof remote escaping. Append target implicitly to ensure parent directory is ALWAYS listed.
         if [[ "$target" == "~/"* ]]; then
             q_target=$(printf "%q" "${target#\~/}")
-            remote_cmd="command ls -dp \"\$HOME\"/${q_target}*"
+            remote_cmd="command ls -dp \"\$HOME\"/${q_target}* \"\$HOME\"/${q_target} 2>/dev/null"
         elif [[ "$target" == "~" ]]; then
-            remote_cmd="command ls -dp \"\$HOME\"/*"
+            remote_cmd="command ls -dp \"\$HOME\"/* \"\$HOME\"/ 2>/dev/null"
         else
             q_target=$(printf "%q" "$target")
-            remote_cmd="command ls -dp ${q_target}*"
+            remote_cmd="command ls -dp ${q_target}* ${q_target} 2>/dev/null"
         fi
         
-        # Pass exact command cleanly through SSH (Outputting Bright Cyan for deep contrast)
+        # Pass exact command cleanly through SSH. Awk removes duplicates caused by explicitly listing the parent dir.
         safe_remote_cmd="${remote_cmd//\'/\'\\\'\'}"
-        cmd="ssh -o BatchMode=yes -S \"$socket\" \"$host\" '${safe_remote_cmd}' 2>/dev/null | awk '{print \$0 \"\\t\\033[1;36m\" \$0 \"\\033[0m\"}' || true"
+        cmd="ssh -o BatchMode=yes -S \"$socket\" \"$host\" '${safe_remote_cmd}' 2>/dev/null | awk '!seen[\$0]++ {print \$0 \"\\t\\033[1;36m\" \$0 \"\\033[0m\"}' || true"
     fi
 else
     # LOCAL (PUSH or PULL)
@@ -96,9 +96,9 @@ else
          [[ "$local_target" == "~/"* ]] && local_target="$HOME/${local_target#\~/}"
          [[ "$local_target" == "~" ]] && local_target="$HOME/"
          
-         # Outputting Bright Cyan locally as well
+         # Append local target implicitly to ensure parent directory is always available
          q_local=$(printf "%q" "$local_target")
-         cmd="eval \"command ls -dp ${q_local}* 2>/dev/null\" | awk '{print \$0 \"\\t\\033[1;36m\" \$0 \"\\033[0m\"}' || true"
+         cmd="eval \"command ls -dp ${q_local}* ${q_local} 2>/dev/null\" | awk '!seen[\$0]++ {print \$0 \"\\t\\033[1;36m\" \$0 \"\\033[0m\"}' || true"
     fi
 fi
 
@@ -195,10 +195,10 @@ _sshfile_pick_path() {
     local selected_path_raw
     selected_path_raw=$(
         echo "$initial_list" |
-        fzf --ansi --print-query --expect=ctrl-y,enter \
+        fzf --ansi --print-query --expect=ctrl-y,ctrl-space,enter \
             --prompt="$prompt_str" \
             --border=rounded \
-            --border-label=" $border_label (TAB: complete │ ENTER: select/use query │ CTRL-R: history) " \
+            --border-label=" $border_label (TAB: complete │ ENTER: select │ CTRL-SPACE or Type ' ' to force typed path) " \
             --info=inline-right \
             --height=60% --layout=reverse \
             --delimiter='\t' --with-nth=2 \
@@ -207,26 +207,30 @@ _sshfile_pick_path() {
             --bind "ctrl-r:reload(\"$SSHFILE_CONFIG_DIR/scripts/render_history.sh\" \"$target_type\" \"$host\" \"$SSHFILE_CONFIG_DIR/data/paths.tsv\" \"$EPOCHSECONDS\")+change-query[]"
     )
     # CRITICAL FIX: Only abort on 130 (ESC/CTRL-C) or 2 (Error). 
-    # FZF natively returns 1 if user hits ENTER on 0 matches, which is perfectly valid for us!
     local fzf_exit=$?
     [[ $fzf_exit -eq 130 || $fzf_exit -eq 2 ]] && return 1
 
     local query_str=$(echo "$selected_path_raw" | sed -n '1p')
     local key_pressed=$(echo "$selected_path_raw" | sed -n '2p')
-    # Perfectly extract Field 1 ensuring no ANSI codes or paddings ever leak into the command
     local list_selection=$(echo "$selected_path_raw" | sed -n '3p' | awk -F'\t' '{print $1}')
 
-    # Flawless fallback: if they hit ENTER but nothing was matched/selected, use what they typed.
-    if [[ "$key_pressed" == "ctrl-y" ]]; then
-        echo "$query_str"
+    # Ergonomic feature: Strip trailing spaces safely
+    local trimmed_query
+    trimmed_query=$(printf "%s" "$query_str" | sed 's/[[:space:]]*$//')
+
+    if [[ "$key_pressed" == "ctrl-y" || "$key_pressed" == "ctrl-space" ]]; then
+        echo "$trimmed_query"
     elif [[ "$key_pressed" == "enter" ]]; then
-        if [[ -n "$list_selection" ]]; then
+        if [[ "$query_str" != "$trimmed_query" ]]; then
+            # User explicitly typed a trailing space -> force the exact query!
+            echo "$trimmed_query"
+        elif [[ -n "$list_selection" ]]; then
             echo "$list_selection"
         else
-            echo "$query_str"
+            echo "$trimmed_query"
         fi
     else
-        echo "$query_str"
+        echo "$trimmed_query"
     fi
 }
 
@@ -259,9 +263,9 @@ _sshfile_pick_host() {
                 }
             }
         ' | sort -t'|' -k1,1nr | awk -F'|' '{print $2 "\t" $3}' |
-        fzf --ansi --scheme=history --print-query --expect=ctrl-y,enter \
+        fzf --ansi --scheme=history --print-query --expect=ctrl-y,ctrl-space,enter \
             --prompt=":: Select Host > " \
-            --border=rounded --border-label=" SSH Hosts (ENTER: select/use query) " \
+            --border=rounded --border-label=" SSH Hosts (ENTER: select │ CTRL-SPACE or Type ' ' to force typed host) " \
             --info=inline-right \
             --height=50% --layout=reverse \
             --delimiter='\t' --with-nth=2 \
@@ -275,16 +279,21 @@ _sshfile_pick_host() {
     local key_pressed=$(echo "$selected_host_raw" | sed -n '2p')
     local list_selection=$(echo "$selected_host_raw" | sed -n '3p' | awk -F'\t' '{print $1}')
 
-    if [[ "$key_pressed" == "ctrl-y" ]]; then
-        echo "$query_str"
+    local trimmed_query
+    trimmed_query=$(printf "%s" "$query_str" | sed 's/[[:space:]]*$//')
+
+    if [[ "$key_pressed" == "ctrl-y" || "$key_pressed" == "ctrl-space" ]]; then
+        echo "$trimmed_query"
     elif [[ "$key_pressed" == "enter" ]]; then
-        if [[ -n "$list_selection" ]]; then
+        if [[ "$query_str" != "$trimmed_query" ]]; then
+            echo "$trimmed_query"
+        elif [[ -n "$list_selection" ]]; then
             echo "$list_selection"
         else
-            echo "$query_str"
+            echo "$trimmed_query"
         fi
     else
-        echo "$query_str"
+        echo "$trimmed_query"
     fi
 }
 
