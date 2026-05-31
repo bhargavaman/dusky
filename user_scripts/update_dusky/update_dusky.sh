@@ -237,7 +237,6 @@ declare -ra UPDATE_SEQUENCE=(
 #    "U | 155_blur_shadow_opacity.sh"
 #    "U | ignore-fail | 160_theme_ctl.sh"
 #    "U | 165_qtct_config.sh"
-    "U | 170_waypaper_config_reset.sh"
 #    "U | 175_animation_default.sh"
 #    "S | 180_udev_usb_notify.sh"
 #    "U | 185_terminal_default.sh"
