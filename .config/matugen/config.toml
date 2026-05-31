@@ -296,21 +296,21 @@ post_hook   = '''
 # 4. System Services & Daemons (Triggered on theme change)
 # =============================================================================
 
-[templates.dusky_control_center]
-input_path  = '/dev/null'
-output_path = '/dev/null'
-post_hook   = '''
-  systemctl --user reset-failed dusky.service || :
-  systemctl --user restart dusky.service || :
-'''
+# [templates.dusky_control_center]
+# input_path  = '/dev/null'
+# output_path = '/dev/null'
+# post_hook   = '''
+#   systemctl --user reset-failed dusky.service || :
+#   systemctl --user restart dusky.service || :
+# '''
 
-[templates.dusky_quickpanal]
-input_path  = '/dev/null'
-output_path = '/dev/null'
-post_hook   = '''
-  systemctl --user reset-failed dusky_quickpanal.service || :
-  systemctl --user restart dusky_quickpanal.service || :
-'''
+# [templates.dusky_quickpanal]
+# input_path  = '/dev/null'
+# output_path = '/dev/null'
+# post_hook   = '''
+#   systemctl --user reset-failed dusky_quickpanal.service || :
+#   systemctl --user restart dusky_quickpanal.service || :
+# '''
 
 [templates.hyprpolkitagent]
 input_path  = '/dev/null'
