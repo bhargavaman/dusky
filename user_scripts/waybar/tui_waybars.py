@@ -10,6 +10,7 @@ This file serves a dual purpose:
 """
 import sys
 import os
+import shlex
 from pathlib import Path
 from python.frontend.core_types import ConfigItem
 
@@ -34,11 +35,24 @@ config_root = Path(TARGET_FILE).expanduser().resolve()
 theme_paths = sorted(config_root.glob("*/config.jsonc"))
 THEMES = [t.parent.name for t in theme_paths]
 
+_CLI_PATH = shlex.quote(str(Path(__file__).resolve()))
+_EXECUTABLE = sys.executable
+
 # =============================================================================
 # TUI SCHEMA DEFINITION
 # =============================================================================
 SCHEMA = {
     0: [
+        ConfigItem(
+            label="Active Theme Target",
+            key="active_theme_name",
+            scope="DEFAULT",
+            type_="string",
+            default="unknown",
+            options=THEMES, # Native support for searching themes rapidly
+            group="Themes",
+            extended_help="**System Theme Tracker**\n\nThis strictly tracks the currently applied Waybar theme folder in memory. You can manually type a theme name here, or simply hit 'Apply' on the presets below."
+        ),
         ConfigItem(
             label="Available Themes (Live Preview)",
             key="active_theme_folder",
@@ -61,33 +75,36 @@ for name in THEMES:
             label=name,  # Clean label without the "Theme:" prefix
             key=f"__waybar_theme_{name}",
             scope="DEFAULT",
-            type_="bool",
-            default=False,
+            type_="preset",  # Natively displays Apply/Active and uses internal caching memory without spawning OS shells!
+            default=None,
             parent_ref="active_theme_folder",
             group="Themes",
-            extended_help=f"**Activate {name}**\n\nHit Enter to instantly apply this layout. It will automatically symlink and restart Waybar."
+            preset_payload={
+                "active_theme_name": name
+            },
+            extended_help=f"**Apply {name}**\n\nHit Enter to instantly apply this layout. It will automatically symlink and restart Waybar."
         )
     )
 
-SCHEMA[0] = [SCHEMA[0][0]] + dynamic_theme_items
+SCHEMA[0].extend(dynamic_theme_items)
 
 # --- Inject Layout & Healing Actions ---
 SCHEMA[0].extend([
     ConfigItem(
         label="Toggle Waybar Position",
-        key="action_invert_pos",
+        key="action_invert_pos_cli",
         scope="DEFAULT",
-        type_="bool", # Treated as a momentary push-button by the Engine!
-        default=False,
+        type_="action", # Displayed as "Run" cleanly
+        default=f"{_EXECUTABLE} {_CLI_PATH} --toggle-pos",
         group="Layout",
         extended_help="**Toggle Position**\n\nInstantly inverts the current screen position (Top becomes Bottom, Left becomes Right). Equivalent to pressing Spacebar in the old bash script."
     ),
     ConfigItem(
         label="Heal Broken Symlinks",
-        key="action_heal_state",
+        key="action_heal_state_cli",
         scope="DEFAULT",
-        type_="bool", # Treated as a momentary push-button by the Engine!
-        default=False,
+        type_="action",
+        default=f"{_EXECUTABLE} {_CLI_PATH} --heal",
         group="Layout",
         extended_help="**Heal Broken Configuration**\n\nIf your Waybar symlinks break, this action rebuilds the exact symlink paths needed and restarts Waybar automatically."
     )
@@ -109,6 +126,8 @@ if __name__ == "__main__":
     parser.add_argument("--back_toggle", action="store_true", help="Switch to the previous Waybar theme chronologically")
     parser.add_argument("--toggle-pos", action="store_true", help="Invert current Waybar position (Top↔Bottom, Left↔Right)")
     parser.add_argument("--heal", action="store_true", help="Force state restore / heal broken symlinks")
+    parser.add_argument("--first", action="store_true", help="Apply the first Waybar theme alphabetically")
+    parser.add_argument("--apply", type=str, metavar="THEME", help="Apply a specific Waybar theme by name")
     parser.add_argument("-h", "--help", action="help", default=argparse.SUPPRESS, help="Show this help message and exit")
     
     args = parser.parse_args()
@@ -148,6 +167,14 @@ if __name__ == "__main__":
         changes.append(("action_invert_pos", "DEFAULT", "true", "bool"))
     elif args.heal:
         changes.append(("action_heal_state", "DEFAULT", "true", "bool"))
+    elif args.first:
+        if THEMES:
+            changes.append(("active_theme_name", "DEFAULT", THEMES[0], "string"))
+        else:
+            print("[-] Error: No Waybar themes found.")
+            sys.exit(1)
+    elif args.apply:
+        changes.append(("active_theme_name", "DEFAULT", args.apply, "string"))
         
     if changes:
         success, msg, _ = engine.write_batch(changes)

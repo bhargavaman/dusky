@@ -11,7 +11,7 @@ from typing import Any
 from python.frontend.core_types import BaseEngine
 
 # =============================================================================
-# [ WAYBAR ENGINE - v4.8.5 PARITY ]
+# [ WAYBAR ENGINE - v4.8.6 PARITY ]
 # Fully isolated Python process controller with UI-Cache synchronization.
 # Resolves Headless Async Destruction & AST Regex Position Mutators.
 # =============================================================================
@@ -41,7 +41,7 @@ class WaybarEngine(BaseEngine):
     def target_path(self) -> str:
         # CRITICAL FIX: We pass the DIRECTORY to the UI File Watcher, not the symlink.
         # This guarantees that our asynchronous os.utime() trigger below successfully 
-        # forces the UI to reload and wipe the old "ON" states.
+        # forces the UI to reload and wipe the old states.
         return str(self.config_root)
 
     def _refresh_themes(self) -> None:
@@ -81,11 +81,12 @@ class WaybarEngine(BaseEngine):
         self._refresh_themes()
         
         active_idx = -1
-        active_name = ""
+        active_name = "unknown"
         current_pos = "unknown"
         
         if self.config_path.is_symlink():
             target = self.config_path.resolve()
+            # Failsafe: evaluate target.parent even if config.jsonc is missing inside it
             if target.parent in self.theme_dirs:
                 active_idx = self.theme_dirs.index(target.parent)
                 active_name = self.theme_names[active_idx]
@@ -103,28 +104,15 @@ class WaybarEngine(BaseEngine):
             except (OSError, json.JSONDecodeError):
                 pass
         
-        # PREVENTING [Missing] STRIKETHROUGH:
-        # The engine must strictly tell the UI that these momentary push-buttons 
-        # default to 'False' so they can be securely bound to RAM.
+        # We strictly expose active_theme_name so the TUI preset architecture natively
+        # matches the payload and generates the "Apply / Active" button labels.
         self.cache = {
             "active_theme_index": active_idx,
             "active_theme_name": active_name,
             "DEFAULT/active_theme_index": active_idx,
             "DEFAULT/active_theme_name": active_name,
-            
-            "action_invert_pos": False,
-            "DEFAULT/action_invert_pos": False,
-            
-            "action_heal_state": False,
-            "DEFAULT/action_heal_state": False,
         }
         
-        # Inject dynamic menu state variables for the radio-button list
-        for i, name in enumerate(self.theme_names):
-            is_active = (active_name == name)
-            self.cache[f"DEFAULT/__waybar_theme_{name}"] = is_active
-            self.cache[f"__waybar_theme_{name}"] = is_active
-            
         return self.cache
 
     def _apply_symlinks_sync(self, target_dir: Path) -> None:
@@ -138,18 +126,28 @@ class WaybarEngine(BaseEngine):
     async def _async_restart_waybar(self, target_dir: Path, set_sid: bool = True):
         self._apply_symlinks_sync(target_dir)
         
-        proc = await asyncio.create_subprocess_exec("pkill", "-x", "waybar", stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-        await proc.wait()
+        try:
+            proc = await asyncio.create_subprocess_exec("pkill", "-x", "waybar", stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            await proc.wait()
+        except OSError:
+            pass
         
         for _ in range(15):
-            check_proc = await asyncio.create_subprocess_exec("pgrep", "-x", "waybar", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            await check_proc.wait()
-            if check_proc.returncode != 0:
+            try:
+                check_proc = await asyncio.create_subprocess_exec("pgrep", "-x", "waybar", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                await check_proc.wait()
+                if check_proc.returncode != 0:
+                    break
+            except OSError:
                 break
             await asyncio.sleep(0.1)
             
-        proc = await asyncio.create_subprocess_exec("pkill", "-9", "-x", "waybar", stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-        await proc.wait()
+        try:
+            proc = await asyncio.create_subprocess_exec("pkill", "-9", "-x", "waybar", stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            await proc.wait()
+        except OSError:
+            pass
+            
         await asyncio.sleep(0.2)
         
         try:
@@ -158,18 +156,31 @@ class WaybarEngine(BaseEngine):
         except OSError:
             pass
         
-        subprocess.Popen(
-            ["uwsm-app", "--", "waybar"],
-            start_new_session=set_sid,       
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL
-        )
+        try:
+            subprocess.Popen(
+                ["uwsm-app", "--", "waybar"],
+                start_new_session=set_sid,       
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            )
+        except OSError:
+            try:
+                # Fallback directly to native waybar if uwsm-app is missing
+                subprocess.Popen(
+                    ["waybar"],
+                    start_new_session=set_sid,       
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL
+                )
+            except OSError:
+                pass
 
         # UI CACHE REFRESH TRIGGER
         # Pauses slightly to let the UI's write mask expire, then artificially 
         # bumps the directory mtime. This brilliantly forces the UI to reload the state natively,
-        # which clears the "Multiple ON" states and snaps the momentary push-buttons back to OFF!
+        # resolving the active_theme_name instantly.
         await asyncio.sleep(0.5)
         try:
             os.utime(self.config_root, None)
@@ -194,16 +205,16 @@ class WaybarEngine(BaseEngine):
         for key, scope, val, itype in changes:
             str_val = str(val).lower()
             
-            if key.startswith("__waybar_theme_"):
-                if str_val == "false":
-                    return False, "Theme is already active.", ""
-                target_name = key.replace("__waybar_theme_", "")
-                if target_name in self.theme_names:
-                    target_idx = self.theme_names.index(target_name)
-                    requires_restart = True
-                    requires_detached = False
-                    
             match key:
+                case "active_theme_name":
+                    target_name = str(val)
+                    if target_name in self.theme_names:
+                        target_idx = self.theme_names.index(target_name)
+                        requires_restart = True
+                        requires_detached = True  # Survives terminal closure
+                    else:
+                        return False, f"Theme '{target_name}' not found.", ""
+                        
                 case "toggle_forward" if str_val == "true":
                     target_idx = (current_idx + 1) % len(self.theme_dirs)
                     requires_restart = True
@@ -216,6 +227,7 @@ class WaybarEngine(BaseEngine):
                     try:
                         target_idx = int(val)
                         requires_restart = True
+                        requires_detached = True
                     except ValueError:
                         return False, f"Invalid numeric index: {val}", ""
                         
