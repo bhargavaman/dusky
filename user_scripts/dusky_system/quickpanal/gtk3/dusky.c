@@ -2,9 +2,9 @@
  * dusky.c — Unified Wayland Focus-Grab Extension (GTK3 + GTK4)
  *
  * This library dynamically detects the active GTK runtime using safe
- * RTLD_NOLOAD probing. It resolves catastrophic thread-safety violations 
- * with Wayland proxies, implements strict backend validation, and safely 
- * manages socket backpressure using POSIX eventfds.
+ * RTLD_NOLOAD probing to prevent catastrophic toolkit co-loading.
+ * It resolves thread-safety violations with Wayland proxies, implements 
+ * strict backend validation, and safely manages socket backpressure.
  */
 
 #define _GNU_SOURCE
@@ -150,12 +150,11 @@ static void *dispatch_thread_func(void *arg) {
 
 /* ── Toolkit Resolution & Extraction ────────────────────────────────── */
 
-/* * Stricty verifies the instantiated GType to prevent catastrophic X11 casts. 
- */
 static bool is_wayland_display(void *gdk_display, void *gdk_handle) {
     if (!gdk_display || !gdk_handle) return false;
     
-    void *gobj_handle = dlopen("libgobject-2.0.so.0", RTLD_LAZY | RTLD_NOLOAD);
+    /* Removed RTLD_NOLOAD: GObject is safe to load if isolated in Python memory */
+    void *gobj_handle = dlopen("libgobject-2.0.so.0", RTLD_LAZY);
     if (!gobj_handle) return false;
 
     typedef unsigned long GType;
@@ -176,6 +175,7 @@ static bool resolve_wayland_surfaces(void *gtk_ptr,
     void *toolkit_handle = NULL;
     bool is_gtk4 = false;
 
+    /* RTLD_NOLOAD is MANDATORY here to prevent fatal GTK co-loading crashes */
     if ((toolkit_handle = dlopen("libgtk-4.so.1", RTLD_LAZY | RTLD_NOLOAD))) {
         is_gtk4 = true;
     } else if ((toolkit_handle = dlopen("libgtk-3.so.0", RTLD_LAZY | RTLD_NOLOAD))) {
@@ -203,6 +203,7 @@ static bool resolve_wayland_surfaces(void *gtk_ptr,
             }
         }
     } else {
+        /* RTLD_NOLOAD is MANDATORY here to prevent loading GDK3 into a GTK4 app */
         void *gdk3_handle = dlopen("libgdk-3.so.0", RTLD_LAZY | RTLD_NOLOAD);
         if (!gdk3_handle) return false;
 
@@ -250,9 +251,17 @@ void init_wayland_grab(void *gtk_window_ptr, ClearedCallback cb) {
     }
 
     if (!g_idle_add_ptr) {
-        void *glib_handle = dlopen("libglib-2.0.so.0", RTLD_LAZY | RTLD_NOLOAD);
+        /* Removed RTLD_NOLOAD: GLib is safe to load and required for the callback */
+        void *glib_handle = dlopen("libglib-2.0.so.0", RTLD_LAZY);
         if (glib_handle) {
             g_idle_add_ptr = (fn_g_idle_add)dlsym(glib_handle, "g_idle_add");
+        }
+
+        /* Prevent silent callback failure by loudly aborting if GLib fails to load */
+        if (!g_idle_add_ptr) {
+            fprintf(stderr, "[libwaylandgrab] Fatal: Failed to resolve g_idle_add. Callbacks will silently fail. Aborting.\n");
+            pthread_mutex_unlock(&state_mutex);
+            return;
         }
     }
 
