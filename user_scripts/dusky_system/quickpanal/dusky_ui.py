@@ -554,4 +554,11 @@ button.notif-close-btn {
     min-width: 24px; min-height: 24px; color: alpha(@theme_fg_color, 0.3); margin-top: -4px; margin-right: -4px;
 }
 button.notif-close-btn:hover { background-color: alpha(#ff453a, 0.2); color: #ff453a; }
+
+/* Bottom Fade Gradient */
+.bottom-fade {
+    background-image: linear-gradient(to bottom, transparent 0%, alpha(@theme_bg_color, 0.95) 100%);
+    border-bottom-left-radius: 24px;
+    border-bottom-right-radius: 24px;
+}
 """

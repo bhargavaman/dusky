@@ -181,7 +181,25 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         self.scrolled_main.set_propagate_natural_height(True)
         max_h = _get_active_monitor_scaled_height() * 0.85 
         self.scrolled_main.set_max_content_height(int(max_h))
-        self.add(self.scrolled_main)
+        
+        # --- Dynamic Opacity Gradient Overlay ---
+        self.bottom_fade = Gtk.EventBox()
+        self.bottom_fade.set_valign(Gtk.Align.END)
+        self.bottom_fade.set_size_request(-1, 48) # Generous height for a smooth gradient
+        self.bottom_fade.set_no_show_all(True)
+        self.bottom_fade.hide()
+        _add_css_class(self.bottom_fade, "bottom-fade")
+        
+        self.overlay = Gtk.Overlay()
+        self.overlay.add(self.scrolled_main)
+        self.overlay.add_overlay(self.bottom_fade)
+        self.overlay.set_overlay_pass_through(self.bottom_fade, True) # Clicks pass right through it!
+        
+        self.add(self.overlay)
+        
+        self.v_adj = self.scrolled_main.get_vadjustment()
+        self.v_adj.connect("value-changed", self._update_fade_visibility)
+        self.v_adj.connect("changed", self._update_fade_visibility)
 
         # --- Base Header ---
         self.header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -322,6 +340,14 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         if self.layout_cfg.get("show_notifications", True):
             self.notifications_module = NotificationsPanel(self.pool)
             main_box.pack_start(self.notifications_module, True, True, 0)
+
+    def _update_fade_visibility(self, *args):
+        # Calculate if there is hidden scrollable content below our current viewport
+        max_val = self.v_adj.get_upper() - self.v_adj.get_page_size()
+        if max_val > 0.5 and self.v_adj.get_value() < (max_val - 2.0):
+            self.bottom_fade.show()
+        else:
+            self.bottom_fade.hide()
 
     # --- UI Updaters ---
     def _update_ui_state(self):
