@@ -31,8 +31,8 @@
 
         --bgColor-accent-emphasis: var(--primary) !important;
         --borderColor-accent-emphasis: var(--primary) !important;
-        --bgColor-accent-muted: var(--primary_container) !important;
-        --borderColor-accent-muted: var(--primary_container) !important;
+        --bgColor-accent-muted: var(--secondary_container) !important;
+        --borderColor-accent-muted: var(--secondary_container) !important;
 
         /* Looks kinda bad in issues but here if you want it */
         /* --bgColor-success-emphasis: var(--tertiary) !important; */
