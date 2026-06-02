@@ -1,224 +1,210 @@
-res_mon() {# Isolate shell options for predictable execution and silence debug tracesemulate -L zshsetopt localoptions no_xtrace no_verbose# CRITICAL: Force standard numeric locale so floats use '.' reliably across 
-# all systems, while preserving UTF-8 for process names to prevent garbling.
-local LC_NUMERIC=C
+res_mon() {
+    # Isolate shell options for predictable execution and silence debug traces
+    emulate -L zsh
+    setopt localoptions no_xtrace no_verbose
 
-# Defaults: RAM Sort, 2s Interval, 15 Count, Clean Process Names
-local target_sort="ram"
-local ps_sort="-rss"
-local cmd_col="comm="
-local interval="2"
-local count="15"
-local target_pids=""
-local target_name=""
-local -a plain_nums=()
+    # CRITICAL: Force standard numeric locale so floats use '.' reliably across 
+    # all systems, while preserving UTF-8 for process names to prevent garbling.
+    local LC_NUMERIC=C
 
-# 1. Advanced Order-Agnostic Argument Tokenizer
-while (( $# > 0 )); do
-    local arg="$1"
-    case "${arg:l}" in
-        help|-h|--help) 
-            print -P "\n%F{blue}::%f %Bres_mon%b — Live System Resource Monitor"
-            print -P "%F{238}-----------------------------------------------------------------------------%f"
-            print -P "%F{green}Usage:%f res_mon [sort_metric] [display_mode] [interval] [count] [filters]"
-            print -P "       %F{242}(Arguments can be provided in ANY order)%f\n"
-            
-            print -P "%BMetrics:%b (Default: ram)"
-            print -P "  %F{cyan}ram%f, %F{cyan}mem%f              - Sort by RAM usage"
-            print -P "  %F{cyan}cpu%f                    - Sort by CPU usage percentage\n"
-            
-            print -P "%BDisplay:%b (Default: clean base name)"
-            print -P "  %F{cyan}path%f, %F{cyan}full%f, %F{cyan}args%f     - Show full command path and arguments\n"
+    # Defaults: RAM Sort, 2s Interval, 15 Count, Full Process Arguments
+    local target_sort="ram"
+    local ps_sort="-rss"
+    local display_mode="full"
+    local interval="2"
+    local count="15"
+    local target_pids=""
+    local target_name=""
+    local -a plain_nums=()
 
-            print -P "%BFilters:%b (Optional)"
-            print -P "  %F{cyan}-p, --pid <pids>%f       - Target specific PID(s) (comma-separated: 123,456)"
-            print -P "  %F{cyan}-n, --name <name>%f      - Fuzzy filter processes by name or argument\n"
-            
-            print -P "%BNumbers:%b (Defaults: 2s interval, 15 processes)"
-            print -P "  %F{cyan}<number>%f               - Sets the process count (e.g., 20)"
-            print -P "  %F{cyan}<number>s%f              - Sets the interval in seconds (e.g., 1s or .5s)\n"
-            
-            print -P "%BExamples:%b"
-            print -P "  %F{yellow}res_mon 5 1s%f           # Top 5 by RAM, updating every 1s"
-            print -P "  %F{yellow}res_mon -p 1024,2048%f   # Track only PIDs 1024 and 2048"
-            print -P "  %F{yellow}res_mon -n waybar args%f # Fuzzy match 'waybar', show full arguments"
-            print -P "  %F{yellow}res_mon cpu path .5s%f   # Top 15 by CPU, full paths, updating every 0.5s\n"
-            return 0 
-            ;;
-        cpu) 
-            target_sort="cpu"
-            ps_sort="-pcpu" 
-            ;;
-        ram|mem|memory) 
-            target_sort="ram"
-            ps_sort="-rss" 
-            ;;
-        path|full|args)
-            cmd_col="args="
-            ;;
-        -p|--pid)
-            shift
-            if [[ -z "$1" || "$1" == -* ]]; then
-                print -u2 -P "\n%F{red}✖ Error:%f Missing argument for %B$arg%b."
-                return 1
-            fi
-            # Normalize spaces to commas natively
-            target_pids="${1// /,}"
-            ;;
-        -n|--name)
-            shift
-            if [[ -z "$1" || "$1" == -* ]]; then
-                print -u2 -P "\n%F{red}✖ Error:%f Missing argument for %B$arg%b."
-                return 1
-            fi
-            target_name="$1"
-            ;;
-        *[0-9]s) 
-            local possible_interval="${arg%s}"
-            if [[ "$possible_interval" =~ ^([0-9]*\.)?[0-9]+$ ]]; then
-                interval="$possible_interval"
-            else
-                print -u2 -P "\n%F{red}✖ Error:%f Invalid interval format: '%F{yellow}$arg%f'"
-                return 1
-            fi
-            ;;
-        *)
-            if [[ "$arg" =~ ^([0-9]*\.)?[0-9]+$ ]]; then
-                plain_nums+=("$arg")
-            else
-                print -u2 -P "\n%F{red}✖ Error:%f Unknown argument: '%F{yellow}$arg%f'"
-                print -u2 -P "  Run %F{green}res_mon help%f for usage details.\n"
-                return 1
-            fi
-            ;;
-    esac
-    shift
-done
-
-# 2. Intelligent Number Routing
-if (( ${#plain_nums[@]} == 1 )); then
-    if [[ "${plain_nums[1]}" == *.* ]]; then
-        interval="${plain_nums[1]}"
-    else
-        count="${plain_nums[1]}"
-    fi
-elif (( ${#plain_nums[@]} >= 2 )); then
-    local -F num1="${plain_nums[1]}"
-    local -F num2="${plain_nums[2]}"
-    if (( num1 > num2 )); then
-        count="${plain_nums[1]}"
-        interval="${plain_nums[2]}"
-    else
-        interval="${plain_nums[1]}"
-        count="${plain_nums[2]}"
-    fi
-fi
-
-# Strip decimal from count if a user made a typo
-count=${count%.*} 
-
-# Set hard interval floor using explicit float variable conversion
-local -F check_interval="$interval"
-if (( check_interval < 0.1 )); then
-    interval="0.1"
-fi
-
-local title_metric=$([[ "$target_sort" == "cpu" ]] && echo "CPU Sort" || echo "RAM Sort")
-[[ -n "$target_pids" ]] && title_metric+=" | PIDs: $target_pids"
-[[ -n "$target_name" ]] && title_metric+=" | Name: $target_name"
-
-# Build ps command safely as an array
-local -a ps_cmd=(ps)
-if [[ -n "$target_pids" ]]; then
-    ps_cmd+=("-p" "$target_pids")
-else
-    ps_cmd+=("-e")
-fi
-ps_cmd+=(--sort="$ps_sort" -o pid=,pcpu=,pmem=,rss=,time=,${cmd_col})
-
-# Enter UI Context: Hide cursor (\e[?25l), Disable Wrap (\e[?7l), Enter Alt-Screen (\e[?1049h)
-printf "\e[?25l\e[?7l\e[?1049h"
-
-# Zsh 'always' block guarantees perfectly clean terminal restoration
-{
-    while true; do
-        # Dynamic Dimensions: stty array read guarantees accurate live terminal sizing
-        local stty_size=($(stty size 2>/dev/null))
-        local -i term_lines=${stty_size[1]:-24}
-        local -i term_cols=${stty_size[2]:-80}
-        
-        # Responsive constraints
-        local -i active_count=$count
-        local -i max_count=$(( term_lines - 6 ))
-        (( active_count > max_count )) && active_count=$max_count
-        (( active_count < 1 )) && active_count=1
-
-        # Dynamic string width for COMMAND column (50 is exact printable char count of all prior columns)
-        local -i cmd_width=$(( term_cols - 50 ))
-        (( cmd_width < 10 )) && cmd_width=10
-
-        # Generate horizontal separator dynamically
-        local sep_line=${(pl:term_cols::-:)}
-
-        # Hyper-optimized pipeline. Substring logic immune to regex crashes.
-        output_str="$("${ps_cmd[@]}" 2>/dev/null | awk -v max="$active_count" -v cmd_len="$cmd_width" -v filter_name="${target_name:l}" '
-            {
-                if (filter_name == "") {
-                    matched++
-                    if (matched > max) next
-                    cmd = $6
-                    for(i=7; i<=NF; i++) {
-                        cmd = cmd " " $i
-                        if (length(cmd) > cmd_len) break
-                    }
-                } else {
-                    cmd = $6
-                    for(i=7; i<=NF; i++) cmd = cmd " " $i
-                    
-                    if (index(tolower(cmd), filter_name) == 0) next
-                    
-                    matched++
-                    if (matched > max) next
-                }
-
-                ram_mb = $4 / 1024.0
+    # 1. Advanced Order-Agnostic Argument Tokenizer
+    while (( $# > 0 )); do
+        local arg="$1"
+        case "${arg:l}" in
+            help|-h|--help) 
+                print -P "\n%F{blue}::%f %Bres_mon%b — Live Interactive System Resource Monitor"
+                print -P "%F{238}-----------------------------------------------------------------------------%f"
+                print -P "%F{green}Usage:%f res_mon [sort_metric] [display_mode] [interval] [count] [filters]"
+                print -P "       %F{242}(Arguments can be provided in ANY order)%f\n"
                 
-                line = sprintf("\033[38;5;246m%8s\033[0m \033[38;5;220m%6.1f%%\033[0m \033[38;5;218m%6.1f%%\033[0m \033[38;5;213m%10.1f\033[0m \033[38;5;114m%11s\033[0m   \033[1;38;5;39m%s\033[0m", $1, $2, $3, ram_mb, $5, substr(cmd, 1, cmd_len))
+                print -P "%BMetrics:%b (Default: ram)"
+                print -P "  %F{cyan}ram%f, %F{cyan}mem%f              - Sort by RAM usage"
+                print -P "  %F{cyan}cpu%f                    - Sort by CPU usage percentage\n"
                 
-                if (matched == 1) printf "%s", line
-                else printf "\n%s", line
-            }
-        ')"
+                print -P "%BDisplay:%b (Default: clean base name)"
+                print -P "  %F{cyan}path%f, %F{cyan}full%f, %F{cyan}args%f     - Show full command path and arguments\n"
 
-        # Dynamically count actual displayed items natively in Zsh
-        local -i displayed_count=0
-        [[ -n "$output_str" ]] && displayed_count=${#${(@f)output_str}}
-        
-        # Smart context-aware label
-        local count_label="Top"
-        [[ -n "$target_name" || -n "$target_pids" ]] && count_label="Matches"
-
-        # UI Update Tick (Zero Flicker Overwrite)
-        printf "\e[H" # Seek cursor directly to 0,0
-        print -P "%F{blue}::%f %B${title_metric}%b (Update: ${interval}s | ${count_label}: ${displayed_count})"
-        print -P "%F{238}${sep_line}%f"
-        
-        # PERFECTED FORENSIC ALIGNMENT: Mathematically matched to awk's layout block by block
-        print -P "%F{242}     PID    CPU%%    MEM%%    RAM(MB)        TIME   COMMAND%f"
-        print -P "%F{238}${sep_line}%f"
-        
-        if [[ -n "$output_str" ]]; then
-            printf "%s\n" "$output_str"
-        else
-            print -P "    %F{242}No matching processes found.%f"
-        fi
-        
-        # Wipe terminal artifacts explicitly if the active match count drops
-        printf "\e[J" 
-
-        sleep $interval
+                print -P "%BFilters:%b (Optional)"
+                print -P "  %F{cyan}-p, --pid <pids>%f       - Target specific PID(s) (comma-separated: 123,456)"
+                print -P "  %F{cyan}-n, --name <name>%f      - Fuzzy filter processes by name or argument\n"
+                
+                print -P "%BNumbers:%b (Defaults: 2s interval, 15 processes)"
+                print -P "  %F{cyan}<number>%f               - Sets the initial view height count (e.g., 20)"
+                print -P "  %F{cyan}<number>s%f              - Sets the interval in seconds (e.g., 1s or .5s)\n"
+                return 0 
+                ;;
+            cpu) 
+                target_sort="cpu"
+                ps_sort="-pcpu" 
+                ;;
+            ram|mem|memory) 
+                target_sort="ram"
+                ps_sort="-rss" 
+                ;;
+            path|full|args)
+                display_mode="full"
+                ;;
+            clean|short)
+                display_mode="clean"
+                ;;
+            -p|--pid)
+                shift
+                if [[ -z "$1" || "$1" == -* ]]; then
+                    print -u2 -P "\n%F{red}✖ Error:%f Missing argument for %B$arg%b."
+                    return 1
+                fi
+                # Normalize spaces to commas natively
+                target_pids="${1// /,}"
+                ;;
+            -n|--name)
+                shift
+                if [[ -z "$1" || "$1" == -* ]]; then
+                    print -u2 -P "\n%F{red}✖ Error:%f Missing argument for %B$arg%b."
+                    return 1
+                fi
+                target_name="$1"
+                ;;
+            *[0-9]s) 
+                local possible_interval="${arg%s}"
+                if [[ "$possible_interval" =~ ^([0-9]*\.)?[0-9]+$ ]]; then
+                    interval="$possible_interval"
+                else
+                    print -u2 -P "\n%F{red}✖ Error:%f Invalid interval format: '%F{yellow}$arg%f'"
+                    return 1
+                fi
+                ;;
+            *)
+                if [[ "$arg" =~ ^([0-9]*\.)?[0-9]+$ ]]; then
+                    plain_nums+=("$arg")
+                else
+                    print -u2 -P "\n%F{red}✖ Error:%f Unknown argument: '%F{yellow}$arg%f'"
+                    print -u2 -P "  Run %F{green}res_mon help%f for usage details.\n"
+                    return 1
+                fi
+                ;;
+        esac
+        shift
     done
-} always {
-    # Restore UI Context: Show Cursor (\e[?25h), Enable Wrap (\e[?7h), Exit Alt-Screen (\e[?1049l)
-    printf "\e[?25h\e[?7h\e[?1049l"
-}
+
+    # 2. Intelligent Number Routing
+    if (( ${#plain_nums[@]} == 1 )); then
+        if [[ "${plain_nums[1]}" == *.* ]]; then
+            interval="${plain_nums[1]}"
+        else
+            count="${plain_nums[1]}"
+        fi
+    elif (( ${#plain_nums[@]} >= 2 )); then
+        local -F num1="${plain_nums[1]}"
+        local -F num2="${plain_nums[2]}"
+        if (( num1 > num2 )); then
+            count="${plain_nums[1]}"
+            interval="${plain_nums[2]}"
+        else
+            interval="${plain_nums[1]}"
+            count="${plain_nums[2]}"
+        fi
+    fi
+
+    # Strip decimal from count if a user made a typo
+    count=${count%.*} 
+
+    # Set hard interval floor for the fzf event loop (0.01 is absolute minimum for fzf)
+    local -F check_interval="$interval"
+    if (( check_interval < 0.01 )); then
+        interval="0.01"
+    fi
+
+    local title_metric=$([[ "$target_sort" == "cpu" ]] && echo "CPU Sort" || echo "RAM Sort")
+    [[ -n "$target_pids" ]] && title_metric+=" | PIDs: $target_pids"
+
+    # 3. Secure Execution Context
+    local ps_target="-e"
+    [[ -n "$target_pids" ]] && ps_target="-p $target_pids"
+    
+    export __RES_MON_DISPLAY="$display_mode"
+    export __RES_MON_PS="ps ${ps_target} --sort=$ps_sort -o pid=,pcpu=,pmem=,rss=,time=,args="
+    export __RES_MON_AWK='
+    BEGIN {
+        # Perfectly mathematically aligned headers mapped to the printf footprint
+        print "\033[38;5;242mPID         CPU%   MEM%    RAM(MB)        TIME   COMMAND\033[0m"
+    }
+    {
+        # Reconstruct the full arguments string
+        args = $6
+        for(i=7; i<=NF; i++) args = args " " $i
+        
+        # Extract clean comm from the first word intelligently
+        raw_cmd = $6
+        if (substr(raw_cmd, 1, 1) == "[") {
+            comm = raw_cmd
+        } else {
+            n = split(raw_cmd, parts, "/")
+            comm = parts[n]
+            sub(/:$/, "", comm)
+        }
+        
+        printf "\033[38;5;246m%-8s\033[0m \033[38;5;220m%6s\033[0m \033[38;5;218m%6s\033[0m \033[38;5;213m%10s\033[0m \033[38;5;114m%11s\033[0m   ", \
+               $1, sprintf("%.1f%%", $2), sprintf("%.1f%%", $3), sprintf("%.1f", $4/1024.0), $5
+        
+        if (ENVIRON["__RES_MON_DISPLAY"] == "clean") {
+            printf "\033[1;38;5;39m%s\033[0m\n", comm
+        } else {
+            # Display full arguments directly for native, robust searching
+            printf "\033[1;38;5;39m%s\033[0m\n", args
+        }
+    }'
+    
+    local data_cmd='eval "$__RES_MON_PS" 2>/dev/null | awk "$__RES_MON_AWK"'
+
+    # 4. Launch the Cutting-Edge fzf Live Interactive UI
+    local -a fzf_opts=(
+        --ansi
+        --no-sort                       # Respect ps sorting (top CPU/RAM stays top)
+        --layout=reverse                # Prompt at the top, list below
+        --header-lines=1                # Pin the AWK column headers
+        --freeze-left=5                 # KEEP metrics pinned when scrolling horizontally!
+        --track --id-nth=1              # Lock the selection cursor to the PID as it moves!
+        --bind "start,every(${interval}):reload-sync:${data_cmd}"
+        --bind "ctrl-r:reload-sync:${data_cmd}"
+        
+        # EXACT-MATCH ANCHOR: Using left-aligned PIDs allows us to strictly match 
+        # the beginning of the line using '^' and an escaped trailing space '\ ',
+        # preventing false positives from UUIDs or arguments containing the PID.
+        --bind 'enter:transform-query(echo "^{r1}\ ")'       
+        --bind 'double-click:transform-query(echo "^{r1}\ ")' 
+        
+        --info=inline
+        --prompt=" ⚡ ${title_metric} > "
+        --header=" ❯ Live Fuzzy Monitor | Refresh: ${interval}s | Type to fuzzy search live (ESC to quit) "
+        --pointer="▶"
+        --color="prompt:#5fd7ff,header:#87d75f,pointer:#ff00af,info:#ff8700"
+    )
+    
+    # Preload user query to instantly highlight and filter
+    [[ -n "$target_name" ]] && fzf_opts+=(--query="$target_name")
+    
+    # Intelligently adapt height logic to map to the old `count` paradigm.
+    if (( count > 0 && count <= 50 )); then
+        fzf_opts+=(--height=$((count + 4))) # Count + prompt + header + info + awk line
+    else
+        fzf_opts+=(--height=100%)
+    fi
+
+    # Trigger Engine (Output redirected to /dev/null to prevent terminal clutter on exit)
+    FZF_DEFAULT_COMMAND="$data_cmd" fzf "${fzf_opts[@]}" > /dev/null
+    
+    # Teardown
+    unset __RES_MON_PS
+    unset __RES_MON_AWK
+    unset __RES_MON_DISPLAY
 }
