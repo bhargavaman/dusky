@@ -39,17 +39,38 @@ print_header() {
     printf "================================================================${RESET}\n\n"
 }
 
-# ── 3. Credential Ingestion (Wizard UI) ───────────────────────────────────────
+# ── 3. Argument Parsing ───────────────────────────────────────────────────────
+declare PRESET_ENCRYPT=""
+
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --encrypt)
+            PRESET_ENCRYPT=1
+            shift
+            ;;
+        --no-encrypt|--no_encrypt)
+            PRESET_ENCRYPT=0
+            shift
+            ;;
+        *)
+            printf "\n  ${C_RED}[ERROR] Unknown parameter passed: %s${RESET}\n" "$1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# ── 4. Credential Ingestion (Wizard UI) ───────────────────────────────────────
 declare INGESTED_USER=""
 declare INGESTED_PASS=""
 declare INGESTED_PASS_VERIFY=""
 declare INGESTED_ENCRYPT=""
+declare INGESTED_ENCRYPT_INPUT="" # Declared explicitly for safe unsetting
 declare ENCRYPT_TEXT=""
 
 # Master loop to allow restarting the process if the user rejects the final review
 while true; do
 
-    # ── 3a. Username Page ─────────────────────────────────────────────────────────
+    # ── 4a. Username Page ─────────────────────────────────────────────────────────
     while true; do
         clear_screen
         print_header
@@ -86,7 +107,7 @@ EOF
         fi
     done
 
-    # ── 3b. Password Page ─────────────────────────────────────────────────────────
+    # ── 4b. Password Page ─────────────────────────────────────────────────────────
     while true; do
         clear_screen
         print_header
@@ -126,44 +147,55 @@ EOF
         fi
     done
     
-    # ── 3c. Encryption Page ───────────────────────────────────────────────────────
-    while true; do
-        clear_screen
-        print_header
+    # ── 4c. Encryption Page ───────────────────────────────────────────────────────
+    
+    # If a flag was passed, apply it immediately and skip the interactive prompt
+    if [[ -n "$PRESET_ENCRYPT" ]]; then
+        INGESTED_ENCRYPT="$PRESET_ENCRYPT"
+        if (( INGESTED_ENCRYPT == 1 )); then
+            ENCRYPT_TEXT="Yes (LUKS2) [Passed via flag]"
+        else
+            ENCRYPT_TEXT="No (Plain BTRFS) [Passed via flag]"
+        fi
+    else
+        while true; do
+            clear_screen
+            print_header
 
-        printf "  ${C_GREEN}[✓] Account targeted for: ${C_BOLD}%s${RESET}\n" "$INGESTED_USER"
-        printf "  ${C_GREEN}[✓] Password verified.${RESET}\n\n"
+            printf "  ${C_GREEN}[✓] Account targeted for: ${C_BOLD}%s${RESET}\n" "$INGESTED_USER"
+            printf "  ${C_GREEN}[✓] Password verified.${RESET}\n\n"
 
-        printf "${C_CYAN}"
-        cat << 'EOF'
+            printf "${C_CYAN}"
+            cat << 'EOF'
           ___ _  _  ___ _____   _____ _____ 
          | __| \| |/ __| _ \ \ / / _ \_   _|
          | _|| .` | (__|   /\ V /|  _/ | |  
          |___|_|\_|\___|_|_\ |_| |_|   |_|  
 EOF
-        printf "${RESET}\n\n"
+            printf "${RESET}\n\n"
 
-        printf "  ${C_WHITE}Would you like to encrypt your root partition (LUKS2)?${RESET}\n"
-        printf "  If yes, the password you just entered will be used to unlock the drive.\n\n"
+            printf "  ${C_WHITE}Would you like to encrypt your root partition (LUKS2)?${RESET}\n"
+            printf "  If yes, the password you just entered will be used to unlock the drive.\n\n"
 
-        printf "    ==> Encrypt system? [y/N]: "
-        read -r INGESTED_ENCRYPT_INPUT || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
+            printf "    ==> Encrypt system? [y/N]: "
+            read -r INGESTED_ENCRYPT_INPUT || { printf "\n\n  ${C_RED}[!] Input aborted. Exiting.${RESET}\n"; exit 1; }
 
-        if [[ "${INGESTED_ENCRYPT_INPUT,,}" == "y" || "${INGESTED_ENCRYPT_INPUT,,}" == "yes" ]]; then
-            INGESTED_ENCRYPT=1
-            ENCRYPT_TEXT="Yes (LUKS2)"
-            break
-        elif [[ -z "$INGESTED_ENCRYPT_INPUT" || "${INGESTED_ENCRYPT_INPUT,,}" == "n" || "${INGESTED_ENCRYPT_INPUT,,}" == "no" ]]; then
-            INGESTED_ENCRYPT=0
-            ENCRYPT_TEXT="No (Plain BTRFS)"
-            break
-        else
-            printf "\n  ${C_RED}[!] Invalid choice. Please enter y or N.${RESET}\n"
-            sleep 1.5
-        fi
-    done
+            if [[ "${INGESTED_ENCRYPT_INPUT,,}" == "y" || "${INGESTED_ENCRYPT_INPUT,,}" == "yes" ]]; then
+                INGESTED_ENCRYPT=1
+                ENCRYPT_TEXT="Yes (LUKS2)"
+                break
+            elif [[ -z "$INGESTED_ENCRYPT_INPUT" || "${INGESTED_ENCRYPT_INPUT,,}" == "n" || "${INGESTED_ENCRYPT_INPUT,,}" == "no" ]]; then
+                INGESTED_ENCRYPT=0
+                ENCRYPT_TEXT="No (Plain BTRFS)"
+                break
+            else
+                printf "\n  ${C_RED}[!] Invalid choice. Please enter y or N.${RESET}\n"
+                sleep 1.5
+            fi
+        done
+    fi
 
-    # ── 3d. Review & Confirm Page ─────────────────────────────────────────────────
+    # ── 4d. Review & Confirm Page ─────────────────────────────────────────────────
     clear_screen
     print_header
     
@@ -189,14 +221,14 @@ EOF
         break # Everything is correct, exit the master loop and proceed
     else
         printf "\n  ${C_YELLOW}[*] No problem. Let's try that again...${RESET}\n"
-        unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY INGESTED_ENCRYPT ENCRYPT_TEXT INGESTED_ENCRYPT_INPUT
+        unset INGESTED_USER INGESTED_PASS INGESTED_PASS_VERIFY INGESTED_ENCRYPT ENCRYPT_TEXT INGESTED_ENCRYPT_INPUT CONFIRM_CHOICE
         sleep 1.5
         # Loop continues, taking them back to the Username page
     fi
 
 done
 
-# ── 4. Secure State Persistence ───────────────────────────────────────────────
+# ── 5. Secure State Persistence ───────────────────────────────────────────────
 clear_screen
 print_header
 
