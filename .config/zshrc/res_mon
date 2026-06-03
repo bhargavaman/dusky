@@ -192,8 +192,8 @@ res_mon() {
         pad = sprintf("%150s", "")
         
         # Using exact vertical bar boundaries for PKG-style flawless grid alignment
-        printf "%s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s%s__COMM__=%s\n", \
-            vis_pid, vis_cpu, vis_mem, vis_ram, vis_time, badge, vis_cmd, pad, comm
+        printf "%s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s \033[38;5;238m│\033[0m %s%s__COMM__=%s:::ARGS:::%s\n", \
+            vis_pid, vis_cpu, vis_mem, vis_ram, vis_time, badge, vis_cmd, pad, comm, args
     }'
     
     # 5. The Core Interactive Event Loop
@@ -287,18 +287,23 @@ res_mon() {
         
         # Extraction Router (FZF outputs the raw selected string)
         local target_pid=$(echo "$fzf_choice" | awk '{print $1}')
-        local target_comm=$(echo "$fzf_choice" | sed -n 's/.*__COMM__=//p')
+        local target_comm=$(echo "$fzf_choice" | sed -n 's/.*__COMM__=\(.*\):::ARGS:::.*/\1/p')
+        local target_args=$(echo "$fzf_choice" | sed -n 's/.*:::ARGS::://p')
         target_pid=${target_pid//$'\e'\[[0-9;]*m/}
 
         # Generate Rich Clipboard Payload (Strips ANSI and elegantly parses the exact metrics)
-        local copy_payload=$(echo "$fzf_choice" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | awk -F' │ ' -v comm="$target_comm" '{
-            pid=$1; gsub(/^[ \t]+|[ \t]+$/, "", pid);
-            cpu=$2; gsub(/^[ \t]+|[ \t]+$/, "", cpu);
-            mem=$3; gsub(/^[ \t]+|[ \t]+$/, "", mem);
-            ram=$4; gsub(/^[ \t]+|[ \t]+$/, "", ram);
-            time=$5; gsub(/^[ \t]+|[ \t]+$/, "", time);
-            printf "PID: %s | CPU: %s | MEM: %s | RAM: %s MB | TIME: %s | CMD: %s", pid, cpu, mem, ram, time, comm
-        }')
+        # We export target_args to the environment to prevent awk injection errors from weird command flags
+        local copy_payload=$(
+            export TARGET_CMD="$target_args"
+            echo "$fzf_choice" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | awk -F' │ ' '{
+                pid=$1; gsub(/^[ \t]+|[ \t]+$/, "", pid);
+                cpu=$2; gsub(/^[ \t]+|[ \t]+$/, "", cpu);
+                mem=$3; gsub(/^[ \t]+|[ \t]+$/, "", mem);
+                ram=$4; gsub(/^[ \t]+|[ \t]+$/, "", ram);
+                time=$5; gsub(/^[ \t]+|[ \t]+$/, "", time);
+                printf "PID: %s | CPU: %s | MEM: %s | RAM: %s MB | TIME: %s | CMD: %s", pid, cpu, mem, ram, time, ENVIRON["TARGET_CMD"]
+            }'
+        )
 
         # =======================================================
         # GLOBAL HOTKEY INTERCEPTION ROUTER
@@ -350,7 +355,7 @@ res_mon() {
             "2. 󰯈 Force Kill Process (SIGKILL)"
             "3.  Copy PID to Clipboard"
             "4.  Copy Full Process Info to Clipboard"
-            "5.  Copy Command to Clipboard"
+            "5.  Copy Full Command Path to Clipboard"
         )
         
         if [[ -n "$is_watching" ]]; then
@@ -404,9 +409,9 @@ res_mon() {
                 ;;
             5*) 
                 if command -v wl-copy >/dev/null 2>&1; then
-                    print -rn -- "$target_comm" | wl-copy
+                    print -rn -- "$target_args" | wl-copy
                 elif command -v xclip >/dev/null 2>&1; then
-                    print -rn -- "$target_comm" | xclip -selection clipboard
+                    print -rn -- "$target_args" | xclip -selection clipboard
                 fi
                 ;;
             6*)
