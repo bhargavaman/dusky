@@ -248,7 +248,6 @@ res_mon() {
             --info=inline-right
             --prompt=" ⚡ ${title_metric} ❯ "
             --header="$full_header"
-            --header-first
             --pointer=""
             --marker="✓"
             
