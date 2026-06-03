@@ -14,20 +14,26 @@ REQUIRE_ROOT = True
 # =============================================================================
 DEFAULT_MODE = "batch"                        
 THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
-ENABLE_USER_PRESETS = False                   
+
+# Enabled User Presets and strictly routed them to the new "Presets" tab
+ENABLE_USER_PRESETS = True                   
+USER_PRESETS_TAB = "Presets"
 
 TAB_NOTICES = {
-    0: {"level": "info", "message": "Remember to run your bootloader update command (e.g. limine-update) after modifying these parameters."},
+    0: {"level": "warning", "message": "Changes to the root partition or LUKS parameters can render the system unbootable. Proceed with caution."},
+    4: {"level": "info", "message": "Execute these actions after modifying kernel parameters to ensure your system boots with the latest configuration."},
 }
 
 # =============================================================================
 # 3. TABS DEFINITION
 # =============================================================================
 TABS = [
+    "Boot & Root",
     "Performance",
-    "Hardware",
-    "Debug",
-    "Misc"
+    "Hardware & Graphics",
+    "Security & Debug",
+    "Bootloader & Init",
+    "Presets"
 ]
 
 # =============================================================================
@@ -36,9 +42,89 @@ TABS = [
 
 SCHEMA = {
     # -------------------------------------------------------------------------
-    # TAB 0: PERFORMANCE
+    # TAB 0: BOOT & ROOT
     # -------------------------------------------------------------------------
     0: [
+        ConfigItem(
+            label="Root Partition",
+            key="root",
+            scope="DEFAULT",
+            type_="string",
+            default="unset",
+            group="Root Filesystem",
+            extended_help="**Root Device**\n\nSpecifies the device to be used as the root file system (e.g., `/dev/sda1`, `UUID=...`, or `/dev/mapper/cryptroot`)."
+        ),
+        ConfigItem(
+            label="Root FS Type",
+            key="rootfstype",
+            scope="DEFAULT",
+            type_="picker",
+            options=["unset", "btrfs", "ext4", "xfs", "f2fs", "vfat"],
+            default="unset",
+            group="Root Filesystem",
+            extended_help="**Root File System Type**\n\nExplicitly defines the file system type of the root partition, bypassing auto-detection to speed up boot."
+        ),
+        ConfigItem(
+            label="Root Flags",
+            key="rootflags",
+            scope="DEFAULT",
+            type_="string",
+            default="unset",
+            group="Root Filesystem",
+            extended_help="**Root Mount Options**\n\nComma-separated mount options applied to the root filesystem (e.g., `subvol=/@,noatime,compress=zstd:3`)."
+        ),
+        ConfigItem(
+            label="Mount Read-Write",
+            key="rw",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            group="Root Filesystem",
+            extended_help="**Read-Write Mount**\n\nMounts the root device initially as read-write. This is required by some init systems."
+        ),
+        ConfigItem(
+            label="Mount Read-Only",
+            key="ro",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            group="Root Filesystem",
+            extended_help="**Read-Only Mount**\n\nMounts the root device initially as read-only. The init system will remount it read-write later."
+        ),
+        ConfigItem(
+            label="LUKS Crypt Device",
+            key="rd.luks.name",
+            scope="DEFAULT",
+            type_="string",
+            default="unset",
+            group="Encryption",
+            extended_help="**Dracut LUKS Definition**\n\nMaps a LUKS UUID to a mapped device name (e.g., `be1ac50d-...=cryptroot`)."
+        ),
+        ConfigItem(
+            label="FSCK Mode",
+            key="fsck.mode",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "auto", "skip", "force"],
+            default="unset",
+            group="Boot Process",
+            extended_help="**File System Check**\n\nControls when `fsck` is executed on root file systems at boot time.\n\n- `skip`: Skips checking the root file system entirely (speeds up boot but risks mounting a dirty filesystem)."
+        ),
+        ConfigItem(
+            label="Splash Screen",
+            key="splash",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            group="Boot Process",
+            extended_help="**Boot Splash**\n\nEnables the boot splash screen (e.g., Plymouth or Plymouth-free bootsplash) to hide kernel initialization logs."
+        )
+    ],
+
+    # -------------------------------------------------------------------------
+    # TAB 1: PERFORMANCE
+    # -------------------------------------------------------------------------
+    1: [
         ConfigItem(
             label="Mitigations",
             key="mitigations",
@@ -47,17 +133,27 @@ SCHEMA = {
             options=["unset", "auto", "off"],
             default="unset",
             group="CPU",
-            extended_help="**CPU Vulnerability Mitigations**\n\nControls optional mitigations for CPU side-channel vulnerabilities (like Spectre and Meltdown).\n\n- `auto`: System default (usually enabled).\n- `off`: Disables all optional CPU mitigations, which can significantly improve system performance at the expense of local security.\n- `unset`: Removes the parameter, relying on the kernel's compile-time defaults."
+            extended_help="**CPU Vulnerability Mitigations**\n\nControls optional mitigations for CPU side-channel vulnerabilities (like Spectre and Meltdown).\n\n- `auto`: System default (usually enabled).\n- `off`: Disables all optional CPU mitigations, which can significantly improve system performance at the expense of local security.\n- `unset`: Relies on the kernel's compile-time defaults."
         ),
         ConfigItem(
             label="Intel P-State",
             key="intel_pstate",
             scope="DEFAULT",
             type_="cycle",
-            options=["unset", "disable", "passive", "force"],
+            options=["unset", "disable", "passive", "active", "force"],
             default="unset",
             group="CPU",
-            extended_help="**Intel Frequency Scaling**\n\nConfigures the hardware P-State scaling driver for Intel processors.\n\n- `disable`: Disables the active intel_pstate driver and falls back to acpi-cpufreq.\n- `passive`: Uses the passive governor to allow user-space tools more control over frequency.\n- `force`: Forces the driver to be used even on unsupported platforms."
+            extended_help="**Intel Frequency Scaling**\n\nConfigures the hardware P-State scaling driver for Intel processors.\n\n- `disable`: Disables intel_pstate and falls back to acpi-cpufreq.\n- `passive`: Uses the passive governor to allow user-space tools more control over frequency."
+        ),
+        ConfigItem(
+            label="AMD P-State",
+            key="amd_pstate",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "active", "passive", "guided", "disable"],
+            default="unset",
+            group="CPU",
+            extended_help="**AMD Frequency Scaling**\n\nConfigures the precision boost state scaling driver for modern AMD Ryzen processors.\n\n- `active`: Fully hardware-controlled autonomous scaling (Recommended for Zen 2+).\n- `guided`: OS hints mixed with hardware control."
         ),
         ConfigItem(
             label="ZSwap Enabled",
@@ -87,16 +183,7 @@ SCHEMA = {
             options=["unset", "enable", "disable"],
             default="unset",
             group="Memory",
-            extended_help="**Automatic NUMA Balancing**\n\nOptimizes thread and memory placement on multi-node NUMA architectures (such as dual-socket boards or large Threadripper systems).\n\n- `enable`: Automatically moves memory to the local node of the CPU executing the thread.\n- `disable`: Prevents automatic rebalancing, useful for rigid workload isolation."
-        ),
-        ConfigItem(
-            label="Disable Watchdog",
-            key="nowatchdog",
-            scope="DEFAULT",
-            type_="bool",
-            default=False,
-            group="Kernel",
-            extended_help="**NMI Watchdog**\n\nThe Non-Maskable Interrupt (NMI) watchdog detects hardware hang states.\n\nEnabling this flag (`nowatchdog`) disables the watchdog entirely, which can slightly reduce system interrupts and improve power efficiency on consumer laptops/desktops where kernel panics aren't mission-critical."
+            extended_help="**Automatic NUMA Balancing**\n\nOptimizes thread and memory placement on multi-node NUMA architectures (such as dual-socket boards or large Threadripper systems).\n\n- `enable`: Automatically moves memory to the local node of the CPU executing the thread."
         ),
         ConfigItem(
             label="Thread IRQs",
@@ -105,23 +192,52 @@ SCHEMA = {
             type_="bool",
             default=False,
             group="Kernel",
-            extended_help="**Threaded Interrupts**\n\nForces hardware interrupt handlers to run inside kernel threads instead of hard IRQ context. This can significantly improve real-time responsiveness and audio latency at the cost of a slight increase in overall overhead."
+            extended_help="**Threaded Interrupts**\n\nForces hardware interrupt handlers to run inside kernel threads instead of hard IRQ context. This can significantly improve real-time responsiveness and audio latency at the cost of a slight increase in overall CPU overhead."
         ),
     ],
 
     # -------------------------------------------------------------------------
-    # TAB 1: HARDWARE
+    # TAB 2: HARDWARE & GRAPHICS
     # -------------------------------------------------------------------------
-    1: [
+    2: [
+        ConfigItem(
+            label="Nvidia DRM Modeset",
+            key="nvidia-drm.modeset",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "1", "0"],
+            default="unset",
+            group="Graphics",
+            extended_help="**NVIDIA Direct Rendering Manager**\n\nRequired for Wayland compositors (like Hyprland or Sway) to function correctly on proprietary NVIDIA drivers.\n\n- `1`: Enables kernel modesetting (Required for Wayland)."
+        ),
+        ConfigItem(
+            label="AMDGPU PP Feature Mask",
+            key="amdgpu.ppfeaturemask",
+            scope="DEFAULT",
+            type_="string",
+            default="unset",
+            group="Graphics",
+            extended_help="**AMD GPU Powerplay Mask**\n\nUsed to unlock overclocking and undervolting capabilities on AMD graphics cards (e.g., `0xffffffff`)."
+        ),
+        ConfigItem(
+            label="Intel GuC/HuC",
+            key="i915.enable_guc",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "2", "3"],
+            default="unset",
+            group="Graphics",
+            extended_help="**Intel Graphics Microcontrollers**\n\nEnables advanced video encoding and power management on modern Intel GPUs.\n\n- `2`: Enable HuC only.\n- `3`: Enable both GuC and HuC."
+        ),
         ConfigItem(
             label="Intel IOMMU",
             key="intel_iommu",
             scope="DEFAULT",
             type_="cycle",
-            options=["unset", "on", "off"],
+            options=["unset", "on", "off", "igfx_off"],
             default="unset",
             group="IOMMU",
-            extended_help="**Intel IOMMU / VT-d**\n\nControls the Intel Input/Output Memory Management Unit.\n\n- `on`: Enables VT-d to allow advanced features like VFIO PCIe Passthrough for virtual machines.\n- `off`: Disables Intel IOMMU."
+            extended_help="**Intel IOMMU / VT-d**\n\nControls the Intel Input/Output Memory Management Unit.\n\n- `on`: Enables VT-d to allow advanced features like VFIO PCIe Passthrough for virtual machines."
         ),
         ConfigItem(
             label="AMD IOMMU",
@@ -131,7 +247,7 @@ SCHEMA = {
             options=["unset", "off", "fullflush", "force_isolation"],
             default="unset",
             group="IOMMU",
-            extended_help="**AMD IOMMU / AMD-Vi**\n\nControls the AMD IOMMU implementation.\n\n- `force_isolation`: Forces strict device isolation.\n- `fullflush`: Flushes IOTLB completely on unmap."
+            extended_help="**AMD IOMMU / AMD-Vi**\n\nControls the AMD IOMMU implementation.\n\n- `force_isolation`: Forces strict device isolation for VFIO."
         ),
         ConfigItem(
             label="IOMMU Mode",
@@ -141,7 +257,7 @@ SCHEMA = {
             options=["unset", "pt", "off", "force"],
             default="unset",
             group="IOMMU",
-            extended_help="**Generic IOMMU Subsystem**\n\n- `pt`: Passthrough mode. Devices use an identity-mapped translation by default, which improves DMA performance for host devices while still allowing VM passthrough.\n- `force`: Forces IOMMU initialization."
+            extended_help="**Generic IOMMU Subsystem**\n\n- `pt`: Passthrough mode. Devices use an identity-mapped translation by default, which improves DMA performance for host devices while still allowing VM passthrough."
         ),
         ConfigItem(
             label="PCIE ASPM",
@@ -150,8 +266,8 @@ SCHEMA = {
             type_="cycle",
             options=["unset", "default", "force", "off"],
             default="unset",
-            group="PCIe",
-            extended_help="**Active State Power Management**\n\nPCIe power saving configuration.\n\n- `force`: Forces ASPM on even if the BIOS says it's unsupported (can save power on laptops but may cause instability).\n- `off`: Disables ASPM entirely to prevent latency spikes or hardware crashes."
+            group="Power Management",
+            extended_help="**Active State Power Management**\n\nPCIe power saving configuration.\n\n- `force`: Forces ASPM on even if the BIOS says it's unsupported.\n- `off`: Disables ASPM entirely to prevent latency spikes or hardware crashes."
         ),
         ConfigItem(
             label="USB Autosuspend",
@@ -160,109 +276,33 @@ SCHEMA = {
             type_="cycle",
             options=["unset", "-1", "1"],
             default="unset",
-            group="USB",
+            group="Power Management",
             extended_help="**USB Core Autosuspend**\n\nControls the delay (in seconds) before an idle USB device is suspended.\n\n- `-1`: Completely disables USB autosuspend, which can fix issues with external audio DACs, mice, or keyboards disconnecting randomly."
         ),
         ConfigItem(
-            label="Memory Limit",
-            key="mem",
+            label="Cursor Default",
+            key="vt.global_cursor_default",
             scope="DEFAULT",
             type_="cycle",
-            options=["unset", "6G", "8G", "16G", "32G"],
+            options=["unset", "0", "1"],
             default="unset",
-            group="Hardware",
-            extended_help="**Force Memory Limit**\n\nRestricts the kernel to using only the specified amount of RAM. Useful for simulating lower-memory environments during debugging."
+            group="Console",
+            extended_help="**TTY Global Cursor**\n\n- `0`: Hides the blinking cursor on the raw TTY console during boot.\n- `1`: Shows the blinking cursor."
         ),
         ConfigItem(
-            label="Clock Source",
-            key="clocksource",
+            label="Console Blank (s)",
+            key="consoleblank",
             scope="DEFAULT",
-            type_="cycle",
-            options=["unset", "tsc", "hpet", "acpi_pm"],
+            type_="picker",
+            options=["unset", "0", "60", "300", "600", "900", "1800", "3600"],
             default="unset",
-            group="Hardware",
-            extended_help="**Hardware Clock Source**\n\nForces the kernel to use a specific clock source for timekeeping.\n\n- `tsc`: Time Stamp Counter (fastest and preferred for modern systems).\n- `hpet`: High Precision Event Timer (older fallback)."
-        ),
-        ConfigItem(
-            label="ACPI Backlight",
-            key="acpi_backlight",
-            scope="DEFAULT",
-            type_="cycle",
-            options=["unset", "video", "vendor", "native"],
-            default="unset",
-            group="ACPI",
-            extended_help="**Backlight Driver Selection**\n\nOverrides the default ACPI backlight driver selection. Changing this to `vendor` or `native` can often resolve issues with non-working brightness hotkeys on laptops."
+            group="Console",
+            extended_help="**TTY Screen Blanking**\n\nTime in seconds before a virtual TTY console will blank its screen to prevent burn-in.\n\n- `0`: Disables screen blanking entirely.\n- `600`: Defaults to 10 minutes."
         ),
     ],
 
     # -------------------------------------------------------------------------
-    # TAB 2: DEBUG
-    # -------------------------------------------------------------------------
-    2: [
-        ConfigItem(
-            label="Quiet Boot",
-            key="quiet",
-            scope="DEFAULT",
-            type_="bool",
-            default=False,
-            group="Logging",
-            extended_help="**Quiet Mode**\n\nSuppresses the vast majority of normal kernel initialization messages during the boot process, resulting in a cleaner, faster-scrolling screen or a seamless splash screen."
-        ),
-        ConfigItem(
-            label="Log Level",
-            key="loglevel",
-            scope="DEFAULT",
-            type_="int",
-            min_val=0,
-            max_val=7,
-            step=1,
-            default=3,
-            group="Logging",
-            extended_help="**Console Loglevel**\n\nDefines the severity threshold for printing messages to the console.\n\n- `0`: KERN_EMERG (Only emergencies)\n- `3`: KERN_ERR (Errors and worse, normal desktop standard)\n- `7`: KERN_DEBUG (Extremely verbose)"
-        ),
-        ConfigItem(
-            label="Ignore Loglevel",
-            key="ignore_loglevel",
-            scope="DEFAULT",
-            type_="bool",
-            default=False,
-            group="Logging",
-            extended_help="**Force Verbose Logs**\n\nForces the kernel to print all messages to the console regardless of the `loglevel` setting. Useful for deep debugging of driver initialization failures."
-        ),
-        ConfigItem(
-            label="Always Enable SysRq",
-            key="sysrq_always_enabled",
-            scope="DEFAULT",
-            type_="bool",
-            default=False,
-            group="Kernel",
-            extended_help="**Magic SysRq Key**\n\nEnables all functions of the Magic SysRq key combinations (Alt+SysRq+<Key>), allowing you to gracefully recover, reboot (REISUB), or dump state from a totally frozen system."
-        ),
-        ConfigItem(
-            label="Initcall Debug",
-            key="initcall_debug",
-            scope="DEFAULT",
-            type_="bool",
-            default=False,
-            group="Kernel",
-            extended_help="**Initcall Timing Debug**\n\nTraces every single function called during kernel initialization and prints how long it took. Invaluable for profiling slow boot times."
-        ),
-        ConfigItem(
-            label="Panic Timeout (s)",
-            key="panic",
-            scope="DEFAULT",
-            type_="int",
-            min_val=-1,
-            max_val=60,
-            step=1,
-            default=0,
-            group="Kernel",
-            extended_help="**Reboot on Panic**\n\nSets the timeout in seconds before automatically rebooting the system after a kernel panic.\n\n- `0`: Wait forever (halt).\n- `-1`: Reboot immediately."
-        ),
-    ],
-
-    # -------------------------------------------------------------------------
-    # TAB 3: MISC
+    # TAB 3: SECURITY & DEBUG
     # -------------------------------------------------------------------------
     3: [
         ConfigItem(
@@ -296,35 +336,122 @@ SCHEMA = {
             extended_help="**Kernel Audit Subsystem**\n\n- `1`: Enables the kernel auditing subsystem used by tools like auditd.\n- `0`: Disables auditing to slightly reduce overhead and log spam if you don't use it."
         ),
         ConfigItem(
-            label="FSCK Mode",
-            key="fsck.mode",
+            label="Quiet Boot",
+            key="quiet",
             scope="DEFAULT",
-            type_="cycle",
-            options=["unset", "auto", "skip"],
+            type_="bool",
+            default=False,
+            group="Logging",
+            extended_help="**Quiet Mode**\n\nSuppresses the vast majority of normal kernel initialization messages during the boot process, resulting in a cleaner, faster-scrolling screen or a seamless splash screen."
+        ),
+        ConfigItem(
+            label="Kernel Log Level",
+            key="loglevel",
+            scope="DEFAULT",
+            type_="picker",
+            options=["unset", "0", "1", "2", "3", "4", "5", "6", "7"],
             default="unset",
-            group="Boot",
-            extended_help="**File System Check**\n\nControls when `fsck` is executed on root file systems at boot time.\n\n- `skip`: Skips checking the root file system entirely (speeds up boot but risks mounting a dirty filesystem)."
+            group="Logging",
+            extended_help="**Console Loglevel**\n\nDefines the severity threshold for printing messages to the console.\n\n- `0`: KERN_EMERG (Only emergencies)\n- `3`: KERN_ERR (Errors and worse, normal desktop standard)\n- `7`: KERN_DEBUG (Extremely verbose)"
         ),
         ConfigItem(
-            label="Console Blank (s)",
-            key="consoleblank",
+            label="Udev Log Level",
+            key="rd.udev.log_level",
             scope="DEFAULT",
-            type_="int",
-            min_val=0,
-            max_val=3600,
-            step=60,
-            default=600,
-            group="Console",
-            extended_help="**TTY Screen Blanking**\n\nTime in seconds before a virtual TTY console will blank its screen to prevent burn-in.\n\n- `0`: Disables screen blanking entirely.\n- `600`: Defaults to 10 minutes."
+            type_="picker",
+            options=["unset", "0", "3", "4", "7"],
+            default="unset",
+            group="Logging",
+            extended_help="**Dracut/Udev Loglevel**\n\nLimits the verbosity of udev events during the initial ramdisk boot phase (e.g., `3` for errors only)."
         ),
         ConfigItem(
-            label="Update Bootloader",
-            key="action_update_bootloader",
+            label="Ignore Loglevel",
+            key="ignore_loglevel",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            group="Logging",
+            extended_help="**Force Verbose Logs**\n\nForces the kernel to print all messages to the console regardless of the `loglevel` setting. Useful for deep debugging of driver initialization failures."
+        ),
+        ConfigItem(
+            label="Always Enable SysRq",
+            key="sysrq_always_enabled",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            group="Recovery",
+            extended_help="**Magic SysRq Key**\n\nEnables all functions of the Magic SysRq key combinations (Alt+SysRq+<Key>), allowing you to gracefully recover, reboot (REISUB), or dump state from a totally frozen system."
+        ),
+        ConfigItem(
+            label="Disable Watchdog",
+            key="nowatchdog",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            group="Recovery",
+            extended_help="**NMI Watchdog**\n\nThe Non-Maskable Interrupt (NMI) watchdog detects hardware hang states.\n\nEnabling this flag (`nowatchdog`) disables the watchdog entirely, which can slightly reduce system interrupts and improve power efficiency on consumer systems."
+        ),
+        ConfigItem(
+            label="Panic Timeout (s)",
+            key="panic",
+            scope="DEFAULT",
+            type_="picker",
+            options=["unset", "-1", "0", "10", "30", "60"],
+            default="unset",
+            group="Recovery",
+            extended_help="**Reboot on Panic**\n\nSets the timeout in seconds before automatically rebooting the system after a kernel panic.\n\n- `0`: Wait forever (halt).\n- `-1`: Reboot immediately."
+        ),
+    ],
+
+    # -------------------------------------------------------------------------
+    # TAB 4: BOOTLOADER & INITRAMFS (Systemd-Boot / mkinitcpio)
+    # -------------------------------------------------------------------------
+    4: [
+        ConfigItem(
+            label="Regenerate Initramfs",
+            key="action_mkinitcpio",
             scope="DEFAULT",
             type_="action",
-            default="if command -v limine-update >/dev/null; then limine-update; elif command -v grub-mkconfig >/dev/null; then grub-mkconfig -o /boot/grub/grub.cfg; else echo 'No known bootloader tool found'; sleep 3; fi",
-            group="Actions",
-            extended_help="**Apply Kernel Changes**\n\nRunning this action executes an update script to apply your saved `/etc/kernel/cmdline` parameters to the active bootloader. It automatically attempts to use `limine-update` or `grub-mkconfig` depending on what is installed."
-        )
-    ]
+            default="mkinitcpio -P",
+            group="System Generation",
+            confirm_message="Are you sure you want to regenerate the initramfs for all configured kernels? (mkinitcpio -P)",
+            extended_help="**mkinitcpio -P**\n\nRebuilds the initial ramdisk environment for all installed preset kernels. This is absolutely essential after changing root filesystem types, LUKS encryption parameters, or early-boot drivers."
+        ),
+        ConfigItem(
+            label="Update Systemd-Boot",
+            key="action_bootctl_update",
+            scope="DEFAULT",
+            type_="action",
+            default="bootctl update",
+            group="Bootloader Configuration",
+            confirm_message="Are you sure you want to update systemd-boot in the ESP? (bootctl update)",
+            extended_help="**bootctl update**\n\nUpdates all installed versions of systemd-boot in the EFI system partition (ESP) if the available version is newer. It also ensures the boot loader is appended to the firmware's boot list."
+        ),
+        ConfigItem(
+            label="Install Systemd-Boot",
+            key="action_bootctl_install",
+            scope="DEFAULT",
+            type_="action",
+            default="bootctl install",
+            group="Bootloader Configuration",
+            confirm_message="Are you sure you want to INSTALL systemd-boot? This will overwrite the primary EFI bootloader. (bootctl install)",
+            extended_help="**bootctl install**\n\nInstalls systemd-boot into the EFI system partition and adds it to the top of the firmware's boot loader list. Only run this if systemd-boot is not yet installed."
+        ),
+        ConfigItem(
+            label="Refresh Random Seed",
+            key="action_bootctl_seed",
+            scope="DEFAULT",
+            type_="action",
+            default="bootctl random-seed",
+            group="Bootloader Configuration",
+            extended_help="**bootctl random-seed**\n\nRefreshes the random seed in the ESP and EFI variables, ensuring proper early-boot entropy."
+        ),
+    ],
+
+    # -------------------------------------------------------------------------
+    # TAB 5: PRESETS
+    # -------------------------------------------------------------------------
+    # This array is intentionally left empty. The UI engine will automatically
+    # populate this tab with the [Save Preset] button and all user-defined presets.
+    5: []
 }
