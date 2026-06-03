@@ -766,7 +766,7 @@ pages:
         button_text: "Setup"
       on_press:
         type: exec
-        command: kitty --class 02_openssh_setup.sh --hold sh -c $HOME/user_scripts/networking/02_openssh_setup.sh
+        command: kitty --class 02_openssh_setup.sh --hold sh -c $HOME/user_scripts/networking/02_openssh_setup.py
         terminal: false
     - type: button
       properties:

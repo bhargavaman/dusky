@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Arch Linux SSH Bootstrap v6.5 (Golden Copy)
+# Arch Linux SSH Bootstrap v7.0 (Golden Copy - Modern Python Edition)
 # ------------------------------------------------------------------------------
 # Purpose: Auto-provision OpenSSH, configure firewalls, smart IP/Tailscale
-#          detection, sshd.socket aware. Completely rewritten in Python for
-#          maximum reliability and UI aesthetics.
-# Target:  Arch Linux (latest rolling), Wayland/Hyprland
+#          detection, sshd.socket aware. 
+# Target:  Arch Linux (latest rolling), Wayland/Hyprland, Python 3.10+
 # Usage:   python setup_ssh.py [--auto]
 # ==============================================================================
 
@@ -16,20 +15,19 @@ import shlex
 import shutil
 import argparse
 import subprocess
+import contextlib
 from pathlib import Path
-from typing import Tuple, Optional
 
 # --- 1. Early Privilege Escalation & Dependency Bootstrapping ---
 def bootstrap_environment():
     """Ensures root privileges and strictly enforces dependencies BEFORE loading UI."""
     # 1. Escalate to root securely
     if os.geteuid() != 0:
-        print("[\033[1;33m*\033[0m] Root privileges required for Arch Linux provisioning. Elevating via sudo...")
-        sys.stdout.flush()
+        print("[\033[1;33m*\033[0m] Root privileges required for Arch Linux provisioning. Elevating via sudo...", flush=True)
         try:
             os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
         except Exception as e:
-            print(f"[\033[1;31m!\033[0m] Privilege escalation failed: {e}")
+            print(f"[\033[1;31m!\033[0m] Privilege escalation failed: {e}", flush=True)
             sys.exit(1)
 
     # 2. Check dependencies (we are guaranteed root now)
@@ -37,12 +35,11 @@ def bootstrap_environment():
         import rich
         import textual
     except ImportError:
-        print("[\033[1;36m*\033[0m] Missing critical Python libraries (rich, textual).")
-        print("[\033[1;36m*\033[0m] Autonomous mode: Auto-installing via pacman...")
-        sys.stdout.flush()
+        print("[\033[1;36m*\033[0m] Missing critical Python libraries (rich, textual).", flush=True)
+        print("[\033[1;36m*\033[0m] Autonomous mode: Auto-installing via pacman...", flush=True)
         
         if Path("/var/lib/pacman/db.lck").exists():
-            print("[\033[1;31m!\033[0m] FATAL: Pacman database locked (/var/lib/pacman/db.lck).")
+            print("[\033[1;31m!\033[0m] FATAL: Pacman database locked (/var/lib/pacman/db.lck).", flush=True)
             sys.exit(1)
             
         try:
@@ -50,12 +47,11 @@ def bootstrap_environment():
                 ["pacman", "-S", "python-rich", "python-textual", "qrencode", "--noconfirm", "--needed"],
                 check=True
             )
-            print("[\033[1;32m✔\033[0m] Dependencies installed. Reloading environment...")
-            sys.stdout.flush()
+            print("[\033[1;32m✔\033[0m] Dependencies installed. Reloading environment...", flush=True)
             # Re-execute the script so the Python runtime recognizes the newly installed packages
             os.execvp(sys.executable, [sys.executable] + sys.argv)
         except subprocess.CalledProcessError as e:
-            print(f"[\033[1;31m!\033[0m] FATAL: Failed to install dependencies: {e}")
+            print(f"[\033[1;31m!\033[0m] FATAL: Failed to install dependencies: {e}", flush=True)
             sys.exit(1)
 
 # Execute bootstrap BEFORE the global imports are evaluated
@@ -86,7 +82,7 @@ def run_cmd(cmd: list[str] | str, check: bool = True, capture: bool = True) -> s
             text=True
         )
     except FileNotFoundError:
-        # If the binary is missing, gracefully return a 127 (POSIX standard for 'command not found')
+        # Gracefully return a 127 (POSIX standard for 'command not found') if binary is missing
         if check:
             raise subprocess.CalledProcessError(127, cmd, output=f"Binary not found: {cmd[0]}")
         return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=f"Binary not found: {cmd[0]}")
@@ -103,7 +99,7 @@ def log_warn(msg: str):
 def log_error(msg: str):
     console.print(f"[bold red]  ✖[/] {msg}")
 
-def die(msg: str, exc: Optional[Exception] = None):
+def die(msg: str, exc: Exception | None = None):
     log_error(msg)
     if exc:
         console.print(f"[dim red]    Details: {exc}[/]")
@@ -120,13 +116,11 @@ def get_real_user() -> str:
     if shutil.which("loginctl"):
         out = run_cmd("loginctl list-sessions --output=json", check=False)
         if out.returncode == 0:
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 sessions = json.loads(out.stdout)
                 for session in sessions:
                     if session.get("uid", 0) >= 1000:
                         return session.get("user", "root")
-            except json.JSONDecodeError:
-                pass
     
     return "root"
 
@@ -167,7 +161,7 @@ def validate_sshd_config() -> str:
         
     return run_cmd("sshd -T").stdout
 
-def detect_unit_and_port(config_text: str) -> Tuple[str, str, int]:
+def detect_unit_and_port(config_text: str) -> tuple[str, str, int]:
     """Detect if sshd is using socket or service activation, and determine port."""
     unit = "sshd.service"
     unit_type = "service"
@@ -215,7 +209,7 @@ def analyze_security_warnings(config_text: str, user: str):
     
     listen_addrs = [line.split()[1] for line in lines if line.startswith("listenaddress ")]
     if listen_addrs:
-        all_local = all(any(x in addr for x in ["127.", "::1", "localhost"]) for addr in listen_addrs)
+        all_local = all(any(x in addr for x in ("127.", "::1", "localhost")) for addr in listen_addrs)
         if all_local:
             log_warn("sshd listens ONLY on localhost. Remote connections will fail.")
 
@@ -223,7 +217,7 @@ def analyze_security_warnings(config_text: str, user: str):
         permit_root = next((line.split()[1] for line in lines if line.startswith("permitrootlogin ")), "prohibit-password")
         if permit_root == "no":
             log_warn("PermitRootLogin is 'no'. Root cannot SSH in.")
-        elif permit_root in ["prohibit-password", "without-password"]:
+        elif permit_root in ("prohibit-password", "without-password"):
             log_warn(f"PermitRootLogin is '{permit_root}'. Keys are required (no passwords).")
 
     pass_auth = next((line.split()[1] for line in lines if line.startswith("passwordauthentication ")), "yes")
@@ -232,12 +226,12 @@ def analyze_security_warnings(config_text: str, user: str):
     host_auth = next((line.split()[1] for line in lines if line.startswith("hostbasedauthentication ")), "no")
     gssapi_auth = next((line.split()[1] for line in lines if line.startswith("gssapiauthentication ")), "no")
     
-    if all(a == "no" for a in [pass_auth, pubkey_auth, kbd_auth, host_auth, gssapi_auth]):
+    if all(a == "no" for a in (pass_auth, pubkey_auth, kbd_auth, host_auth, gssapi_auth)):
         log_error("[bold red]CRITICAL:[/] All primary authentication methods are disabled. You WILL be locked out.")
         
     if pass_auth == "no" and kbd_auth == "no":
-        user_home = os.path.expanduser(f"~{user}") if user != "root" else "/root"
-        auth_keys = Path(user_home) / ".ssh" / "authorized_keys"
+        user_home_dir = Path("/root") if user == "root" else Path(f"~{user}").expanduser()
+        auth_keys = user_home_dir / ".ssh" / "authorized_keys"
         if not auth_keys.exists() or auth_keys.stat().st_size == 0:
             log_warn(f"Password/Interactive Auth is disabled, and no keys found in {auth_keys}")
             log_info("Use [bold]ssh-copy-id[/] to add your public keys (e.g., Ed25519) before disconnecting.")
@@ -333,7 +327,7 @@ def manage_services(unit: str, unit_type: str):
             else:
                 die(f"Failed to start {unit}. Check: journalctl -xeu {unit}")
 
-def configure_tailscale_autonomous() -> Optional[str]:
+def configure_tailscale_autonomous() -> str | None:
     """Detect Tailscale, extract IP, and autonomously configure trust without prompting."""
     if not shutil.which("tailscale"):
         return None
@@ -371,7 +365,7 @@ def get_lan_ip() -> str:
     if not shutil.which("ip"):
         return "<IP-NOT-FOUND>"
 
-    try:
+    with contextlib.suppress(Exception):
         out = run_cmd("ip -j -4 addr show scope global", check=True).stdout
         data = json.loads(out)
         
@@ -393,8 +387,6 @@ def get_lan_ip() -> str:
                     addrs = iface.get("addr_info", [])
                     if addrs:
                         return addrs[0].get("local", "")
-    except Exception:
-        pass
 
     return "<IP-NOT-FOUND>"
 
@@ -411,7 +403,7 @@ def main():
     console.print(Panel.fit(
         f"[bold white]Targeting Arch Linux / User:[/] [bold cyan]{user}[/]\n"
         "[dim]Provisions: OpenSSH · Firewalls · Tailscale · Systemd Sockets[/]",
-        title="[bold green]Arch Linux SSH Provisioning v6.5[/]",
+        title="[bold green]Arch Linux SSH Provisioning v7.0[/]",
         border_style="blue",
         padding=(1, 4)
     ))
