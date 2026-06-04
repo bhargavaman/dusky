@@ -262,10 +262,20 @@ ensure_cachyos_keyring() {
     pacman-key --lsign-key F3B607488DB35A47
 
     local mirror_base="https://mirror.cachyos.org/repo/x86_64/cachyos"
+    
+    log_info "Fetching latest keyring package URL..."
+    local keyring_pkg
+    keyring_pkg=$(curl -sL "${mirror_base}/" | grep -oP 'href="\K(cachyos-keyring-[0-9]+-[0-9]+-any\.pkg\.tar\.zst)' | head -n1 || true)
+    
+    if [[ -z "$keyring_pkg" ]]; then
+        log_warn "Could not scrape dynamic keyring. Falling back to hardcoded version..."
+        keyring_pkg="cachyos-keyring-20240331-1-any.pkg.tar.zst"
+    fi
+
     manage_pacman_lock
 
     if run_pacman -U --needed --noconfirm \
-        "${mirror_base}/cachyos-keyring-20240331-1-any.pkg.tar.zst" \
+        "${mirror_base}/${keyring_pkg}" \
         "${mirror_base}/cachyos-mirrorlist-27-1-any.pkg.tar.zst" \
         "${mirror_base}/cachyos-v3-mirrorlist-27-1-any.pkg.tar.zst"; then
         log_ok "CachyOS keyring and mirrorlist packages bootstrapped."
@@ -326,6 +336,7 @@ Documentation=https://wiki.archlinux.org/title/Pacman
 
 [Service]
 Type=oneshot
+ExecStartPre=/bin/sleep 1
 ExecStart=/usr/local/bin/fix-mirrorlist-arch
 SERVICE
 

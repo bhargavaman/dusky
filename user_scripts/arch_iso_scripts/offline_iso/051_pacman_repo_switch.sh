@@ -252,10 +252,10 @@ Architecture = auto
 [cachyos-v3]
 Include = /etc/pacman.d/cachyos-v3-mirrorlist
 
-[cachyos-extra-v3]
+[cachyos-core-v3]
 Include = /etc/pacman.d/cachyos-v3-mirrorlist
 
-[cachyos-core-v3]
+[cachyos-extra-v3]
 Include = /etc/pacman.d/cachyos-v3-mirrorlist
 
 [cachyos]
