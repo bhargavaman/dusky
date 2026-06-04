@@ -1,0 +1,26 @@
+# ==========================================
+# NeoDiff Engine Proxy & ZLE Completion
+# ==========================================
+
+# 1. The Zero-Cost Proxy
+d() {
+    # Direct passthrough to the Python engine.
+    # No subshells, no I/O stat checks, no variable expansion delays.
+    "$HOME/user_scripts/tools/delta/neovim_delta.py" "$@"
+}
+
+# 2. Context-Aware Zsh Completion
+_d_neodiff() {
+    local ret=1
+    
+    # Map the exact argparse configuration from diff.py into Zsh's completion engine
+    _arguments -s -S \
+        '(-n --nvim)'{-n,--nvim}'[Compare target against its previous Neovim undo state]' \
+        '(-m --multiple)'{-m,--multiple}'[Compare multiple files]' \
+        '*:file:_files' && ret=0
+        
+    return ret
+}
+
+# 3. Bind the completion engine to the proxy function
+compdef _d_neodiff d

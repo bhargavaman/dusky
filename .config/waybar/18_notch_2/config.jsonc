@@ -193,6 +193,7 @@
             "on-click": "~/user_scripts/rofi/rofi_mako.sh",
             "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
             "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+            "signal": 8,
             "escape": true
         },
 

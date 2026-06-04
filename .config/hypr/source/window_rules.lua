@@ -554,13 +554,14 @@ hl.window_rule({
     center = true
 })
 
---- 02_openssh_setup.sh ---
+--- ssh setup
 hl.window_rule({
-    name = "02_openssh_setup.sh",
-    match = { class = "^(02_openssh_setup.sh)$" },
+    name = "02_openssh_setup.py",
+    match = {
+        class = "^(02_openssh_setup\\.py)$",
+    },
     float = true,
-    size = {652, 576},
-    center = true
+    size = {945, 731},
 })
 
 --- Clipbard_persistance ---
@@ -783,6 +784,17 @@ hl.window_rule({
 hl.window_rule({
     name = "dusky_keybinds.sh",
     match = { class = "^(dusky_keybinds.sh)$" },
+    float = true,
+    size = {"(monitor_w*0.9)", "(monitor_h*0.9)"},
+    move = {"(monitor_w*0.05)", "(monitor_h*0.05)"}
+})
+
+
+
+--- dusky_packages.sh script ---
+hl.window_rule({
+    name = "dusky_packages.sh",
+    match = { class = "^(dusky_packages.sh)$" },
     float = true,
     size = {"(monitor_w*0.9)", "(monitor_h*0.9)"},
     move = {"(monitor_w*0.05)", "(monitor_h*0.05)"}
@@ -1062,6 +1074,17 @@ hl.window_rule({
     center = true
 })
 
+--  Mousepad --
+hl.window_rule({
+    name = "orgxfcemousepad",
+    match = {
+        class = "^(org\\.xfce\\.mousepad)$",
+    },
+    float = true,
+    size = {"monitor_w * 0.4", "monitor_h * 0.7"},
+    animation = "popin 60%",      -- scale in starting from 60% size
+})
+
 --- erroands-gnome ---
 hl.window_rule({
     name = "errands",
@@ -1125,10 +1148,10 @@ hl.window_rule({
 
 --- Dusky_QuickPanal Script ---
 hl.window_rule({
-    name = "dusky_quickpanal.py",
+    name = "dusky_quickpanalpy",
     match = {
-        title = "^(dusky_quickpanal.py)$",
-        class = "^(org.dusky.quickpanal)$"
+        class = "^(dusky_quickpanal\\.py)$",
+        -- title = "^(dusky_quickpanal\\.py)$",
     },
     float = true,
     animation = "slide right",
@@ -1168,15 +1191,28 @@ hl.window_rule({
     center = true
 })
 
---- Thunar rename ---
+--- Thunar rename dialog ---
 hl.window_rule({
-    name = "float_thunar_rename",
+    name = "thunar_rename_dialog",
     match = {
-        class = "Thunar",
+        class = "^(thunar|Thunar)$",
         title = "^Rename.*$"
     },
-    float = true
+    float = true,
+    center = true,
 })
+
+-- Mousepad save dialog ---
+hl.window_rule({
+    name = "mousepad_save_dialog",
+    match = {
+        class = "^(org\\.xfce\\.mousepad)$",
+        title = "^Save( .*)?$"
+    },
+    float = true,
+    center = true,
+})
+
 
 --- System benchmarking script ---
 hl.window_rule({
@@ -1380,6 +1416,21 @@ hl.window_rule({
     size = {786, 492}, -- Large enough to preview wallpapers comfortably
     center = true
 })
+
+
+--- Dusky Wallpaper Selector---
+hl.window_rule({
+    name = "wallpaper_selectorpy",
+    match = {
+        class = "^(wallpaper_selector\\.py)$",
+    },
+    float = true,
+    size = {784, 553},
+    -- size = {"monitor_w * 0.49", "monitor_h * 0.6144"},
+
+    animation = "popin 60%",      -- scale in starting from 60% size
+})
+
 
 --- Hyprland Share Picker ---
 hl.window_rule({

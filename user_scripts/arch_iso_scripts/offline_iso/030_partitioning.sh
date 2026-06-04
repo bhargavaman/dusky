@@ -2,7 +2,7 @@
 # ==============================================================================
 # MODULE: 030_partitioning.sh
 # CONTEXT: Arch ISO Environment
-# PURPOSE: Block Device Prep, GPT, LUKS2 Encryption, Base Filesystem Creation
+# PURPOSE: Block Device Prep, GPT, Encryption Setup, Base Filesystem Creation
 # ==============================================================================
 
 set -euo pipefail
@@ -417,7 +417,19 @@ prompt_luks_password() {
 
 # --- Unified Provisioning Flow ---
 run_provisioning_wizard() {
-    local cli_arg="${1:-}"
+    local cli_mode=""
+    local force_encrypt=""
+    
+    # CLI Argument Parsing
+    for arg in "$@"; do
+        case "${arg,,}" in
+            --auto|auto) cli_mode="auto" ;;
+            --manual|manual) cli_mode="manual" ;;
+            --rescue|rescue) cli_mode="rescue" ;;
+            --encrypt) force_encrypt="1" ;;
+            --no-encrypt) force_encrypt="0" ;;
+        esac
+    done
     
     clear 2>/dev/null || true
     echo -e "${C_BOLD}=== SYSTEM DISK PROVISIONING (${C_CYAN}${BOOT_MODE}${C_RESET}${C_BOLD}) ===${C_RESET}\n"
@@ -439,13 +451,13 @@ run_provisioning_wizard() {
     # --- Strategy Selection Menu & CLI Override ---
     local strategy_choice=""
     
-    if [[ "$cli_arg" == "--auto" || "$cli_arg" == "auto" ]]; then
+    if [[ "$cli_mode" == "auto" ]]; then
         echo -e "\n${C_YELLOW}>> [--auto] flag detected. Bypassing menu and defaulting to 'Wipe Entire Drive' strategy.${C_RESET}"
         strategy_choice="1"
-    elif [[ "$cli_arg" == "--manual" || "$cli_arg" == "manual" ]]; then
+    elif [[ "$cli_mode" == "manual" ]]; then
         echo -e "\n${C_YELLOW}>> [--manual] flag detected. Bypassing menu and defaulting to 'Manual Partitioning' strategy.${C_RESET}"
         strategy_choice="3"
-    elif [[ "$cli_arg" == "--rescue" || "$cli_arg" == "rescue" ]]; then
+    elif [[ "$cli_mode" == "rescue" ]]; then
         echo -e "\n${C_YELLOW}>> [--rescue] flag detected. Bypassing menu and defaulting to 'Rescue / Chroot' strategy.${C_RESET}"
         strategy_choice="4"
     else
@@ -487,6 +499,22 @@ run_provisioning_wizard() {
             rescue_mode=0
             ;;
     esac
+
+    # --- Encryption Strategy Resolution ---
+    local do_encrypt=1
+    if [[ -n "$force_encrypt" ]]; then
+        do_encrypt="$force_encrypt"
+    elif [[ -n "${ENCRYPT_ROOT:-}" ]]; then
+        do_encrypt="$ENCRYPT_ROOT"
+    elif (( rescue_mode == 0 )); then
+        echo -e "\n${C_CYAN}Disk Encryption:${C_RESET}"
+        read -r -p "Encrypt the root partition with LUKS2? [Y/n]: " enc_choice
+        if [[ "${enc_choice,,}" == "n" || "${enc_choice,,}" == "no" ]]; then
+            do_encrypt=0
+        else
+            do_encrypt=1
+        fi
+    fi
 
     # Step 1: Strategy-Specific Pre-Work
     if (( manual_partition == 1 )); then
@@ -547,9 +575,14 @@ run_provisioning_wizard() {
     if (( rescue_mode == 1 )); then
         echo -e "\n${C_YELLOW}>> Rescue Mode selected. No data will be formatted.${C_RESET}"
         
+        local state_file="/tmp/arch_install_state.env"
+        > "$state_file"
+        echo "PROVISIONED_ROOT_PART=\"$part_root\"" >> "$state_file"
+
         # Validation Check: Ensure the selected partition actually contains a LUKS header
         if ! cryptsetup isLuks "$part_root" >/dev/null 2>&1; then
             echo -e "${C_YELLOW}>> Partition $part_root does not contain a valid LUKS header. Assuming unencrypted plain partition.${C_RESET}"
+            echo "ENCRYPT_ROOT=\"0\"" >> "$state_file"
             echo -e "${C_GREEN}>> Rescue setup complete. Proceed to 040_disk_mount.sh to map subvolumes.${C_RESET}"
             return 0
         fi
@@ -568,17 +601,22 @@ run_provisioning_wizard() {
         
         OPENED_CRYPTROOT=1
         
+        echo "ENCRYPT_ROOT=\"1\"" >> "$state_file"
         echo -e "${C_GREEN}>> Rescue unlocked. Proceed to 040_disk_mount.sh to map subvolumes without formatting.${C_RESET}"
         return 0
     fi
 
     # Step 4: Authentication (For new/overwritten systems)
-    local luks_pass
-    if [[ -n "${ROOT_PASS:-}" ]]; then
-        echo -e "${C_YELLOW}>> Inheriting LUKS passphrase from staged credentials...${C_RESET}"
-        luks_pass="$ROOT_PASS"
+    local luks_pass=""
+    if (( do_encrypt == 1 )); then
+        if [[ -n "${ROOT_PASS:-}" ]]; then
+            echo -e "${C_YELLOW}>> Inheriting LUKS passphrase from staged credentials...${C_RESET}"
+            luks_pass="$ROOT_PASS"
+        else
+            luks_pass=$(prompt_luks_password)
+        fi
     else
-        luks_pass=$(prompt_luks_password)
+        echo -e "${C_YELLOW}>> Encryption disabled. Skipping LUKS password setup.${C_RESET}"
     fi
 
     # Step 5: Final Warning
@@ -597,17 +635,22 @@ run_provisioning_wizard() {
 
     # Step 7: Drive Wipe & Re-partition (Strategy 1 Only)
     if (( wipe_entire_disk == 1 )); then
+        local root_part_type="8304" # Standard Linux root (x86-64)
+        if (( do_encrypt == 1 )); then
+            root_part_type="8309" # Linux LUKS
+        fi
+
         echo -e "${C_YELLOW}>> Zapping partition table...${C_RESET}"
         wipefs -a "$target_dev"
         sgdisk --zap-all "$target_dev"
 
         echo -e "${C_YELLOW}>> Writing new GPT layout...${C_RESET}"
         if [[ "$BOOT_MODE" == "UEFI" ]]; then
-            sgdisk -n 1:0:+5G -t 1:ef00 -c 1:"EFI System" "$target_dev"
-            sgdisk -n 2:0:0   -t 2:8309 -c 2:"Linux LUKS" "$target_dev"
+            sgdisk -n 1:0:+1.5G -t 1:ef00 -c 1:"EFI System" "$target_dev"
+            sgdisk -n 2:0:0   -t 2:"$root_part_type" -c 2:"Linux Root" "$target_dev"
         else
             sgdisk -n 1:0:+1M -t 1:ef02 -c 1:"BIOS Boot"  "$target_dev"
-            sgdisk -n 2:0:0   -t 2:8309 -c 2:"Linux LUKS" "$target_dev"
+            sgdisk -n 2:0:0   -t 2:"$root_part_type" -c 2:"Linux Root" "$target_dev"
         fi
 
         partprobe "$target_dev"
@@ -631,14 +674,19 @@ run_provisioning_wizard() {
     echo -e "${C_YELLOW}>> Clearing residual signatures on Root ($part_root)...${C_RESET}"
     wipefs -af "$part_root"
 
-    echo -e "${C_YELLOW}>> Encrypting Root Partition ($part_root)...${C_RESET}"
-    printf '%s' "$luks_pass" | cryptsetup --batch-mode luksFormat --type luks2 --key-file - "$part_root"
-    printf '%s' "$luks_pass" | cryptsetup open --allow-discards --key-file - "$part_root" "$TARGET_CRYPT_NAME"
-    OPENED_CRYPTROOT=1
-    unset -v luks_pass
+    local btrfs_target="$part_root"
+
+    if (( do_encrypt == 1 )); then
+        echo -e "${C_YELLOW}>> Encrypting Root Partition ($part_root)...${C_RESET}"
+        printf '%s' "$luks_pass" | cryptsetup --batch-mode luksFormat --type luks2 --key-file - "$part_root"
+        printf '%s' "$luks_pass" | cryptsetup open --allow-discards --key-file - "$part_root" "$TARGET_CRYPT_NAME"
+        OPENED_CRYPTROOT=1
+        unset -v luks_pass
+        btrfs_target="/dev/mapper/${TARGET_CRYPT_NAME}"
+    fi
 
     echo -e "${C_YELLOW}>> Formatting Root (BTRFS)...${C_RESET}"
-    mkfs.btrfs -f -L "ARCH_ROOT" "/dev/mapper/${TARGET_CRYPT_NAME}"
+    mkfs.btrfs -f -L "ARCH_ROOT" "$btrfs_target"
 
     if [[ "$BOOT_MODE" == "UEFI" ]]; then
         if (( format_efi == 1 )); then
@@ -659,11 +707,12 @@ run_provisioning_wizard() {
     if [[ -n "${part_boot:-}" ]]; then
         echo "PROVISIONED_EFI_PART=\"$part_boot\"" >> "$state_file"
     fi
+    echo "ENCRYPT_ROOT=\"$do_encrypt\"" >> "$state_file"
 
     echo -e "${C_GREEN}>> Disk Provisioning Complete. Ready for architecture assembly.${C_RESET}"
 }
 
 # --- Entry Logic ---
-run_provisioning_wizard "${1:-}"
+run_provisioning_wizard "$@"
 
 exit 0

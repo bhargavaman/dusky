@@ -31,6 +31,7 @@ declare -ra BROWSER_CATALOG=(
     "chromium|0|chromium.desktop|Chromium"
     "zen-browser|0|zen.desktop|Zen Browser"
     "brave|0|brave-browser.desktop|Brave"
+    "helium-browser|0|helium.desktop|Helium"
     "librewolf|0|librewolf.desktop|LibreWolf"
     "edge|0|microsoft-edge.desktop|Microsoft Edge"
     "vivaldi|0|vivaldi-stable.desktop|Vivaldi"
@@ -273,6 +274,9 @@ switch_browser() {
             for (i = 1; i <= NR; i++) {
                 if (lines[i] ~ /description[[:space:]]*=[[:space:]]*"Launch Browser"/) {
                     found = 1
+                    if (lines[i] !~ /submap_universal/) {
+                        sub(/[[:space:]]*\}[[:space:]]*$/, ", submap_universal = true }", lines[i])
+                    }
                     for (j = i; j >= 1; j--) {
                         if (lines[j] ~ /hl\.dsp\.exec_cmd/) {
                             sub(/hl\.dsp\.exec_cmd\([^)]+\)/, "hl.dsp.exec_cmd(" new_cmd ")", lines[j])
@@ -289,7 +293,7 @@ switch_browser() {
                 print "hl.bind("
                 print "    \"SUPER + W\","
                 print "    hl.dsp.exec_cmd(" new_cmd "),"
-                print "    { description = \"Launch Browser\" }"
+                print "    { description = \"Launch Browser\", submap_universal = true }"
                 print ")"
             }
         }

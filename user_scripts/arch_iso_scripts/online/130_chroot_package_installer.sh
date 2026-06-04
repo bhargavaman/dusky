@@ -9,7 +9,7 @@
 
 # Group 1: Graphics & Drivers
 declare -ar pkgs_graphics=(
-  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "linux-headers" "acpi_call"
+  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "linux-headers" "acpi_call" "kernel-modules-hook"
 )
 
 # Group 2: Hyprland Core
@@ -24,7 +24,7 @@ declare -ar pkgs_appearance=(
 
 # Group 4: Desktop Experience
 declare -ar pkgs_desktop=(
-  "waybar" "awww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl"
+  "waybar" "awww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl" "hyprshutdown"
 )
 
 # Group 5: Audio & Bluetooth
@@ -37,7 +37,7 @@ declare -ar pkgs_filesystem=(
   "btrfs-progs" "compsize" "zram-generator" "udisks2" "udiskie" "dosfstools" "ntfs-3g" "xdg-user-dirs" "usbutils" "gnome-disk-utility" "unzip" "zip" "unrar" "7zip" "cpio" "file-roller" "rsync" "nfs-utils" "nilfs-utils" "smartmontools" "dmraid" "hdparm" "hwdetect" "lsscsi" "sg3_utils" "cpupower" "dust" "dkms"
 
   # thunar
-  # "thunar" "thunar-archive-plugin" "thunar-volman" "tumbler" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib" "gvfs" "gvfs-mtp" "gvfs-nfs" "gvfs-smb"
+  "thunar" "thunar-archive-plugin" "file-roller" "thunar-volman" "thunar-media-tags-plugin" "thunar-shares-plugin" "thunar-vcs-plugin" "tumbler" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib" "libgsf" "libgepub" "libopenraw" "resvg" "gvfs" "gvfs-mtp" "gvfs-nfs" "gvfs-smb" "gvfs-gphoto2" "gvfs-afc" "gvfs-dnssd" "catfish" "gnome-keyring" "meld" "xreader" "imagemagick"
 
   # nemo
   "nemo" "nemo-fileroller" "file-roller" "gvfs" "gvfs-smb" "gvfs-mtp" "gvfs-gphoto2" "gvfs-nfs" "gvfs-afc" "gvfs-dnssd" "ffmpegthumbnailer" "webp-pixbuf-loader" "poppler-glib" "libgsf" "gnome-epub-thumbnailer" "resvg" "nemo-terminal" "nemo-python" "nemo-compare" "meld" "nemo-media-columns" "nemo-audio-tab" "nemo-image-converter" "nemo-emblems" "nemo-repairer" "nemo-share" "python-gobject" "dconf-editor" "xreader" "nemo-pastebin"
@@ -70,7 +70,10 @@ declare -ar pkgs_sysadmin=(
 
 # Group 12: Gnome Utilities
 declare -ar pkgs_gnome=(
-  "snapshot" "cameractrls" "loupe" "gnome-text-editor" "gnome-calculator" "gnome-clocks"
+
+  #"gnome-text-editor"
+
+  "snapshot" "cameractrls" "loupe" "mousepad" "gnome-calculator" "gnome-clocks"
 )
 
 # Group 13: Productivity
@@ -78,9 +81,8 @@ declare -ar pkgs_productivity=(
   "zathura" "zathura-pdf-mupdf" "cava"
 )
 
-# Group 14: Limine and snapshot
 declare -ar pkgs_btrfs_snapshot=(
-  "limine" "efibootmgr" "efitools" "kernel-modules-hook" "btrfs-progs" "snapper" "snap-pac" "jdk-openjdk" "mtools"
+  "snapper"
 )
 
 declare -ar GROUP_LABELS=(

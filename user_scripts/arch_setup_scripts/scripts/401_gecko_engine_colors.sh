@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# -----------------------------------------------------------------------------
+# works withotu sighned extention
 # Script: 401_gecko_engine_colors.sh
 # Description: Zero-touch, permanent autonomous setup for MatugenFox
 # Environment: Arch Linux / Hyprland (Firefox / Zen / LibreWolf / Floorp)

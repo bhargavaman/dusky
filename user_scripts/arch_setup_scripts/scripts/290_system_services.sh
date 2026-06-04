@@ -20,7 +20,7 @@ trap 'exit_code=$?; [[ $exit_code -ne 0 ]] && printf "\n[!] Script failed with c
 # Add or remove system services here.
 readonly TARGET_SERVICES=(
     "NetworkManager.service"
-    "tlp.service"
+#    "tlp.service"
     "udisks2.service"
     "thermald.service"
     "bluetooth.service"
@@ -28,8 +28,8 @@ readonly TARGET_SERVICES=(
     "fstrim.timer"
     "systemd-timesyncd.service"
     "acpid.service"
-    "vsftpd.service"
-    "reflector.timer"
+#    "vsftpd.service"
+#    "reflector.timer"
     "systemd-resolved.service"
     "snapper-cleanup.timer"
     "snapper-cleanup.service"

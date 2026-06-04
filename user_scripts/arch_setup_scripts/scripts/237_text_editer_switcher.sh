@@ -27,6 +27,7 @@ declare -ra EDITOR_CATALOG=(
     "kate|0|org.kde.kate.desktop|Kate (GUI)"
     "emacs|0|emacs.desktop|Emacs (GUI)"
     "micro|1|micro.desktop|Micro (Terminal)"
+    "mousepad|0|org.xfce.mousepad.desktop|Mousepad (GUI)"
 )
 
 # Paths
@@ -286,6 +287,9 @@ switch_text_editor() {
             for (i = 1; i <= NR; i++) {
                 if (lines[i] ~ /description[[:space:]]*=[[:space:]]*"Open Text Editor"/) {
                     found = 1
+                    if (lines[i] !~ /submap_universal/) {
+                        sub(/[[:space:]]*\}[[:space:]]*$/, ", submap_universal = true }", lines[i])
+                    }
                     for (j = i; j >= 1; j--) {
                         if (lines[j] ~ /hl\.dsp\.exec_cmd/) {
                             sub(/hl\.dsp\.exec_cmd\([^)]+\)/, "hl.dsp.exec_cmd(" new_cmd ")", lines[j])
@@ -302,7 +306,7 @@ switch_text_editor() {
                 print "hl.bind("
                 print "    \"SUPER + R\","
                 print "    hl.dsp.exec_cmd(" new_cmd "),"
-                print "    { description = \"Open Text Editor\" }"
+                print "    { description = \"Open Text Editor\", submap_universal = true }"
                 print ")"
             }
         }

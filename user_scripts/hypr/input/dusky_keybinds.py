@@ -1,37 +1,58 @@
 #!/usr/bin/env python3
 # ==============================================================================
 # Description: Advanced TUI for Hyprland 0.55+ Lua Keybinds
-#              - Clean UI: Hides raw Lua syntax on the front page for readability
-#              - Lexically perfect parser (supports [=[ Lua long brackets ]=])
-#              - Safely modifies dotfiles (resolves symlinks before atomic write)
-#              - Native hl.unbind() generation to prevent zombie source keys
-#              - Smart UI Deduplication (Hides backend unbind shields)
-#              - Complete submap awareness
-#              - XDG Base Directory Specification compliant
+#              - Lexically perfect parser (supports multiline functions/closures)
+#              - Auto-installs dependencies via Arch Linux pacman
+#              - Dynamic System $EDITOR detection with safe fallbacks
+#              - Synchronous UI rendering natively handled by Rich
 # ==============================================================================
 
 from __future__ import annotations
 
-import atexit
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-try:
-    import readline
-except ImportError:
-    pass
+# ──────────────────────────────────────────────────────────────────────────────
+# Pre-flight Dependency Setup (Arch Native)
+# ──────────────────────────────────────────────────────────────────────────────
+def ensure_dependencies() -> None:
+    try:
+        import rich
+    except ImportError:
+        print("\033[0;33m[!] Missing required dependency: 'rich' for advanced syntax formatting.\033[0m")
+        print("\033[0;36m[*] Auto-installing via pacman (you may be prompted for your sudo password)...\033[0m")
+        try:
+            subprocess.run(['sudo', 'pacman', '-S', 'python-rich', '--needed', '--noconfirm'], check=True)
+            print("\033[0;32m[+] Successfully installed python-rich. Booting...\033[0m")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except subprocess.CalledProcessError:
+            print("\033[0;31m[-] Failed to install python-rich automatically.\033[0m")
+            print("Please install it manually: sudo pacman -S python-rich")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("\n\033[0;31m[-] Installation aborted by user.\033[0m")
+            sys.exit(1)
+
+ensure_dependencies()
+
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.table import Table
+
+console = Console()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# ANSI Colours & Formatting
+# ANSI Colours for FZF (FZF strictly requires raw ANSI)
 # ──────────────────────────────────────────────────────────────────────────────
 BLUE         = '\033[0;34m'
 GREEN        = '\033[0;32m'
@@ -53,12 +74,7 @@ XDG_CONFIG_HOME = Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config'))
 SOURCE_LUA = XDG_CONFIG_HOME / 'hypr/source/keybinds.lua'
 CUSTOM_LUA = XDG_CONFIG_HOME / 'hypr/edit_here/source/keybinds.lua'
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Runtime globals & Templates
-# ──────────────────────────────────────────────────────────────────────────────
 VIEW_ONLY = False
-_in_alt   = False
-
 EMPTY_TEMPLATE = 'hl.bind("SUPER + ", hl.dsp.exec_cmd(""), { description = "" })'
 
 # ==============================================================================
@@ -67,7 +83,6 @@ EMPTY_TEMPLATE = 'hl.bind("SUPER + ", hl.dsp.exec_cmd(""), { description = "" })
 
 @dataclass
 class Bind:
-    """Represents one parsed hl.bind() or hl.unbind() call."""
     key_str:     str   
     norm_mods:   str   
     norm_key:    str   
@@ -85,26 +100,9 @@ class Bind:
 # System Utilities
 # ==============================================================================
 
-def enter_alt_screen() -> None:
-    global _in_alt
-    os.system('tput smcup 2>/dev/null')
-    _in_alt = True
-
-def leave_alt_screen() -> None:
-    global _in_alt
-    if _in_alt:
-        os.system('tput rmcup 2>/dev/null')
-        _in_alt = False
-
-def cleanup() -> None:
-    leave_alt_screen()
-
 def die(msg: str) -> None:
-    print(f'{RED}[FATAL]{RESET} {msg}', file=sys.stderr)
-    cleanup()
+    console.print(f"[bold red][FATAL][/bold red] {msg}")
     sys.exit(1)
-
-atexit.register(cleanup)
 
 def atomic_write(content: str, path: Path) -> None:
     real = path.resolve()
@@ -128,38 +126,93 @@ def atomic_write(content: str, path: Path) -> None:
 
 def reload_hyprland() -> None:
     if not os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
-        print(f'{DIM}Not running under Hyprland; skipping reload.{RESET}')
+        console.print("[dim]Not running under Hyprland; skipping reload.[/dim]")
         return
     if not shutil.which('hyprctl'): return
     result = subprocess.run(['hyprctl', 'reload'], capture_output=True, text=True)
     if result.returncode == 0:
-        print(f'{GREEN}Hyprland configuration reloaded.{RESET}')
+        console.print(Panel("Hyprland configuration successfully reloaded.", style="bold green", expand=False))
     else:
         out = (result.stdout or result.stderr or '').strip()
-        print(f'{YELLOW}[WARNING]{RESET} Hyprland reload issue: {out}')
-        print('  Keybind was saved. Reload manually or restart Hyprland.')
+        console.print(Panel(f"Hyprland reload issue:\n{out}\n\nKeybind was saved. Reload manually or restart Hyprland.", title="[bold yellow]WARNING[/bold yellow]", border_style="yellow", expand=False))
+
+def edit_in_editor(initial_text: str, editor_choice: str) -> Optional[str]:
+    """Handles spawning the chosen editor (Native/Nano/Inline). Returns None on abort/error."""
+    if editor_choice == 'inline':
+        console.print("\n[bold yellow]Inline Editing Mode[/bold yellow]")
+        console.print("Enter your new Lua code. Press [bold cyan]Ctrl+D[/bold cyan] on a new empty line when finished.")
+        console.print("[dim]Original code for reference:[/dim]")
+        console.print(Syntax(initial_text, "lua", theme="monokai", background_color="default"))
+        
+        lines = []
+        try:
+            for line in sys.stdin:
+                lines.append(line)
+        except EOFError:
+            pass
+        except KeyboardInterrupt:
+            return None
+        return "".join(lines).strip()
+
+    cmd = shlex.split(editor_choice)
+    with tempfile.NamedTemporaryFile(mode='w+', suffix='.lua', delete=False, encoding='utf-8') as tf:
+        tf.write(initial_text)
+        tf.flush()
+        filepath = tf.name
+        
+    try:
+        cmd.append(filepath)
+        subprocess.run(cmd, check=True)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except subprocess.CalledProcessError:
+        return None
+    except KeyboardInterrupt:
+        return None
+    finally:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
+def get_editor_choice() -> str:
+    """Dynamically probes for $EDITOR before offering fallbacks."""
+    sys_editor = os.environ.get('EDITOR')
+    
+    console.print("\n[bold yellow]Select Editor:[/bold yellow]")
+    if sys_editor:
+        console.print(f"  [bold white]\\[1][/bold white] [cyan]System Default[/cyan] ({sys_editor})")
+        primary_cmd = sys_editor
+    else:
+        console.print("  [bold white]\\[1][/bold white] [cyan]Neovim[/cyan] (nvim)")
+        primary_cmd = 'nvim'
+        
+    console.print("  [bold white]\\[2][/bold white] [cyan]Nano[/cyan] (nano)")
+    console.print("  [bold white]\\[3][/bold white] [cyan]Terminal Inline[/cyan] (Standard Input)")
+    
+    while True:
+        choice = console.input("\n[bold cyan]Select [1/2/3] > [/bold cyan]").strip().lower()
+        if choice == '1': return primary_cmd
+        if choice in ('2', 'nano'): return 'nano'
+        if choice in ('3', 'inline', 't'): return 'inline'
+        # Secondary fallback if the user types 'nvim' natively
+        if choice in ('nvim', 'vim', 'n'): return 'nvim'
 
 # ==============================================================================
-# Robust Lua Lexical Parsing
+# Robust Lua Lexical Parsing (Untouched Core Logic)
 # ==============================================================================
 
 def get_long_bracket_end(code: str, start_idx: int) -> int:
     q = start_idx + 1
-    while q < len(code) and code[q] == '=':
-        q += 1
+    while q < len(code) and code[q] == '=': q += 1
     if q < len(code) and code[q] == '[':
         eq_count = q - start_idx - 1
         end_seq = ']' + ('=' * eq_count) + ']'
         end_idx = code.find(end_seq, q + 1)
-        if end_idx != -1:
-            return end_idx + len(end_seq)
+        if end_idx != -1: return end_idx + len(end_seq)
     return -1
 
 def build_active_code_mask(code: str) -> list[bool]:
     mask = [True] * len(code)
-    i = 0
-    n = len(code)
-
+    i, n = 0, len(code)
     while i < n:
         ch = code[i]
         if ch in ('"', "'"):
@@ -176,8 +229,7 @@ def build_active_code_mask(code: str) -> list[bool]:
                     break
                 i += 1
         elif ch == '-' and i + 1 < n and code[i+1] == '-':
-            mask[i] = False
-            mask[i+1] = False
+            mask[i], mask[i+1] = False, False
             i += 2
             if i < n and code[i] == '[':
                 lb_end = get_long_bracket_end(code, i)
@@ -205,18 +257,14 @@ def find_balanced_end(text: str, open_pos: int, mask: list[bool]) -> int:
     depth = 0
     for i in range(open_pos, len(text)):
         if not mask[i]: continue
-        if text[i] == '(':
-            depth += 1
+        if text[i] == '(': depth += 1
         elif text[i] == ')':
             depth -= 1
-            if depth == 0:
-                return i + 1
+            if depth == 0: return i + 1
     return len(text)
 
 def split_top_args(text: str, start_idx: int, end_idx: int, mask: list[bool]) -> list[str]:
-    args = []
-    buf = []
-    depth = 0
+    args, buf, depth = [], [], 0
     for i in range(start_idx, end_idx):
         ch = text[i]
         if not mask[i]:
@@ -233,8 +281,7 @@ def split_top_args(text: str, start_idx: int, end_idx: int, mask: list[bool]) ->
             buf = []
         else:
             buf.append(ch)
-    if buf:
-        args.append(''.join(buf).strip())
+    if buf: args.append(''.join(buf).strip())
     return args
 
 def strip_quotes(arg: str) -> str:
@@ -283,27 +330,17 @@ _MOD_ALIASES = {
 }
 
 def normalize_key(key_str: str) -> tuple[str, str]:
-    if '+' not in key_str:
-        return '', key_str.strip().lower()
-    
+    if '+' not in key_str: return '', key_str.strip().lower()
     parts = key_str.split('+')
     clean_parts = [p.strip().lower() for p in parts]
-    
     if len(clean_parts) >= 2 and clean_parts[-1] == '':
         clean_parts = clean_parts[:-2] + ['+']
-        
     clean_parts = [_MOD_ALIASES.get(p, p) for p in clean_parts if p]
-    
     if not clean_parts: return '', ''
     if len(clean_parts) == 1: return '', clean_parts[0]
-        
     mods = sorted(set(clean_parts[:-1]))
     key = clean_parts[-1]
     return '+'.join(mods), key
-
-# ==============================================================================
-# Engine API
-# ==============================================================================
 
 def find_submap_regions(text: str, mask: list[bool]) -> list[tuple[int, int, str]]:
     regions = []
@@ -312,11 +349,8 @@ def find_submap_regions(text: str, mask: list[bool]) -> list[tuple[int, int, str
         if not mask[start]: continue
         paren_pos = text.find('(', start)
         end = find_balanced_end(text, paren_pos, mask)
-        inner_start = paren_pos + 1
-        inner_end = end - 1
-        args = split_top_args(text, inner_start, inner_end, mask)
-        if args:
-            regions.append((start, end, strip_quotes(args[0])))
+        args = split_top_args(text, paren_pos + 1, end - 1, mask)
+        if args: regions.append((start, end, strip_quotes(args[0])))
     return regions
 
 def parse_lua_file_content(text: str, origin: str) -> list[Bind]:
@@ -337,11 +371,8 @@ def parse_lua_file_content(text: str, origin: str) -> list[Bind]:
         if not args: continue
 
         key_arg = resolve_key_arg(args[0], local_vars)
-        
         if is_unbind:
-            dispatcher = "UNBIND"
-            options = ""
-            description = "Source Bind Disabled"
+            dispatcher, options, description = "UNBIND", "", "Source Bind Disabled"
         else:
             if len(args) < 2: continue
             dispatcher = args[1].strip()
@@ -349,27 +380,16 @@ def parse_lua_file_content(text: str, origin: str) -> list[Bind]:
             description = extract_description(options)
         
         norm_mods, norm_key = normalize_key(key_arg)
-
         submap = ''
         for s, e, name in submap_regions:
             if s < start < e:
                 submap = name
                 break
 
-        binds.append(Bind(
-            key_str=key_arg,
-            norm_mods=norm_mods,
-            norm_key=norm_key,
-            dispatcher=dispatcher,
-            options=options,
-            description=description,
-            submap=submap,
-            raw_call=text[start:end],
-            origin=origin,
-            char_start=start,
-            char_end=end,
-            is_unbind=is_unbind
-        ))
+        binds.append(Bind(key_str=key_arg, norm_mods=norm_mods, norm_key=norm_key,
+                          dispatcher=dispatcher, options=options, description=description,
+                          submap=submap, raw_call=text[start:end], origin=origin,
+                          char_start=start, char_end=end, is_unbind=is_unbind))
     return binds
 
 def _preceding_comment_start(text: str, block_start: int) -> int:
@@ -378,8 +398,7 @@ def _preceding_comment_start(text: str, block_start: int) -> int:
         prev_nl = text.rfind('\n', 0, line_start - 1)
         prev_start = prev_nl + 1
         prev_line = text[prev_start: line_start - 1].strip()
-        if re.match(r'^--\s*\[\d{4}-\d{2}-\d{2}', prev_line):
-            return prev_start
+        if re.match(r'^--\s*\[\d{4}-\d{2}-\d{2}', prev_line): return prev_start
     return line_start
 
 def filter_out_bind_from_text(text: str, norm_mods: str, norm_key: str, submap: str) -> str:
@@ -390,8 +409,7 @@ def filter_out_bind_from_text(text: str, norm_mods: str, norm_key: str, submap: 
         if b.norm_mods == norm_mods and b.norm_key == norm_key and b.submap == submap:
             blk_start = _preceding_comment_start(text, b.char_start)
             blk_end = b.char_end
-            if blk_end < len(text) and text[blk_end] == '\n':
-                blk_end += 1
+            if blk_end < len(text) and text[blk_end] == '\n': blk_end += 1
             to_remove.append((blk_start, blk_end))
 
     if not to_remove: return text
@@ -402,76 +420,38 @@ def filter_out_bind_from_text(text: str, norm_mods: str, norm_key: str, submap: 
     return text
 
 # ==============================================================================
-# Dynamic UI Drawing System (Bulletproof Text Wrapping)
+# UI Displays (Rich Library)
 # ==============================================================================
 
-def visible_len(text: str) -> int:
-    """Returns the visual length of a string, ignoring ANSI color codes."""
-    return len(re.sub(r'\x1b\[[0-9;]*m', '', text))
+def print_binding_info_box(bind: Bind, raw_text: str) -> None:
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Property", style="bold cyan")
+    table.add_column("Value", style="bold white")
+    
+    table.add_row("Key Comb:", f"[green]{bind.key_str}[/green]")
+    if bind.submap: table.add_row("Submap:", f"[purple]{bind.submap}[/purple]")
+    table.add_row("Action:", f"[cyan]{bind.dispatcher}[/cyan]")
+    
+    desc = bind.description if bind.description else "[dim]No Description[/dim]"
+    table.add_row("Info:", desc)
 
-def print_main_header(subtitle: str, width: int = 80) -> None:
-    """Draws the main unified branding header (Dusky Binds)."""
-    brand = " Dusky Binds "
-    left_len = (width - 2 - len(brand)) // 2
-    right_len = width - 2 - len(brand) - left_len
+    syntax = Syntax(raw_text, "monokai", background_color="default", word_wrap=True)
     
-    print(f'{PURPLE}╭{"─" * left_len}{RESET}{BOLD}{YELLOW}{brand}{RESET}{PURPLE}{"─" * right_len}╮{RESET}')
+    group = Group(
+        table,
+        "\n[bold blue]─── Raw Lua Code ───────────────────────────────────────────────[/bold blue]",
+        syntax
+    )
     
-    pad_left = (width - 2 - visible_len(subtitle)) // 2
-    pad_right = width - 2 - visible_len(subtitle) - pad_left
-    print(f'{PURPLE}│{RESET}{" " * pad_left}{subtitle}{" " * pad_right}{PURPLE}│{RESET}')
-    print(f'{PURPLE}╰{"─" * (width - 2)}╯{RESET}')
-
-def draw_box_row(label: str, text: str, label_color: str, text_color: str, width: int = 80, border_color: str = BLUE) -> list[str]:
-    """Dynamically wraps text inside a perfectly aligned bounding box."""
-    # 1(bord) + 2(spc) + 10(lbl) + 3( : ) + 1(bord) = 17 physical characters reserved
-    max_text_len = width - 17
-    
-    lines = textwrap.wrap(text, width=max_text_len)
-    if not lines:
-        lines = [""]
-        
-    rows = []
-    for i, line in enumerate(lines):
-        lbl_text = label if i == 0 else ""
-        lbl = f"{label_color}{lbl_text:<10}{RESET}"
-        val = f"{text_color}{line}{RESET}"
-        pad = max_text_len - len(line)
-        separator = " : " if i == 0 else "   "
-        
-        rows.append(f"{border_color}│{RESET}  {lbl}{separator}{val}{' ' * pad}{border_color}│{RESET}")
-    return rows
-
-def print_binding_info_box(bind: Bind, raw_text: str, width: int = 80) -> None:
-    print(f'{BLUE}╭─ [ CURRENT BINDING INFO ] {"─" * (width - 29)}╮{RESET}')
-    
-    for row in draw_box_row("Key Comb", bind.key_str, BOLD, GREEN, width, BLUE): print(row)
-    if bind.submap:
-        for row in draw_box_row("Submap", bind.submap, BOLD, PURPLE, width, BLUE): print(row)
-        
-    for row in draw_box_row("Action", bind.dispatcher, BOLD, CYAN, width, BLUE): print(row)
-    
-    # Empty separator line for semantic spacing
-    print(f'{BLUE}│{RESET}{" " * (width - 2)}{BLUE}│{RESET}')
-    
-    for row in draw_box_row("Raw Lua", raw_text, BOLD, DIM, width, BLUE): print(row)
-    
-    print(f'{BLUE}╰{"─" * (width - 2)}╯{RESET}')
-
-def draw_help_box(width: int = 80) -> None:
-    print(f'{YELLOW}╭─ [ QUICK INSTRUCTIONS ] {"─" * (width - 27)}╮{RESET}')
-    for row in draw_box_row("Syntax", 'hl.bind("MODS + KEY", DISPATCHER[, OPTIONS])', BOLD, GREEN, width, YELLOW): print(row)
-    for row in draw_box_row("Example", 'hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))', BOLD, DIM, width, YELLOW): print(row)
-    print(f'{YELLOW}╰{"─" * (width - 2)}╯{RESET}')
+    panel = Panel(group, title="[bold blue] CURRENT BINDING INFO [/bold blue]", border_style="blue", expand=False)
+    console.print(panel)
 
 def format_display(b: Bind) -> str:
     submap_pfx = f'{PURPLE}[{b.submap}]{RESET} ' if b.submap else ''
     ui_key = b.key_str[:32].ljust(32).replace('\n', ' ').replace('\t', ' ')
 
     if b.is_unbind:
-        tag = f'{RED}[UNB]{RESET}'
-        ui_desc = f'{DIM}Source Bind Disabled (Delete this to restore){RESET}'
-        return f'{tag}  {submap_pfx}{RED}{ui_key}{RESET} {GREY}│{RESET} {ui_desc}'
+        return f'{RED}[UNB]{RESET}  {submap_pfx}{RED}{ui_key}{RESET} {GREY}│{RESET} {DIM}Source Bind Disabled{RESET}'
 
     tag = f'{GREEN}[CUST]{RESET}' if b.origin == 'CUST' else f'{BLUE}[SRC] {RESET}'
     ui_desc = (b.description if b.description else "No Description").replace('\n', ' ').replace('\t', ' ')
@@ -483,33 +463,15 @@ def generate_bind_rows(source_binds: list[Bind], custom_binds: list[Bind]) -> tu
     custom_ovr = {(b.norm_mods, b.norm_key, b.submap) for b in custom_binds}
     
     displayed = []
-    
     for b in sorted(custom_binds, key=lambda x: f'{x.submap}|{x.norm_mods}|{x.norm_key}'):
-        if b.is_unbind and (b.norm_mods, b.norm_key, b.submap) in custom_active:
-            continue
+        if b.is_unbind and (b.norm_mods, b.norm_key, b.submap) in custom_active: continue
         displayed.append(b)
         
     for b in sorted(source_binds, key=lambda x: f'{x.submap}|{x.norm_mods}|{x.norm_key}'):
-        if (b.norm_mods, b.norm_key, b.submap) not in custom_ovr:
-            displayed.append(b)
+        if (b.norm_mods, b.norm_key, b.submap) not in custom_ovr: displayed.append(b)
 
     rows = [f'{format_display(b)}\t{idx}' for idx, b in enumerate(displayed)]
     return rows, displayed
-
-def rlinput(prompt: str, prefill: str = '') -> str:
-    """Prompt for input with prefill support safely avoiding readline segfaults."""
-    if 'readline' in sys.modules:
-        safe_prompt = re.sub(r'(\033\[[0-9;]*m)', '\x01\\1\x02', prompt)
-        def _hook():
-            readline.insert_text(prefill)
-        readline.set_startup_hook(_hook)
-        try:
-            return input(safe_prompt)
-        finally:
-            readline.set_startup_hook(None)
-    else:
-        print(f"{DIM}(Prefill not supported on this terminal. Original: {prefill}){RESET}")
-        return input(prompt)
 
 # ==============================================================================
 # Core Flow Operations
@@ -517,110 +479,115 @@ def rlinput(prompt: str, prefill: str = '') -> str:
 
 def edit_loop(bind: Optional[Bind], source_binds: list[Bind], custom_binds: list[Bind]) -> bool:
     origin = bind.origin if bind else 'NEW'
-    raw_old = bind.raw_call.replace('\n', ' ').replace('\t', '  ').strip() if bind else EMPTY_TEMPLATE
+    actual_text = bind.raw_call.strip() if bind else EMPTY_TEMPLATE
     bind_submap = bind.submap if bind else ''
     orig_mods = bind.norm_mods if bind else ''
     orig_key = bind.norm_key if bind else ''
 
-    current_input = raw_old
-    BW = 80 # Box Width
-
-    mode_title = f"[ {origin} EDIT ]" if origin != 'NEW' else "[ CREATE NEW KEYBIND ]"
+    editor_choice = get_editor_choice()
 
     while True:
-        enter_alt_screen()
-        os.system('tput clear 2>/dev/null || clear')
+        console.clear()
         
-        # ─── BRANDING HEADER ───
-        print_main_header(f"{BOLD}{mode_title}{RESET}", BW)
-        print()
-
-        # ─── TARGET INFO BOX ───
-        if bind and origin != 'NEW':
-            print_binding_info_box(bind, raw_old, BW)
-            print()
-
-        # ─── HELP BOX ───
-        draw_help_box(BW)
-        print()
-
-        # ─── INPUT PROMPT ───
-        print(f'{BOLD}Update hl.bind() call  {DIM}("b" = back · "q" = quit){RESET}:')
-        try:
-            user_line = rlinput(f'{PURPLE}❯ {RESET}', current_input).strip()
-        except (EOFError, KeyboardInterrupt):
-            leave_alt_screen()
+        user_line = edit_in_editor(actual_text, editor_choice)
+        console.clear()
+        
+        if user_line is None:
+            console.print(Panel("[bold yellow]Action Aborted:[/bold yellow] Editor was closed with an error or interrupted.", border_style="yellow", expand=False))
+            console.input('\n[bold cyan]Press Enter to return...[/bold cyan]')
             return False
 
-        if user_line.lower() in ('b', 'back'):
-            leave_alt_screen()
-            return False
-        if user_line.lower() in ('q', 'quit'):
-            die("Exiting...")
         if not user_line or user_line == EMPTY_TEMPLATE:
-            continue
+            console.print(Panel("[bold yellow]Action Aborted:[/bold yellow] Empty input or Template unchanged.", border_style="yellow", expand=False))
+            console.input('\n[bold cyan]Press Enter to return...[/bold cyan]')
+            return False
+            
+        if user_line == actual_text:
+            console.print(Panel("[bold yellow]Action Aborted:[/bold yellow] No changes were made.", border_style="yellow", expand=False))
+            console.input('\n[bold cyan]Press Enter to return...[/bold cyan]')
+            return False
 
         temp_binds = parse_lua_file_content(user_line, "TMP")
         if not temp_binds:
-            leave_alt_screen()
-            print(f'\n{RED}Error:{RESET} Input must be a valid hl.bind(...) call.')
-            input('Press Enter to continue...')
-            current_input = user_line
-            continue
+            console.print(Panel("[bold red]Syntax Error:[/bold red] Input must contain a valid hl.bind(...) call.", border_style="red", expand=False))
+            
+            console.print("\n[bold yellow]Options:[/bold yellow]")
+            console.print("  [bold white]\\[e][/bold white] [cyan]Return to Editor[/cyan]")
+            console.print("  [bold white]\\[d][/bold white] [red]Discard and Exit[/red]")
+            while True:
+                ch = console.input('\n[bold cyan]Select > [/bold cyan]').strip().lower()
+                if ch in ('e', 'd'): break
+            if ch == 'd': return False
+            if ch == 'e':
+                actual_text = user_line
+                continue
 
         new_b = temp_binds[0]
         new_mods, new_key = new_b.norm_mods, new_b.norm_key
-
-        leave_alt_screen()
-        print(f'\n{CYAN}Checking for conflicts...{RESET} ', end='', flush=True)
 
         conflict_cust = next((b for b in custom_binds if b.norm_mods == new_mods and b.norm_key == new_key and b.submap == bind_submap and (orig_mods != new_mods or orig_key != new_key)), None)
         conflict_src = next((b for b in source_binds if b.norm_mods == new_mods and b.norm_key == new_key and b.submap == bind_submap), None)
 
         if conflict_cust:
-            print(f'{RED}CONFLICT (Custom)!{RESET}\n  {conflict_cust.raw_call.replace(chr(10)," ")[:80]}')
-            print(f'\n{YELLOW}[y] Overwrite existing  [n] Retry  [b] Back{RESET}')
-            ch = input('Select > ').strip().lower()
-            if ch.startswith('b'): return False
-            if not ch.startswith('y'):
-                current_input = user_line
+            panel = Panel(Syntax(conflict_cust.raw_call, "monokai", word_wrap=True), title="[bold red] CONFLICT DETECTED (Custom Bind) [/bold red]", border_style="red", expand=False)
+            console.print(panel)
+            
+            console.print("\n[bold yellow]Conflict Options:[/bold yellow]")
+            console.print("  [bold white]\\[y][/bold white] [red]Overwrite existing custom bind[/red]")
+            console.print("  [bold white]\\[e][/bold white] [cyan]Return to Editor[/cyan]")
+            console.print("  [bold white]\\[d][/bold white] [dim]Discard changes[/dim]")
+            while True:
+                ch = console.input('\n[bold cyan]Select > [/bold cyan]').strip().lower()
+                if ch in ('y', 'e', 'd'): break
+            if ch == 'd': return False
+            if ch == 'e':
+                actual_text = user_line
                 continue
+                
         elif conflict_src:
-            print(f'{YELLOW}CONFLICT (Source){RESET}\n  {conflict_src.raw_call.replace(chr(10)," ")[:80]}')
-            print(f'  {DIM}Your custom bind will take precedence.{RESET}')
-        else:
-            print(f'{GREEN}None{RESET}')
+            panel = Panel(Syntax(conflict_src.raw_call, "monokai", word_wrap=True), title="[bold yellow] CONFLICT DETECTED (Source Bind) [/bold yellow]", border_style="yellow", expand=False)
+            console.print(panel)
+            console.print("  [dim]Note: Your custom bind will safely take precedence.[/dim]")
 
-        # ─── CONFIRMATION BOX ───
-        print(f'\n{CYAN}┌─ [ CONFIRM CHANGES ] {"─" * (BW - 24)}┐{RESET}')
-        for row in draw_box_row("Action", "SAVE", BOLD, RESET, BW, CYAN): print(row)
-        
+        # ─── CONFIRMATION BOX (Rich Panel) ───
+        group_items = []
         if bind_submap:
-            for row in draw_box_row("Submap", bind_submap, BOLD, PURPLE, BW, CYAN): print(row)
+            group_items.append(f"[bold purple]Target Submap:[/bold purple] {bind_submap}")
             
-        if raw_old and raw_old != EMPTY_TEMPLATE and origin != 'NEW':
-            for row in draw_box_row("OLD", raw_old, RED, DIM, BW, CYAN): print(row)
+        if actual_text and actual_text != EMPTY_TEMPLATE and origin != 'NEW':
+            group_items.append("\n[bold red]─── OLD ────────────────────────────────────────────────────────[/bold red]")
+            group_items.append(Syntax(actual_text, "monokai", background_color="default", word_wrap=True))
             
-        new_clean = user_line.replace('\n', ' ').replace('\t', '  ')
-        for row in draw_box_row("NEW", new_clean, GREEN, RESET, BW, CYAN): print(row)
-        print(f'{CYAN}└{"─" * (BW - 2)}┘{RESET}')
+        group_items.append("\n[bold green]─── NEW ────────────────────────────────────────────────────────[/bold green]")
+        group_items.append(Syntax(user_line, "monokai", background_color="default", word_wrap=True))
+        
+        panel = Panel(Group(*group_items), title="[bold cyan] CONFIRM CHANGES (SAVE) [/bold cyan]", border_style="cyan", expand=False)
+        console.print("\n")
+        console.print(panel)
 
-        print(f'\n{YELLOW}[y] Confirm  [n] Go Back{RESET}')
-        if not input('Select > ').strip().lower().startswith('y'):
-            current_input = user_line
+        console.print("\n[bold yellow]What would you like to do?[/bold yellow]")
+        console.print("  [bold white]\\[y][/bold white] [green]Confirm and Save changes[/green]")
+        console.print("  [bold white]\\[e][/bold white] [cyan]Return to Editor[/cyan]")
+        console.print("  [bold white]\\[d][/bold white] [red]Discard and Exit[/red]")
+        
+        while True:
+            ch = console.input('\n[bold cyan]Select > [/bold cyan]').strip().lower()
+            if ch in ('y', 'e', 'd'): break
+            
+        if ch == 'd': return False
+        if ch == 'e':
+            actual_text = user_line
             continue
-
+            
+        # Write Phase
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-        try:
-            text = CUSTOM_LUA.read_text(encoding='utf-8')
-        except FileNotFoundError:
-            text = ''
+        try: text = CUSTOM_LUA.read_text(encoding='utf-8')
+        except FileNotFoundError: text = ''
 
         if orig_mods or orig_key:
             text = filter_out_bind_from_text(text, orig_mods, orig_key, bind_submap)
 
         key_changed = (orig_mods != new_mods) or (orig_key != new_key)
-        
         if key_changed and bind:
             src_conflict_old = next((b for b in source_binds if b.norm_mods == orig_mods and b.norm_key == orig_key and b.submap == bind_submap), None)
             if src_conflict_old:
@@ -636,63 +603,56 @@ def edit_loop(bind: Optional[Bind], source_binds: list[Bind], custom_binds: list
             text = filter_out_bind_from_text(text, new_mods, new_key, bind_submap)
 
         comment = f'-- [{timestamp}] {origin}'
-        
         unbind_prefix = ""
         if conflict_src:
-            if bind_submap:
-                unbind_prefix = f'hl.unbind("{conflict_src.key_str}")\n    '
-            else:
-                unbind_prefix = f'hl.unbind("{conflict_src.key_str}")\n'
+            if bind_submap: unbind_prefix = f'    hl.unbind("{conflict_src.key_str}")\n'
+            else: unbind_prefix = f'hl.unbind("{conflict_src.key_str}")\n'
 
         if bind_submap:
-            new_block = f'\n{comment}\nhl.define_submap("{bind_submap}", function()\n    {unbind_prefix}{user_line}\nend)\n'
+            new_block = f'\n{comment}\nhl.define_submap("{bind_submap}", function()\n{unbind_prefix}{user_line}\nend)\n'
         else:
             new_block = f'\n{comment}\n{unbind_prefix}{user_line}\n'
 
         text = text.rstrip('\n') + '\n' + new_block
         atomic_write(text, CUSTOM_LUA)
 
-        print(f'\n{GREEN}[SUCCESS]{RESET} Saved to {CUSTOM_LUA}')
+        console.print("\n")
+        console.print(Panel(f"Saved successfully to {CUSTOM_LUA}", title="[bold green]SUCCESS[/bold green]", border_style="green", expand=False))
         reload_hyprland()
         return True
 
 def delete_flow(bind: Bind) -> bool:
-    BW = 80
-    raw_preview = bind.raw_call.replace('\n', ' ').replace('\t', '  ')
+    console.clear()
     
-    os.system('tput clear 2>/dev/null || clear')
-    print_main_header(f"{BOLD}[ DELETE KEYBIND ]{RESET}", BW)
-    print()
-    
-    print(f'{CYAN}┌─ [ CONFIRM DELETION ] {"─" * (BW - 25)}┐{RESET}')
-    
+    group_items = []
     if bind.submap: 
-        for row in draw_box_row("Submap", bind.submap, BOLD, PURPLE, BW, CYAN): print(row)
-    
+        group_items.append(f"[bold purple]Submap:[/bold purple] {bind.submap}")
+        
     if bind.origin == 'SRC':
-        for row in draw_box_row("Action", "DISABLE SOURCE BIND", BOLD, RESET, BW, CYAN): print(row)
-        for row in draw_box_row("Target", raw_preview, RED, RESET, BW, CYAN): print(row)
-        for row in draw_box_row("Info", "(This dynamically appends hl.unbind() to custom config)", DIM, DIM, BW, CYAN): print(row)
+        group_items.append("\n[bold red]Action:[/bold red] DISABLE SOURCE BIND")
+        group_items.append("[dim]This dynamically appends hl.unbind() to your custom config.[/dim]")
     else:
         act_text = "RESTORE SOURCE BIND" if bind.is_unbind else "DELETE FROM CUSTOM FILE"
-        for row in draw_box_row("Action", act_text, BOLD, RESET, BW, CYAN): print(row)
-        for row in draw_box_row("Target", raw_preview, RED, RESET, BW, CYAN): print(row)
+        group_items.append(f"\n[bold red]Action:[/bold red] {act_text}")
 
-    print(f'{CYAN}└{"─" * (BW - 2)}┘{RESET}')
+    group_items.append("\n[bold red]─── Target ─────────────────────────────────────────────────────[/bold red]")
+    group_items.append(Syntax(bind.raw_call.strip(), "monokai", background_color="default", word_wrap=True))
     
-    print(f'\n{YELLOW}[y] Confirm  [n] Go Back{RESET}')
-    if not input('Select > ').strip().lower().startswith('y'): return False
+    panel = Panel(Group(*group_items), title="[bold cyan] CONFIRM DELETION [/bold cyan]", border_style="cyan", expand=False)
+    console.print(panel)
+    
+    console.print("\n[bold yellow]Options:[/bold yellow]")
+    console.print("  [bold white]\\[y][/bold white] [red]Confirm Delete[/red]")
+    console.print("  [bold white]\\[n][/bold white] [cyan]Go Back[/cyan]")
+    
+    if not console.input('\n[bold cyan]Select > [/bold cyan]').strip().lower().startswith('y'): return False
 
-    try:
-        text = CUSTOM_LUA.read_text(encoding='utf-8')
-    except FileNotFoundError:
-        text = ''
+    try: text = CUSTOM_LUA.read_text(encoding='utf-8')
+    except FileNotFoundError: text = ''
 
     if bind.origin == 'SRC':
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-        
         text = filter_out_bind_from_text(text, bind.norm_mods, bind.norm_key, bind.submap)
-        
         comment = f'-- [{timestamp}] UNBIND SRC'
         if bind.submap:
             new_block = f'\n{comment}\nhl.define_submap("{bind.submap}", function()\n    hl.unbind("{bind.key_str}")\nend)\n'
@@ -701,14 +661,16 @@ def delete_flow(bind: Bind) -> bool:
 
         text = text.rstrip('\n') + '\n' + new_block
         atomic_write(text, CUSTOM_LUA)
-        print(f'\n{GREEN}[SUCCESS]{RESET} Source bind disabled.')
+        console.print("\n")
+        console.print(Panel("Source bind explicitly disabled.", title="[bold green]SUCCESS[/bold green]", border_style="green", expand=False))
     else:
         new_text = filter_out_bind_from_text(text, bind.norm_mods, bind.norm_key, bind.submap)
         atomic_write(new_text, CUSTOM_LUA)
+        console.print("\n")
         if bind.is_unbind:
-            print(f'\n{GREEN}[SUCCESS]{RESET} Source bind restored.')
+            console.print(Panel("Source bind safely restored.", title="[bold green]SUCCESS[/bold green]", border_style="green", expand=False))
         else:
-            print(f'\n{GREEN}[SUCCESS]{RESET} Keybind removed.')
+            console.print(Panel("Keybind safely removed from custom file.", title="[bold green]SUCCESS[/bold green]", border_style="green", expand=False))
 
     reload_hyprland()
     return True
@@ -726,88 +688,91 @@ def main() -> None:
     if not CUSTOM_LUA.exists():
         CUSTOM_LUA.write_text('-- Custom Hyprland Keybinds Override File\n\n', encoding='utf-8')
 
-    while True:
-        leave_alt_screen()
-        
-        try:
-            src_text = SOURCE_LUA.read_text(encoding='utf-8')
-        except FileNotFoundError:
-            src_text = ""
+    try:
+        while True:
+            console.clear()
             
-        try:
-            cust_text = CUSTOM_LUA.read_text(encoding='utf-8')
-        except FileNotFoundError:
-            cust_text = ""
+            try: src_text = SOURCE_LUA.read_text(encoding='utf-8')
+            except FileNotFoundError: src_text = ""
+                
+            try: cust_text = CUSTOM_LUA.read_text(encoding='utf-8')
+            except FileNotFoundError: cust_text = ""
 
-        source_binds = parse_lua_file_content(src_text, 'SRC')
-        custom_binds = parse_lua_file_content(cust_text, 'CUST')
+            source_binds = parse_lua_file_content(src_text, 'SRC')
+            custom_binds = parse_lua_file_content(cust_text, 'CUST')
 
-        rows, displayed = generate_bind_rows(source_binds, custom_binds)
-        
-        # Build the FZF Branded Header
-        brand = " Dusky Binds "
-        bl = (80 - len(brand)) // 2
-        br = 80 - len(brand) - bl
-        fzf_brand = f"\033[0;35m{'─' * bl}\033[0m\033[1m\033[0;33m{brand}\033[0m\033[0;35m{'─' * br}\033[0m"
-        
-        fzf_header = f'{fzf_brand}\n  SELECT KEYBIND  │  SRC = Default  │  CUST = Your Override  │  [UNB] = Disabled Source Bind\n  Type to search · Enter = select · Esc = quit'
+            rows, displayed = generate_bind_rows(source_binds, custom_binds)
+            
+            # FZF Branded Header
+            brand = " Dusky Binds "
+            bl = (80 - len(brand)) // 2
+            br = 80 - len(brand) - bl
+            fzf_brand = f"\033[0;35m{'─' * bl}\033[0m\033[1m\033[0;33m{brand}\033[0m\033[0;35m{'─' * br}\033[0m"
+            fzf_header = f'{fzf_brand}\n  SELECT KEYBIND  │  SRC = Default  │  CUST = Your Override  │  [UNB] = Disabled Source Bind\n  Type to search · Enter = select · Esc = quit'
 
-        if VIEW_ONLY:
-            res = subprocess.run(['fzf', '--ansi', '--delimiter=\t', '--with-nth=1', f'--header=[VIEW MODE]\n{fzf_header}', '--info=inline', '--layout=reverse', '--border', '--prompt=Search > '], input='\n'.join(rows), capture_output=True, text=True)
+            if VIEW_ONLY:
+                res = subprocess.run(['fzf', '--ansi', '--delimiter=\t', '--with-nth=1', f'--header=[VIEW MODE]\n{fzf_header}', '--info=inline', '--layout=reverse', '--border', '--prompt=Search > '], input='\n'.join(rows), capture_output=True, text=True)
+                if res.returncode != 0: sys.exit(0)
+                
+                try: idx = int(res.stdout.strip().rsplit('\t', 1)[-1]) if res.stdout.strip() else -1
+                except (ValueError, IndexError): idx = -1
+                    
+                if 0 <= idx < len(displayed):
+                    console.clear()
+                    print_binding_info_box(displayed[idx], displayed[idx].raw_call.strip())
+                console.input('\n[bold cyan]Press Enter to continue...[/bold cyan]')
+                continue
+
+            create_row = f'{BOLD}[+] Create New Keybind{RESET}\t-1'
+            fzf_input = create_row + '\n' + '\n'.join(rows)
+
+            res = subprocess.run(['fzf', '--ansi', '--delimiter=\t', '--with-nth=1', f'--header={fzf_header}', '--info=inline', '--layout=reverse', '--border', '--prompt=Search > '], input=fzf_input, capture_output=True, text=True)
             if res.returncode != 0: sys.exit(0)
-            
-            try:
-                idx = int(res.stdout.strip().rsplit('\t', 1)[-1]) if res.stdout.strip() else -1
-            except (ValueError, IndexError):
-                idx = -1
-                
+
+            selected = res.stdout.strip()
+            if not selected: continue
+
+            try: idx = int(selected.rsplit('\t', 1)[-1])
+            except (ValueError, IndexError): continue
+
+            if idx == -1:
+                edit_loop(None, source_binds, custom_binds)
+                continue
+
             if 0 <= idx < len(displayed):
-                print(f'\n{BOLD}{displayed[idx].raw_call}{RESET}')
-            input('Press Enter to continue...')
-            continue
-
-        create_row = f'{BOLD}[+] Create New Keybind{RESET}\t-1'
-        fzf_input = create_row + '\n' + '\n'.join(rows)
-
-        res = subprocess.run(['fzf', '--ansi', '--delimiter=\t', '--with-nth=1', f'--header={fzf_header}', '--info=inline', '--layout=reverse', '--border', '--prompt=Search > '], input=fzf_input, capture_output=True, text=True)
-        if res.returncode != 0: sys.exit(0)
-
-        selected = res.stdout.strip()
-        if not selected: continue
-
-        try:
-            idx = int(selected.rsplit('\t', 1)[-1])
-        except (ValueError, IndexError):
-            continue
-
-        if idx == -1:
-            edit_loop(None, source_binds, custom_binds)
-            continue
-
-        if 0 <= idx < len(displayed):
-            selected_bind = displayed[idx]
-            raw_clean = selected_bind.raw_call.replace('\n', ' ').replace('\t', '  ')
-            
-            print() # Visual Spacer
-            print_binding_info_box(selected_bind, raw_clean, 80)
-            
-            print(f'\n{YELLOW}[e] Edit  [d] Delete  [b] Back  [q] Quit{RESET}')
-            ch = input('Select > ').strip().lower()
-
-            if ch.startswith('q'): sys.exit(0)
-            elif ch.startswith('d'):
-                delete_flow(selected_bind)
-                input('Press Enter to continue...')
-            elif ch.startswith('e'):
-                if getattr(selected_bind, 'is_unbind', False):
-                    print(f'\n{YELLOW}[NOTE]{RESET} Cannot directly edit an Unbind directive. Delete it to restore the source bind, or select "Create New Keybind".')
-                    input('Press Enter to continue...')
-                    continue
+                selected_bind = displayed[idx]
                 
-                changed = edit_loop(selected_bind, source_binds, custom_binds)
-                if changed:
-                    print(f'\n{YELLOW}[Enter] Edit another  [q] Quit{RESET}')
-                    if input('Select > ').strip().lower().startswith('q'): sys.exit(0)
+                console.clear()
+                print_binding_info_box(selected_bind, selected_bind.raw_call.strip())
+                
+                console.print("\n[bold yellow]Available Actions:[/bold yellow]")
+                console.print("  [bold white]\\[e][/bold white] [cyan]Edit this bind[/cyan]")
+                console.print("  [bold white]\\[d][/bold white] [red]Delete / Unbind[/red]")
+                console.print("  [bold white]\\[b][/bold white] [dim]Go Back[/dim]")
+                console.print("  [bold white]\\[q][/bold white] [dim]Quit Application[/dim]")
+                
+                ch = console.input('\n[bold cyan]Select > [/bold cyan]').strip().lower()
+
+                if ch.startswith('q'): sys.exit(0)
+                elif ch.startswith('d'):
+                    delete_flow(selected_bind)
+                    console.input('\n[bold cyan]Press Enter to continue...[/bold cyan]')
+                elif ch.startswith('e'):
+                    if getattr(selected_bind, 'is_unbind', False):
+                        console.print(Panel("Cannot directly edit an Unbind directive. Delete it to restore the source bind, or select 'Create New Keybind'.", title="[bold yellow]NOTE[/bold yellow]", border_style="yellow", expand=False))
+                        console.input('\n[bold cyan]Press Enter to continue...[/bold cyan]')
+                        continue
+                    
+                    changed = edit_loop(selected_bind, source_binds, custom_binds)
+                    if changed:
+                        console.print("\n[bold yellow]Options:[/bold yellow]")
+                        console.print("  [bold white]\\[Enter][/bold white] [cyan]Edit another bind[/cyan]")
+                        console.print("  [bold white]\\[q][/bold white] [dim]Quit[/dim]")
+                        if console.input('\n[bold cyan]Select > [/bold cyan]').strip().lower().startswith('q'): sys.exit(0)
+
+    except KeyboardInterrupt:
+        console.clear()
+        sys.exit(0)
 
 if __name__ == '__main__':
     main()

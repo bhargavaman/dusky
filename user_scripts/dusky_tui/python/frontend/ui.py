@@ -187,7 +187,7 @@ class NoticeBox(Vertical):
 class ConfirmDialog(ModalScreen[bool]):
     BINDINGS = [
         Binding("escape", "dismiss_false", "Cancel"),
-        Binding("enter", "dismiss_true", "Confirm"),
+        Binding("enter,space", "dismiss_true", "Confirm"),
     ]
 
     def __init__(self, message: str, title: str = "CONFIRM", level: str = "warning") -> None:
@@ -221,7 +221,7 @@ class ConfirmDialog(ModalScreen[bool]):
 class AlertDialog(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "dismiss_modal", "Dismiss"),
-        Binding("enter", "dismiss_modal", "Dismiss"),
+        Binding("enter,space", "dismiss_modal", "Dismiss"),
     ]
 
     def __init__(self, message: str, title: str = "NOTICE", level: str = "warning", btn_text: str = " OK ") -> None:
@@ -475,6 +475,10 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
             self.dismiss(None)
 
 class DiffScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape,enter,space", "dismiss_modal", "Dismiss"),
+    ]
+
     def compose(self) -> ComposeResult:
         with Vertical(id="diff-dialog"):
             yield Label("MODIFICATIONS (From Launch)", id="modal-title")
@@ -503,6 +507,9 @@ class DiffScreen(ModalScreen[None]):
         if not added_any:
             ol.add_option(Option("No changes detected from initial load state.", disabled=True))
 
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
+
     @on(events.Click, ".modal-close-btn")
     def on_close_click(self) -> None:
         self.dismiss(None)
@@ -513,6 +520,10 @@ class DiffScreen(ModalScreen[None]):
             self.dismiss(None)
 
 class ShortcutsInfoScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape,enter,space", "dismiss_modal", "Dismiss"),
+    ]
+
     def compose(self) -> ComposeResult:
         with Vertical(id="shortcuts-dialog"):
             yield Label("KEYBOARD SHORTCUTS", id="modal-title")
@@ -536,8 +547,8 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             ("ctrl+r", "Redo last undone change"),
             ("ctrl+t", "Toggle between Auto and Batch save modes"),
             ("ctrl+s", "Commit all pending changes (only available in Batch mode)"),
-            ("enter", "Trigger action / Toggle boolean / Open Picker / Expand Folder"),
-            ("e, space", "Expand / Collapse nested option menus"),
+            ("enter, space", "Trigger action / Toggle boolean / Open Picker / Expand Folder"),
+            ("e", "Expand / Collapse nested option menus"),
             ("j, down", "Move cursor down"),
             ("k, up", "Move cursor up"),
             ("h, left", "Adjust value down / Cycle previous option"),
@@ -557,6 +568,9 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             txt.append(desc, style=self.app.theme_colors["fg"])
             ol.add_option(Option(txt, disabled=True))
 
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
+
     @on(events.Click, ".modal-close-btn")
     def on_close_click(self) -> None:
         self.dismiss(None)
@@ -572,8 +586,8 @@ class ShortcutsInfoScreen(ModalScreen[None]):
 
 class ConfigOptionList(OptionList):
     BINDINGS = [
-        Binding("enter", "app.submit_current", "Action"),
-        Binding("e,space", "app.toggle_expand", "Expand/Collapse"),
+        Binding("enter,space", "app.submit_current", "Action"),
+        Binding("e", "app.toggle_expand", "Expand/Collapse"),
         Binding("j,down", "cursor_down", "Down"),
         Binding("k,up", "cursor_up", "Up"),
         Binding("g", "scroll_top", "Top"),
@@ -955,9 +969,10 @@ class DuskyTUI(App):
 
     /* Schema Driven Notice Boxes */
     NoticeBox {
-        width: 100%; height: auto; padding: 0 1; margin: 1 1 0 1; background: transparent;
+        width: 100%; height: auto; padding: 0 1; margin: 1 1 1 1; background: transparent;
     }
-    NoticeBox > Markdown { background: transparent; color: $foreground; }
+    NoticeBox > Markdown { background: transparent; color: $foreground; margin: 0; padding: 0; }
+    NoticeBox > Markdown > * { margin: 0; padding: 0; }
     NoticeBox.-info { border-left: solid $primary; background: $primary 10%; }
     NoticeBox.-warning { border-left: solid $warning; background: $warning 10%; }
     NoticeBox.-danger { border-left: solid $error; background: $error 10%; }
@@ -1093,7 +1108,7 @@ class DuskyTUI(App):
 
     auto_save = reactive(True)
 
-    def __init__(self, engine_pool: dict[tuple[str, str], BaseEngine], default_engine_key: tuple[str, str], schema: dict[int, list[ConfigItem]], tabs: list[str], title="Dusky Editor", theme_path: str | None = None, default_mode: str = "auto", schema_name: str = "default", enable_user_presets: bool = True, user_presets_tab: str | None = None, global_popup: Any | None = None, tab_notices: dict[int, dict] | None = None, **kwargs):
+    def __init__(self, engine_pool: dict[tuple[str, str], BaseEngine], default_engine_key: tuple[str, str], schema: dict[int, list[ConfigItem]], tabs: list[str], title="Dusky Editor", theme_path: str | None = None, default_mode: str = "auto", schema_name: str = "default", enable_user_presets: bool = True, user_presets_tab: str | None = None, global_popup: Any | None = None, tab_notices: dict[int, dict | list[dict]] | None = None, **kwargs):
         super().__init__(**kwargs)
         self.engine_pool = engine_pool
         self.default_engine_key = default_engine_key
@@ -1179,11 +1194,14 @@ class DuskyTUI(App):
                         with Vertical(id=f"tab-{i}"):
                             
                             # Render Schema-Driven Tab Structural Notices
-                            tab_notice = self.tab_notices.get(i)
-                            if tab_notice:
-                                level = tab_notice.get("level", "info")
-                                message = tab_notice.get("message", "")
-                                yield NoticeBox(message, level=level, id=f"notice-{i}")
+                            tab_notices = self.tab_notices.get(i)
+                            if tab_notices:
+                                if isinstance(tab_notices, dict):
+                                    tab_notices = [tab_notices]
+                                for n_idx, tab_notice in enumerate(tab_notices):
+                                    level = tab_notice.get("level", "info")
+                                    message = tab_notice.get("message", "")
+                                    yield NoticeBox(message, level=level, id=f"notice-{i}-{n_idx}")
 
                             with Horizontal(classes="list-wrapper"):
                                 yield ConfigOptionList(id=f"list-{i}")
@@ -1347,7 +1365,13 @@ class DuskyTUI(App):
 
             match item.type_:
                 case "bool":
-                    if not exists:
+                    is_trigger = item.options and isinstance(item.options, list) and len(item.options) > 0 and str(item.options[0]).lower() == "trigger"
+                    if is_trigger:
+                        if not exists:
+                            txt.append(" Apply ", style=f"{self.theme_colors['muted']} italic")
+                        else:
+                            txt.append(" Apply ", style=f"bold {self.theme_colors['bg']} on {self.theme_colors['accent']}" if item.value else f"bold {self.theme_colors['accent']}")
+                    elif not exists:
                         txt.append(f" {'◉ ON' if item.value else '◯ OFF'} ", style=f"{self.theme_colors['muted']} italic")
                     elif item.value:
                         txt.append(" ◉ ON  ", style=f"bold {self.theme_colors['bg']} on {self.theme_colors['success']}")

@@ -556,7 +556,7 @@ class DuskyMonitorApp(App):
         except OSError: pass
 
     def on_mount(self) -> None:
-        self.query_one("#main-box").border_title = " Dusky Monitor - Process Matrix "
+        self.query_one("#main-box").border_title = " Dusky Monitor"
         
         table = self.query_one(DataTable)
         table.add_columns(

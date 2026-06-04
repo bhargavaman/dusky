@@ -1,6 +1,6 @@
--- Source: /home/dusk/Pictures/wallpapers/active_theme/0996.jpg
+-- Source: /home/dusk/Pictures/wallpapers/dusk_default.jpg
 
-image = "/home/dusk/Pictures/wallpapers/active_theme/0996.jpg"
+image = "/home/dusk/Pictures/wallpapers/dusk_default.jpg"
 
 
 background = "rgba(0a1612ff)"

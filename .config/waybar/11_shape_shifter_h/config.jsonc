@@ -21,7 +21,7 @@
 
   "modules-center": [
     "group/updates-drawer",
-    "clock",
+    "clock"
     // "group/mpris-drawer"
   ],
 

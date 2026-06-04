@@ -23,7 +23,8 @@ set -o pipefail
 declare -ra FLEET_COMMANDS=(
     # --- UI & Theming ---
 #    "U | gsettings set org.gnome.desktop.interface icon-theme 'Papirus'"
-    "U | gsettings set org.cinnamon.desktop.default-applications.terminal exec 'kitty'"
+#    for nemo right click
+#    "U | gsettings set org.cinnamon.desktop.default-applications.terminal exec 'kitty'"
     "U | mkdir -p ~/.config/opencode/themes || true"
     "U | mkdir -p ~/.config/Kvantum/matugen || true"
     "U | systemctl --user disable --now dusky_sliders.service || true"
