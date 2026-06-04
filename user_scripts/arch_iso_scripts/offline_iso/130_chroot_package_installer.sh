@@ -2,7 +2,7 @@
 # This script installs ALL PACKAGES from the Offline Repository. Inspect it manually to remove/add anything you want.
 # It installs packages only. It does not enable systemd services automatically.
 # ------------------------------------------------------------------------------
-# Arch Linux / Hyprland / UWSM - Elite System Installer (v3.4 - Hardened Offline)
+# Arch Linux / Hyprland / UWSM - Elite System Installer (v5.0 - Golden Offline)
 # ------------------------------------------------------------------------------
 
 # --- 1. CONFIGURATION ---
@@ -161,7 +161,7 @@ fi
 set -Eeuo pipefail
 shopt -s inherit_errexit
 
-TARGET_OS="arch"
+TARGET_OS=""
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -273,6 +273,48 @@ acquire_script_lock() {
   flock -n "$SCRIPT_LOCK_FD" || die "Another instance of this script is already running."
 }
 
+run_pacman_silent() {
+  local start_time=$SECONDS
+  local rc=0
+  local temp_dir=''
+  local stderr_file=''
+
+  while :; do
+    temp_dir=$(mktemp -d) || return 1
+    stderr_file="${temp_dir}/stderr.log"
+
+    if command env LC_ALL=C pacman --noprogressbar "$@" >/dev/null 2>"$stderr_file"; then
+      rc=0
+    else
+      rc=$?
+    fi
+
+    case "$rc" in
+      0)
+        rm -rf -- "$temp_dir"
+        return 0
+        ;;
+      130|143)
+        rm -rf -- "$temp_dir"
+        print_error "Pacman operation interrupted."
+        exit "$rc"
+        ;;
+    esac
+
+    if grep -Fqs 'unable to lock database' -- "$stderr_file"; then
+      rm -rf -- "$temp_dir"
+      if (( SECONDS - start_time >= PACMAN_LOCK_TIMEOUT )); then
+        return "$rc"
+      fi
+      sleep 2
+      continue
+    fi
+
+    rm -rf -- "$temp_dir"
+    return "$rc"
+  done
+}
+
 run_pacman() {
   local start_time=$SECONDS
   local warned=0
@@ -295,9 +337,12 @@ run_pacman() {
     tee -- "$stderr_file" <"$stderr_pipe" >&2 &
     tee_pid=$!
 
-    # FIXED: Use 'script' to emulate a TTY so pacman shows progress bars even when piped
+    # Utilizes highly strict dynamic array quoting for impenetrable argument passing.
+    # CRITICAL: Added -e flag to script to ensure exact exit codes are passed correctly in headless pipelines.
     if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1; then
-      if script -q -c "env LC_ALL=C pacman $*" /dev/null 2>"$stderr_pipe"; then
+      local cmd_str
+      printf -v cmd_str '%q ' env LC_ALL=C pacman "$@"
+      if script -q -e -c "$cmd_str" /dev/null 2>"$stderr_pipe"; then
         rc=0
       else
         rc=$?
@@ -320,7 +365,7 @@ run_pacman() {
         ;;
       130|143)
         rm -rf -- "$temp_dir"
-        print_error "Pacman operation interrupted."
+        print_error "Pacman operation interrupted by user."
         exit "$rc"
         ;;
     esac
@@ -346,6 +391,23 @@ run_pacman() {
   done
 }
 
+determine_os_state() {
+  if [[ -z "${TARGET_OS}" ]]; then
+    print_info "Analyzing system state for keyring requirements..."
+    
+    if grep -qi "ID=cachyos" /etc/os-release 2>/dev/null; then
+       print_info "Pure CachyOS detected."
+       TARGET_OS="cachyos_pure"
+    elif pacman -Qq cachyos-mirrorlist &>/dev/null; then
+       print_ok "Franken-Arch detected (CachyOS packages found on Standard Arch)."
+       TARGET_OS="cachyos"
+    else
+       print_info "Standard Arch Linux detected."
+       TARGET_OS="arch"
+    fi
+  fi
+}
+
 ensure_keyring() {
   local keyring_dir='/etc/pacman.d/gnupg'
 
@@ -367,7 +429,7 @@ ensure_keyring() {
       pacman-key --populate archlinux
   fi
 
-  print_ok "Keyring initialized."
+  print_ok "Keyring populated."
 }
 
 install_group() {
@@ -409,14 +471,14 @@ install_group() {
     fi
 
     if (( HAS_TTY )); then
-      if run_pacman --sync --needed --noconfirm -- "$pkg" >/dev/null 2>&1; then
+      if run_pacman_silent --sync --needed --noconfirm -- "$pkg"; then
         printf '  %s[+] Installed:%s %s\n' "$GREEN" "$RESET" "$pkg"
         continue
       fi
 
       printf '  %s[?] Intervention needed:%s %s\n' "$YELLOW" "$RESET" "$pkg"
       if run_pacman --sync --needed -- "$pkg"; then
-        printf '  %s[+] Installed (manual):%s %s\n' "$GREEN" "$RESET" "$pkg"
+        printf '  %s[+] Installed (manual resolution):%s %s\n' "$GREEN" "$RESET" "$pkg"
         continue
       fi
     else
@@ -424,18 +486,17 @@ install_group() {
         printf '  %s[+] Installed:%s %s\n' "$GREEN" "$RESET" "$pkg"
         continue
       fi
-
       printf '  %s[?] No TTY available for interactive retry:%s %s\n' "$YELLOW" "$RESET" "$pkg"
     fi
 
-    printf '  %s[X] Failed:%s %s\n' "$RED" "$RESET" "$pkg" >&2
+    printf '  %s[-] Skipped/Failed:%s %s (Moving on to next package...)\n' "$RED" "$RESET" "$pkg" >&2
     FAILED_PACKAGES+=("${group_name} :: ${pkg}")
     (( ++fail_count ))
   done
 
   if (( fail_count > 0 )); then
     FAILED_GROUPS+=("$group_name")
-    print_warn "Group completed with ${fail_count} failure(s)."
+    print_warn "Group completed with ${fail_count} skipped/failed package(s)."
   else
     print_ok "Recovery successful. All packages installed."
   fi
@@ -451,24 +512,22 @@ print_summary() {
     return 0
   fi
 
-  # CHANGED: We warn the user, but we will no longer throw a failure code.
-  printf '\n%s%s:: INSTALLATION FINISHED WITH FAILURES (PROCEEDING ANYWAY) ::%s\n' "$BOLD" "$YELLOW" "$RESET"
-  printf 'Failed groups: %d\n' "${#FAILED_GROUPS[@]}"
-  printf 'Failed packages: %d\n' "${#FAILED_PACKAGES[@]}"
+  printf '\n%s%s:: INSTALLATION COMPLETED (SOME PACKAGES SKIPPED/FAILED) ::%s\n' "$BOLD" "$YELLOW" "$RESET"
+  printf 'Failed/Skipped groups: %d\n' "${#FAILED_GROUPS[@]}"
+  printf 'Failed/Skipped packages: %d\n' "${#FAILED_PACKAGES[@]}"
 
   if (( ${#FAILED_GROUPS[@]} > 0 )); then
-    printf '\n%sGroups with failures:%s\n' "$BOLD" "$RESET"
+    printf '\n%sGroups with failures/skips:%s\n' "$BOLD" "$RESET"
     for group in "${FAILED_GROUPS[@]}"; do
       printf '  %s\n' "$group"
     done
   fi
 
-  printf '\n%sFailed packages:%s\n' "$BOLD" "$RESET"
+  printf '\n%sFailed/Skipped packages:%s\n' "$BOLD" "$RESET"
   for item in "${FAILED_PACKAGES[@]}"; do
     printf '  %s\n' "$item"
   done
 
-  # FIX: Return 0 instead of 1. This prevents 'set -e' from seeing this function as a failure.
   return 0
 }
 
@@ -479,13 +538,19 @@ main() {
   ensure_arch_environment
   validate_group_configuration
   acquire_script_lock
-  ensure_keyring
+  
+  determine_os_state
+  
+  if [[ "${TARGET_OS}" != "cachyos_pure" ]]; then
+    ensure_keyring
+  else
+    print_info "Skipping manual keyring configuration (Managed by CachyOS)."
+  fi
 
   for i in "${!GROUP_LABELS[@]}"; do
     install_group "${GROUP_LABELS[i]}" "${GROUP_ARRAYS[i]}"
   done
 
-  # FIX: Print the summary, but unconditionally exit with 0 so the orchestrator moves on.
   print_summary
   exit 0
 }

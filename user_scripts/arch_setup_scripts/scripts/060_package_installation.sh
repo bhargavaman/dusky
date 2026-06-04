@@ -2,7 +2,7 @@
 # This script installs ALL PACKAGES. Inspect it manually to remove/add anything you want.
 # It installs packages only. It does not enable systemd services automatically.
 # ------------------------------------------------------------------------------
-# Arch Linux / Hyprland / UWSM - Elite System Installer (v3.4 - Hardened)
+# Arch Linux / Hyprland / UWSM - Elite System Installer (v5.0 - Golden)
 # ------------------------------------------------------------------------------
 
 # --- 1. CONFIGURATION ---
@@ -80,7 +80,7 @@ declare -ar pkgs_productivity=(
 
 # Group 14: Limine and snapshot
 declare -ar pkgs_btrfs_snapshot=(
- "snapper"
+ "snapper" "tuned"
 )
 
 declare -ar GROUP_LABELS=(
@@ -157,7 +157,7 @@ parse_args() {
     case "$1" in
       --cachyos|--cachy) TARGET_OS="cachyos"; shift ;;
       --arch)            TARGET_OS="arch"; shift ;;
-      *)                 shift ;; # Safely ignore unknown flags like --auto
+      *)                 shift ;;
     esac
   done
 }
@@ -262,6 +262,48 @@ acquire_script_lock() {
   flock -n "$SCRIPT_LOCK_FD" || die "Another instance of this script is already running."
 }
 
+run_pacman_silent() {
+  local start_time=$SECONDS
+  local rc=0
+  local temp_dir=''
+  local stderr_file=''
+
+  while :; do
+    temp_dir=$(mktemp -d) || return 1
+    stderr_file="${temp_dir}/stderr.log"
+
+    if command env LC_ALL=C pacman --noprogressbar "$@" >/dev/null 2>"$stderr_file"; then
+      rc=0
+    else
+      rc=$?
+    fi
+
+    case "$rc" in
+      0)
+        rm -rf -- "$temp_dir"
+        return 0
+        ;;
+      130|143)
+        rm -rf -- "$temp_dir"
+        print_error "Pacman operation interrupted."
+        exit "$rc"
+        ;;
+    esac
+
+    if grep -Fqs 'unable to lock database' -- "$stderr_file"; then
+      rm -rf -- "$temp_dir"
+      if (( SECONDS - start_time >= PACMAN_LOCK_TIMEOUT )); then
+        return "$rc"
+      fi
+      sleep 2
+      continue
+    fi
+
+    rm -rf -- "$temp_dir"
+    return "$rc"
+  done
+}
+
 run_pacman() {
   local start_time=$SECONDS
   local warned=0
@@ -284,9 +326,12 @@ run_pacman() {
     tee -- "$stderr_file" <"$stderr_pipe" >&2 &
     tee_pid=$!
 
-    # FIXED: Removed the buggy extra_args expansion that passed empty strings to pacman
+    # Utilizes highly strict dynamic array quoting for impenetrable argument passing.
+    # CRITICAL: Added -e flag to script to ensure exact exit codes are passed correctly in headless pipelines.
     if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1; then
-      if script -q -c "env LC_ALL=C pacman $*" /dev/null 2>"$stderr_pipe"; then
+      local cmd_str
+      printf -v cmd_str '%q ' env LC_ALL=C pacman "$@"
+      if script -q -e -c "$cmd_str" /dev/null 2>"$stderr_pipe"; then
         rc=0
       else
         rc=$?
@@ -309,7 +354,7 @@ run_pacman() {
         ;;
       130|143)
         rm -rf -- "$temp_dir"
-        print_error "Pacman operation interrupted."
+        print_error "Pacman operation interrupted by user."
         exit "$rc"
         ;;
     esac
@@ -431,14 +476,14 @@ install_group() {
     fi
 
     if (( HAS_TTY )); then
-      if run_pacman --sync --needed --noconfirm -- "$pkg"; then
+      if run_pacman_silent --sync --needed --noconfirm -- "$pkg"; then
         printf '  %s[+] Installed:%s %s\n' "$GREEN" "$RESET" "$pkg"
         continue
       fi
 
       printf '  %s[?] Intervention needed:%s %s\n' "$YELLOW" "$RESET" "$pkg"
       if run_pacman --sync --needed -- "$pkg"; then
-        printf '  %s[+] Installed (manual):%s %s\n' "$GREEN" "$RESET" "$pkg"
+        printf '  %s[+] Installed (manual resolution):%s %s\n' "$GREEN" "$RESET" "$pkg"
         continue
       fi
     else
@@ -446,18 +491,17 @@ install_group() {
         printf '  %s[+] Installed:%s %s\n' "$GREEN" "$RESET" "$pkg"
         continue
       fi
-
       printf '  %s[?] No TTY available for interactive retry:%s %s\n' "$YELLOW" "$RESET" "$pkg"
     fi
 
-    printf '  %s[X] Failed:%s %s\n' "$RED" "$RESET" "$pkg" >&2
+    printf '  %s[-] Skipped/Failed:%s %s (Moving on to next package...)\n' "$RED" "$RESET" "$pkg" >&2
     FAILED_PACKAGES+=("${group_name} :: ${pkg}")
     (( ++fail_count ))
   done
 
   if (( fail_count > 0 )); then
     FAILED_GROUPS+=("$group_name")
-    print_warn "Group completed with ${fail_count} failure(s)."
+    print_warn "Group completed with ${fail_count} skipped/failed package(s)."
   else
     print_ok "Recovery successful. All packages installed."
   fi
@@ -473,24 +517,22 @@ print_summary() {
     return 0
   fi
 
-  # CHANGED: We warn the user, but we will no longer throw a failure code.
-  printf '\n%s%s:: INSTALLATION FINISHED WITH FAILURES (PROCEEDING ANYWAY) ::%s\n' "$BOLD" "$YELLOW" "$RESET"
-  printf 'Failed groups: %d\n' "${#FAILED_GROUPS[@]}"
-  printf 'Failed packages: %d\n' "${#FAILED_PACKAGES[@]}"
+  printf '\n%s%s:: INSTALLATION COMPLETED (SOME PACKAGES SKIPPED/FAILED) ::%s\n' "$BOLD" "$YELLOW" "$RESET"
+  printf 'Failed/Skipped groups: %d\n' "${#FAILED_GROUPS[@]}"
+  printf 'Failed/Skipped packages: %d\n' "${#FAILED_PACKAGES[@]}"
 
   if (( ${#FAILED_GROUPS[@]} > 0 )); then
-    printf '\n%sGroups with failures:%s\n' "$BOLD" "$RESET"
+    printf '\n%sGroups with failures/skips:%s\n' "$BOLD" "$RESET"
     for group in "${FAILED_GROUPS[@]}"; do
       printf '  %s\n' "$group"
     done
   fi
 
-  printf '\n%sFailed packages:%s\n' "$BOLD" "$RESET"
+  printf '\n%sFailed/Skipped packages:%s\n' "$BOLD" "$RESET"
   for item in "${FAILED_PACKAGES[@]}"; do
     printf '  %s\n' "$item"
   done
 
-  # FIX: Return 0 instead of 1. This prevents 'set -e' from seeing this function as a failure.
   return 0
 }
 
@@ -502,7 +544,6 @@ main() {
   validate_group_configuration
   acquire_script_lock
   
-  # Inject Auto-Detection Logic before touching pacman-keys
   determine_os_state
   
   if [[ "${TARGET_OS}" != "cachyos_pure" ]]; then
@@ -518,7 +559,6 @@ main() {
     install_group "${GROUP_LABELS[i]}" "${GROUP_ARRAYS[i]}"
   done
 
-  # FIX: Print the summary, but unconditionally exit with 0 so the orchestrator moves on.
   print_summary
   exit 0
 }
