@@ -1,22 +1,58 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Arch Linux: Zero-Touch Wayland SSO Master Configuration (Platinum Revision)
-# Target: Hyprland 0.55.2+, UWSM, Greetd, Tuigreet, GNOME Keyring, Udiskie
-# Kernel: 7.0.11+ | Systemd: 260+ | Bash: 5.3.9+
+# Arch Linux: Universal Wayland SSO Master (Platinum Edition)
+# Target: Hyprland, UWSM, Greetd, Tuigreet, GNOME Keyring, Udiskie
+# Kernel: 7.0.10+ | Systemd: 260+ | Bash: 5.3.9+
 # ==============================================================================
 
 set -euo pipefail
 
-# --- 1. Privilege and Environment Validation ---
+# --- 1. Privilege Escalation (Preserving Arguments) ---
 if [[ "${EUID}" -ne 0 ]]; then
     echo "CRITICAL: This script requires root privileges. Elevating..."
     exec sudo "$0" "$@"
 fi
 
-# Accurately identify the human user invoking the script
+# --- 2. CLI Argument Parsing ---
+show_help() {
+    cat << EOF
+Usage: ${0##*/} [OPTIONS]
+
+A fully automated, zero-touch deployment script for Wayland Single Sign-On (SSO) 
+on Arch Linux. Orchestrates Greetd, UWSM, Hyprland, and GNOME Keyring seamlessly.
+
+Options:
+  -m, --mode <mode>   Set the deployment mode. Available modes:
+                      auto        : (Default) Auto-detects encryption. Deploys 'luks' if encrypted, 'unencrypted' if not.
+                      unencrypted : Forces password prompt at Tuigreet. Unlocks Keyring automatically.
+                      luks        : Forces autologin bypass. Injects LUKS boot password into Keyring from kernel.
+                      autologin   : Forces autologin on unencrypted drive. (WARNING: Keyring will start locked).
+  -h, --help          Show this help message and exit.
+
+Example:
+  sudo ./${0##*/} --mode auto
+EOF
+}
+
+MODE="auto"
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -m|--mode) MODE="$2"; shift ;;
+        -h|--help) show_help; exit 0 ;;
+        *) echo "FATAL: Unknown parameter passed: $1"; show_help; exit 1 ;;
+    esac
+    shift
+done
+
+if [[ "$MODE" != "auto" && "$MODE" != "unencrypted" && "$MODE" != "luks" && "$MODE" != "autologin" ]]; then
+    echo "FATAL: Invalid mode '$MODE'. Use 'auto', 'unencrypted', 'luks', or 'autologin'."
+    exit 1
+fi
+
+# --- 3. Environment Validation ---
 REAL_USER="${SUDO_USER:-}"
 if [[ -z "$REAL_USER" ]] || [[ "$REAL_USER" == "root" ]]; then
-    # Fallback: Find the first standard user (UID 1000-59999)
     REAL_USER=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1; exit}' /etc/passwd)
 fi
 
@@ -28,13 +64,8 @@ fi
 USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 echo "Targeting user configuration for: $REAL_USER"
 
-# --- 2. Core Dependency Enforcement ---
-echo "Verifying core Wayland and SSO dependencies..."
-pacman -S --needed --noconfirm greetd greetd-tuigreet uwsm udiskie libsecret
-
-# --- 3. Advanced Root Encryption Detection ---
-# Correctly strips BTRFS subvolume strings (e.g., [/subvol]) from findmnt 
-# output to prevent lsblk parsing fatalities in modern Arch topologies.
+# --- 4. Topology & Encryption Auto-Detection ---
+# Safely strips BTRFS subvolume tags (e.g., [/@]) to prevent lsblk parsing crashes
 is_root_encrypted() {
     local root_dev raw_dev
     root_dev=$(findmnt -n -o SOURCE /) || return 1
@@ -42,43 +73,54 @@ is_root_encrypted() {
     lsblk -s -no TYPE "$raw_dev" 2>/dev/null | grep -q "^crypt$"
 }
 
-# --- 4. Safely Compile AUR PAM Module (LUKS-encrypted root only) ---
-if is_root_encrypted; then
-    echo "LUKS root detected. Resolving 'pam-fde-boot-pw-git'..."
-    
+echo "=> Analyzing root filesystem topology..."
+if [[ "$MODE" == "auto" ]]; then
+    if is_root_encrypted; then
+        echo "   [+] LUKS encryption detected. Selecting 'luks' mode (Zero-Touch SSO)."
+        ACTIVE_MODE="luks"
+    else
+        echo "   [-] No root encryption detected. Selecting 'unencrypted' mode (Tuigreet prompt)."
+        ACTIVE_MODE="unencrypted"
+    fi
+else
+    ACTIVE_MODE="$MODE"
+    if [[ "$ACTIVE_MODE" == "luks" ]] && ! is_root_encrypted; then
+        echo "FATAL: LUKS mode explicitly requested, but root partition is not encrypted. Aborting."
+        exit 1
+    fi
+fi
+
+# --- 5. Core Dependency Enforcement ---
+echo "Verifying core Wayland and SSO dependencies..."
+pacman -S --needed --noconfirm greetd greetd-tuigreet uwsm udiskie libsecret gnome-keyring
+
+if [[ "$ACTIVE_MODE" == "luks" ]]; then
     if ! pacman -Qq pam-fde-boot-pw-git &>/dev/null; then
-        echo "Installing build dependencies (base-devel, meson, ninja, git)..."
+        echo "LUKS mode: Compiling pam-fde-boot-pw-git from AUR..."
         pacman -S --needed --noconfirm base-devel git meson ninja
 
         BUILD_DIR="${USER_HOME}/.cache/aur-build-pam"
-        rm -rf "$BUILD_DIR" # Guarantee idempotency on subsequent runs
+        rm -rf "$BUILD_DIR"
         mkdir -p "$BUILD_DIR"
         chown "$REAL_USER:$REAL_USER" "$BUILD_DIR"
         
-        # Demote privileges purely to compile the source code in an isolated directory
-        echo "Compiling pam-fde-boot-pw-git as unprivileged user: $REAL_USER..."
+        # Demote privileges purely to compile the source code safely
         sudo -u "$REAL_USER" bash -c "
             cd '$BUILD_DIR' && \
             git clone https://aur.archlinux.org/pam-fde-boot-pw-git.git . && \
             makepkg -sc --noconfirm
         "
-            
-        # Retain root elevation to force the installation of the resulting artifact
-        echo "Installing compiled artifact..."
+        # Retain root elevation to install the compiled artifact
         pacman -U --noconfirm "$BUILD_DIR"/*.pkg.tar.zst
         rm -rf "$BUILD_DIR"
     else
         echo "pam-fde-boot-pw-git is already installed."
     fi
-else
-    echo "Root partition is unencrypted; skipping pam-fde-boot-pw deployment."
 fi
 
-# --- 5. Architecting UWSM & Tuigreet ---
+# --- 6. Architecting UWSM & Tuigreet ---
 echo "Deploying Greetd, Tuigreet, and UWSM Wrappers..."
 
-# Abstraction wrapper to bypass Tuigreet's double-dash delimiter logic 
-# and lack of shell expansion for complex arguments.
 mkdir -p /usr/local/bin
 cat > /usr/local/bin/wayland-session << 'EOF'
 #!/usr/bin/env bash
@@ -86,41 +128,48 @@ exec uwsm start -- hyprland.desktop
 EOF
 chmod 0755 /usr/local/bin/wayland-session
 
-# Create Tuigreet cache directory explicitly to prevent graphical looping
 mkdir -p /var/cache/tuigreet
-# Only chown if the greeter user actually exists (standard if greetd is installed)
 if getent passwd greeter >/dev/null; then
     chown greeter:greeter /var/cache/tuigreet
 fi
 chmod 0755 /var/cache/tuigreet
 
 mkdir -p /etc/greetd
-cat > /etc/greetd/config.toml << EOF
+if [[ "$ACTIVE_MODE" == "unencrypted" ]]; then
+    # Standard Mode: Forces password prompt at Tuigreet to unlock keyring
+    cat > /etc/greetd/config.toml << EOF
 [terminal]
 vt = 1
 
 [default_session]
-# Launch Tuigreet using the abstracted UWSM executable
+command = "tuigreet --time --remember --remember-session --cmd /usr/local/bin/wayland-session"
+user = "greeter"
+EOF
+else
+    # LUKS or Autologin Mode: Bypasses Tuigreet entirely (Autologin)
+    cat > /etc/greetd/config.toml << EOF
+[terminal]
+vt = 1
+
+[default_session]
 command = "tuigreet --time --remember --remember-session --cmd /usr/local/bin/wayland-session"
 user = "greeter"
 
 [initial_session]
-# This directive enables the autologin bypass, skipping the PAM Auth phase
 command = "/usr/local/bin/wayland-session"
 user = "$REAL_USER"
 EOF
+fi
 
 if getent passwd greeter >/dev/null; then
     chown -R greeter:greeter /etc/greetd
 fi
 
-# --- 6. The Platinum PAM Stack ---
+# --- 7. The Platinum PAM Stack ---
 echo "Configuring PAM stack for automated Keyring decryption..."
-# Silence the backup in case greetd was freshly installed and the PAM file is missing
 cp /etc/pam.d/greetd "/etc/pam.d/greetd.bak.$(date +%s)" 2>/dev/null || true
 
-if is_root_encrypted; then
-    # Full SSO stack: Extracts kernel cache and sequentially injects it into the GNOME Keyring
+if [[ "$ACTIVE_MODE" == "luks" ]]; then
     cat > /etc/pam.d/greetd << 'EOF'
 #%PAM-1.0
 auth       required     pam_securetty.so
@@ -136,7 +185,6 @@ session    optional     pam_fde_boot_pw.so inject_for=gkr
 session    optional     pam_gnome_keyring.so auto_start
 EOF
 else
-    # Fallback stack without LUKS injection capabilities
     cat > /etc/pam.d/greetd << 'EOF'
 #%PAM-1.0
 auth       required     pam_securetty.so
@@ -152,23 +200,19 @@ session    optional     pam_gnome_keyring.so auto_start
 EOF
 fi
 
-# --- 7. Systemd Service Overrides ---
+# --- 8. Systemd Service Overrides ---
 echo "Applying Systemd overrides for Kernel Keyring inheritance..."
 mkdir -p /etc/systemd/system/greetd.service.d
-# Forcing 'inherit' ensures Greetd can access the root session keyring
-# before the 60-second systemd cache destruction timer fires.
 cat > /etc/systemd/system/greetd.service.d/keyringmode.conf << 'EOF'
 [Service]
 KeyringMode=inherit
 EOF
 
-# --- 8. Automating Udiskie for External Drives ---
+# --- 9. Automating Udiskie for External Drives ---
 echo "Writing udiskie YAML configuration..."
 mkdir -p "${USER_HOME}/.config/udiskie"
 cat > "${USER_HOME}/.config/udiskie/config.yml" << 'EOF'
 program_options:
-  # Query the active GNOME Keyring via secret-tool for silent unlocks,
-  # bypassing the hardcoded graphical popup mechanism.
   password_prompt: ["secret-tool", "lookup", "uuid", "{id_uuid}"]
   automount: true
   notify: true
@@ -176,11 +220,9 @@ program_options:
 EOF
 chown -R "$REAL_USER":"$REAL_USER" "${USER_HOME}/.config/udiskie"
 
-# --- 9. Service Enablement ---
+# --- 10. Service Enablement ---
 echo "Enabling boot services..."
-# Safely enable the display manager using native systemd headless detection
 if systemd-detect-virt -q --chroot; then
-    echo "Chroot environment detected. Forcing service enablement..."
     systemctl enable greetd.service --force
 else
     systemctl daemon-reload
@@ -188,5 +230,9 @@ else
 fi
 
 echo "====================================================================="
-echo " Deployment Complete! You are fully configured for Wayland SSO.      "
+echo " Deployment Complete! Active Configuration: [ ${ACTIVE_MODE^^} ]"
+if [[ "$ACTIVE_MODE" == "autologin" ]]; then
+    echo " WARNING: You forced autologin on an unencrypted drive."
+    echo "          Your GNOME keyring will start LOCKED."
+fi
 echo "====================================================================="
