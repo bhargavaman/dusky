@@ -22,14 +22,7 @@ DEFAULT_MODE        = "auto"
 THEME_FILE          = "~/.config/matugen/generated/dusky_tui.json"
 ENABLE_USER_PRESETS = True
 USER_PRESETS_TAB    = "Profiles"
-
-GLOBAL_POPUP = {
-    "title": "Pure Wayland Mode",
-    "message": "This configuration is strictly optimized for Hyprland/Wayland. Legacy X11 capture methods have been removed.",
-    "level": "info",
-    "require_confirm": False,
-    "cancel_quits": False
-}
+# NOTE: GLOBAL_POPUP completely removed per user request for strict Wayland use.
 
 # =============================================================================
 # 3. TABS (STRICTLY ONE WORD)
@@ -59,7 +52,7 @@ SCHEMA = {
             default="region",
             options=["screen", "portal", "region"],
             group="Target",
-            extended_help="**Capture Target** (`-w`)\n\n`screen` captures the primary Wayland output. `portal` uses the native Wayland picker (xdg-desktop-portal). `region` utilizes Slurp to draw a custom capture area on your monitor."
+            extended_help="**Capture Target** (`-w`)\n\n`screen` captures the primary Wayland output. `portal` uses the native Wayland picker. `region` utilizes Slurp to draw a custom area."
         ),
         ConfigItem(
             label="Region",
@@ -68,7 +61,7 @@ SCHEMA = {
             type_="string",
             default="",
             group="Target",
-            extended_help="**Region String**\n\nSpecify exact coordinates (e.g., `1280x720+100+50`) when Source is set to `region`. If left completely blank, Slurp will automatically execute allowing you to draw the capture zone on your screen."
+            extended_help="**Region String**\n\nSpecify exact coordinates (e.g., `1280x720+100+50`). If left blank, Slurp will automatically execute so you can draw the capture zone."
         ),
         ConfigItem(
             label="FPS",
@@ -106,7 +99,17 @@ SCHEMA = {
             default="gpu",
             options=["gpu", "cpu"],
             group="Hardware",
-            extended_help="**Encoder Device** (`-encoder`)\n\n`gpu` strictly forces NVENC/VAAPI/AMF for zero-overhead capture. `cpu` falls back to software encoding (only compatible with the H264 codec)."
+            extended_help="**Encoder Device** (`-encoder`)\n\n`gpu` strictly forces NVENC/VAAPI/AMF for zero-overhead capture. `cpu` falls back to software encoding."
+        ),
+        ConfigItem(
+            label="Tune",
+            key="tune",
+            scope="DEFAULT",
+            type_="cycle",
+            default="performance",
+            options=["performance", "quality"],
+            group="Hardware",
+            extended_help="**Encoder Tuning** (`-tune`)\n\nNVIDIA ONLY. Adjusts the silicon bias towards raw encoding speed or visual fidelity."
         ),
         ConfigItem(
             label="Power",
@@ -116,7 +119,7 @@ SCHEMA = {
             default="no",
             options=["yes", "no"],
             group="Hardware",
-            extended_help="**Low Power Mode** (`-low-power`)\n\n(AMD GPUs Only) Allows the GPU to enter a lower power state during recording. Best used alongside the 'content' Timing mode."
+            extended_help="**Low Power Mode** (`-low-power`)\n\nAMD ONLY. Allows the GPU to enter a lower power state during recording. Best used alongside the 'content' Timing mode."
         ),
         ConfigItem(
             label="Codec",
@@ -131,13 +134,13 @@ SCHEMA = {
                 "hevc_10bit_vulkan", "av1_10bit_vulkan", "av1_hdr_vulkan"
             ],
             hints=[
-                "Automatic", "Max Compatibility", "H.265 (High Efficiency)", "AV1 (Best Compression)", "Open WebM", "Open WebM High",
+                "Automatic", "Max Compatibility", "H.265 (Efficiency)", "AV1 (Compression)", "Open WebM", "Open WebM High",
                 "HEVC + HDR", "AV1 + HDR", "HEVC 10-bit", "AV1 10-bit",
                 "Fixes Nvidia downclock", "Vulkan HEVC", "Vulkan AV1",
                 "Vulkan HEVC 10-bit", "Vulkan AV1 10-bit", "Vulkan AV1 HDR"
             ],
             group="Format",
-            extended_help="**Video Codec** (`-k`)\n\nVulkan codecs are highly recommended for NVIDIA Wayland users to prevent the 'cuda p2 state' bug where the GPU heavily downclocks during gaming."
+            extended_help="**Video Codec** (`-k`)\n\nVulkan codecs are highly recommended for NVIDIA Wayland users to prevent the 'cuda p2 state' GPU downclock bug."
         ),
         ConfigItem(
             label="Quality",
@@ -147,7 +150,7 @@ SCHEMA = {
             default="very_high",
             options=["ultra", "very_high", "high", "medium", "low", "40000", "80000"],
             group="Format",
-            extended_help="**Quality / Bitrate** (`-q`)\n\nIf Bitrate is 'auto/vbr', select a text preset (e.g., 'very_high'). If Bitrate is 'cbr', you MUST type a raw numeric value in kbps (e.g., '40000')."
+            extended_help="**Quality / Bitrate** (`-q`)\n\nIf Bitrate is 'auto/vbr', select a text preset (e.g., 'very_high'). If Bitrate is 'cbr', type a raw numeric value in kbps (e.g., '40000')."
         ),
         ConfigItem(
             label="Bitrate",
@@ -157,7 +160,7 @@ SCHEMA = {
             default="auto",
             options=["auto", "qp", "vbr", "cbr"],
             group="Format",
-            extended_help="**Bitrate Mode** (`-bm`)\n\n`cbr` (Constant Bitrate) is heavily recommended when using the Replay Buffer to strictly govern RAM usage and prevent OOM crashes."
+            extended_help="**Bitrate Mode** (`-bm`)\n\n`cbr` (Constant Bitrate) is heavily recommended when using the Replay Buffer to strictly govern RAM usage."
         ),
         ConfigItem(
             label="Timing",
@@ -167,8 +170,17 @@ SCHEMA = {
             default="vfr",
             options=["vfr", "cfr", "content"],
             group="Format",
-            warning_msg="Content mode natively requires X11 or Source set to 'portal' on Wayland.",
-            extended_help="**Frame Rate Mode** (`-fm`)\n\n`content` syncs the video exactly to captured screen updates to minimize idle resource usage, but requires 'portal' on Wayland."
+            extended_help="**Frame Rate Mode** (`-fm`)\n\n`content` syncs the video exactly to captured screen updates to minimize idle resource usage."
+        ),
+        ConfigItem(
+            label="Range",
+            key="color_range",
+            scope="DEFAULT",
+            type_="cycle",
+            default="limited",
+            options=["limited", "full"],
+            group="Format",
+            extended_help="**Color Range** (`-cr`)\n\n`full` provides deeper colors but may cause washed-out blacks on incompatible web players. `limited` is universally safe."
         ),
         ConfigItem(
             label="Container",
@@ -178,7 +190,7 @@ SCHEMA = {
             default="mp4",
             options=["mp4", "mkv", "flv", "webm"],
             group="Output",
-            extended_help="**Container Format** (`-c`)\n\n`mkv` is fundamentally safer against system crashes and file corruption. `mp4` possesses broader drag-and-drop web compatibility."
+            extended_help="**Container Format** (`-c`)\n\n`mkv` is fundamentally safer against system crashes and file corruption. `mp4` possesses broader web compatibility."
         ),
         ConfigItem(
             label="Directory",
@@ -187,7 +199,7 @@ SCHEMA = {
             type_="string",
             default="~/Videos",
             group="Output",
-            extended_help="**Output Directory** (`-o`)\n\nThe absolute destination folder. The backend shell wrapper will automatically enforce tilde (`~`) expansion."
+            extended_help="**Output Directory** (`-o`)\n\nThe absolute destination folder. The backend shell wrapper automatically enforces tilde (`~`) expansion."
         ),
     ],
 
@@ -202,7 +214,7 @@ SCHEMA = {
             type_="string",
             default="default_output",
             group="Source",
-            extended_help="**Audio Routing** (`-a`)\n\nUse `default_output` for desktop audio, or `default_input` for microphone. You can pipe them together (`default_output|default_input`) for multitrack."
+            extended_help="**Audio Routing** (`-a`)\n\nUse `default_output` for desktop audio, or `default_input` for microphone. You can pipe them together (`default_output|default_input`)."
         ),
         ConfigItem(
             label="Codec",
@@ -296,7 +308,6 @@ SCHEMA = {
                 "bitrate_mode": "auto",
                 "frame_mode": "vfr"
             },
-            popup_message="Vulkan override applied. Verify compatibility with your Nvidia drivers.",
             extended_help="**Vulkan Override**\n\nInstantly configures the pipeline to use the experimental Vulkan HEVC codec, bypassing the notorious Nvidia CUDA downclock bug."
         ),
         ConfigItem(
@@ -312,7 +323,6 @@ SCHEMA = {
                 "replay_buffer": 60,
                 "replay_storage": "ram"
             },
-            warning_msg="This will force CBR (Constant Bitrate) and modify your buffer sizes.",
             extended_help="**Stable Replay Preset**\n\nConfigures the application for predictable Instant Replay usage by forcing Constant Bitrate (CBR) to strictly manage RAM consumption."
         ),
         ConfigItem(

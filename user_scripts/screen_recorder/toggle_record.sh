@@ -22,6 +22,11 @@ quality="${quality:-very_high}"
 encoder="${encoder:-gpu}"
 audio="${audio:-default_output}"
 
+# New Hardware/Wayland Fallbacks
+color_range="${color_range:-limited}"
+tune="${tune:-performance}"
+low_power="${low_power:-no}"
+
 # Guarantee output directory exists
 mkdir -p "$output_dir"
 
@@ -76,11 +81,17 @@ args=(
 [[ -n "$frame_mode" ]] && args+=(-fm "$frame_mode")
 [[ "$cursor" == "no" ]] && args+=(-cursor "no")
 
+# Hardware/Wayland Modifiers
+[[ -n "$color_range" && "$color_range" != "limited" ]] && args+=(-cr "$color_range")
+[[ -n "$tune" && "$tune" != "performance" ]] && args+=(-tune "$tune")
+[[ "$low_power" == "yes" ]] && args+=(-low-power "yes")
+
 # 5. Routing Output Modes (Replay vs Standard)
 if [[ -n "$replay_buffer" && "$replay_buffer" -gt 0 ]]; then
     args+=(-r "$replay_buffer")
     [[ -n "$replay_storage" ]] && args+=(-replay-storage "$replay_storage")
     [[ "$restart_replay" == "yes" ]] && args+=(-restart-replay-on-save "yes")
+    [[ "$date_folders" == "yes" ]] && args+=(-df "yes")
     
     # Replay strictly requires a Directory for Output
     OUT="$output_dir"
