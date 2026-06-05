@@ -448,7 +448,7 @@ hl.bind(
 -- --- Screen Recorder ---
 hl.bind(
     "SUPER + SHIFT + S",
-    hl.dsp.exec_cmd(dusky_scripts .. "screen_recorder/dusky_recorder.sh"),
+    hl.dsp.exec_cmd(dusky_scripts .. "dusky_recorder/dusky_recorder.sh"),
     { description = "Screen Recorder", submap_universal = true }
 )
 
