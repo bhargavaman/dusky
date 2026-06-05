@@ -1556,7 +1556,7 @@ hl.window_rule({
 
     -- 2. Visual Distinction (Green Border)
     -- Helps you instantly identify which window is pinned
-    border_color = "rgb(328E6E)",
+    border_color = inverse_primary,
 
     -- 3. Thicker Border
     border_size = 2,
