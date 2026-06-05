@@ -162,18 +162,22 @@ hl.bind(
 
 
 -- --- Passthrough (Disable keybinds) ---
+-- ⚠ Requires Hyprland built after May 29 2026 (PR #14856)
+
+local SUBMAP_MANUAL_PT = "keybinds_disabled"  -- NOT "passthrough" (reserved dispatcher name)
+
 hl.bind(
     "ALT + 6",
     function()
         hl.notification.create({ text = "Passthrough Enabled - Press ALT+6 to exit", timeout = 3000 })
-        hl.dispatch(hl.dsp.submap("passthrough"))
+        hl.dispatch(hl.dsp.submap(SUBMAP_MANUAL_PT))
     end,
     { description = "Enable Game Mode (Disable Keybinds)", locked = true }
 )
 
-hl.define_submap("passthrough", function()
+hl.define_submap(SUBMAP_MANUAL_PT, function()
     hl.bind(
-        "ALT + SHIFT + 6",
+        "ALT + 6",   -- ← same key now works with the #14856 fix
         function()
             hl.notification.create({ text = "Passthrough Disabled - Keybinds restored", timeout = 2000 })
             hl.dispatch(hl.dsp.submap("reset"))
