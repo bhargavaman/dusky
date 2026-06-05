@@ -11,14 +11,12 @@ from python.frontend.core_types import ConfigItem
 # 1. CORE APPLICATION ROUTING
 # =============================================================================
 ENGINE_TYPE = "ini"
-TARGET_FILE = "~/.config/gsr-tui/config.conf"
+TARGET_FILE = "~/.config/screen_recorder/config.conf"
 APP_TITLE   = "GPU Screen Recorder"
 
 # =============================================================================
 # 2. UI & ENVIRONMENT BEHAVIOR
 # =============================================================================
-# Set to "auto" so the TUI immediately writes to the INI file on change.
-# This eliminates the need for the intermediate "build_scripts.sh" step.
 DEFAULT_MODE        = "auto"
 THEME_FILE          = "~/.config/matugen/generated/dusky_tui.json"
 ENABLE_USER_PRESETS = True
@@ -52,7 +50,7 @@ SCHEMA = {
             default="screen",
             options=["screen", "portal", "region", "focused"],
             group="Target",
-            extended_help="**Capture Target** (`-w`)\n\n`screen` captures the primary monitor. `portal` uses the native Wayland picker. `region` captures a specific coordinate box. `focused` records the currently active window."
+            extended_help="**Capture Target** (`-w`)\n\n`screen` captures the primary Wayland output. `portal` uses the native Wayland picker. `region` freezes the screen to capture a specific area. `focused` is strictly for XWayland or X11."
         ),
         ConfigItem(
             label="Region",
@@ -61,7 +59,7 @@ SCHEMA = {
             type_="string",
             default="",
             group="Target",
-            extended_help="**Region String**\n\nSpecify the exact coordinates (e.g., `1280x720+100+50`) when Source is set to `region`. If executing via slurp natively, leave this blank."
+            extended_help="**Region String**\n\nSpecify the exact coordinates (e.g., `1280x720+100+50`) when Source is set to `region`. If left blank, Slurp will automatically draw on screen."
         ),
         ConfigItem(
             label="FPS",
@@ -111,13 +109,13 @@ SCHEMA = {
                 "auto", "h264", "hevc", "av1", "vp8", "vp9",
                 "hevc_hdr", "av1_hdr", "hevc_10bit", "av1_10bit",
                 "h264_vulkan", "hevc_vulkan", "av1_vulkan", 
-                "hevc_10bit_vulkan", "av1_10bit_vulkan"
+                "hevc_10bit_vulkan", "av1_10bit_vulkan", "av1_hdr_vulkan"
             ],
             hints=[
-                "Automatic", "Broadest compatibility", "H.265 (High Efficiency)", "AV1 (Best Compression)", "Open WebM", "Open WebM High",
+                "Automatic", "Max Compatibility", "H.265 (High Efficiency)", "AV1 (Best Compression)", "Open WebM", "Open WebM High",
                 "HEVC + HDR", "AV1 + HDR", "HEVC 10-bit", "AV1 10-bit",
                 "Fixes Nvidia downclock", "Vulkan HEVC", "Vulkan AV1",
-                "Vulkan HEVC 10-bit", "Vulkan AV1 10-bit"
+                "Vulkan HEVC 10-bit", "Vulkan AV1 10-bit", "Vulkan AV1 HDR"
             ],
             group="Format",
             extended_help="**Video Codec** (`-k`)\n\nVulkan codecs are highly recommended for NVIDIA users to prevent the 'cuda p2 state' bug where the GPU is heavily downclocked during gaming."
@@ -130,7 +128,7 @@ SCHEMA = {
             default="very_high",
             options=["ultra", "very_high", "high", "medium", "low"],
             group="Format",
-            extended_help="**Quality Preset** (`-q`)\n\nSets the visual fidelity target."
+            extended_help="**Quality Preset** (`-q`)\n\nSets the visual fidelity target. Ultra uses drastically more storage space."
         ),
         ConfigItem(
             label="Bitrate",
@@ -150,7 +148,8 @@ SCHEMA = {
             default="vfr",
             options=["vfr", "cfr", "content"],
             group="Format",
-            extended_help="**Frame Rate Mode** (`-fm`)\n\n`content` syncs the video to captured content updates, which is highly recommended for Wayland to minimize idle resource usage."
+            warning_msg="Content mode requires X11 or Source set to 'portal' on Wayland.",
+            extended_help="**Frame Rate Mode** (`-fm`)\n\n`content` syncs the video to captured content updates to minimize idle resource usage, but only natively functions on X11."
         ),
         ConfigItem(
             label="Container",
@@ -183,9 +182,8 @@ SCHEMA = {
             scope="DEFAULT",
             type_="string",
             default="default_output",
-            options=["default_output", "default_input", "default_output|default_input", "none"],
             group="Source",
-            extended_help="**Audio Input** (`-a`)\n\nUse `default_output` for desktop audio, or `default_input` for microphone. You can pipe them together (`default_output|default_input`) for multitrack recording, or specify an application natively (e.g., `app:firefox`)."
+            extended_help="**Audio Input** (`-a`)\n\nUse `default_output` for desktop audio, or `default_input` for microphone. You can pipe them together (`default_output|default_input`) for multitrack recording."
         ),
         ConfigItem(
             label="Codec",
@@ -248,7 +246,7 @@ SCHEMA = {
         ),
         ConfigItem(
             label="Folders",
-            key="dark_frame",
+            key="date_folders",
             scope="DEFAULT",
             type_="cycle",
             default="no",
