@@ -137,7 +137,7 @@ fi
 
 # 1. Console Font
 msg_info "Setting console font..."
-setfont latarcyrheb-sun32 || msg_warn "Could not set font. Continuing..."
+setfont ter-v28b || setfont latarcyrheb-sun24 || msg_warn "Could not set font. Continuing..."
 
 # 2. Battery Threshold
 BAT_DIR=""
@@ -157,8 +157,12 @@ if [[ -n "$BAT_DIR" ]]; then
             if [[ "$CURRENT_THRESHOLD" == "60" ]]; then
                 msg_info "Battery limit already set to 60%."
             else
-                echo "60" > "$BAT_CTRL"
-                msg_ok "Battery limit set to 60%."
+                # Safely attempt to write; do not fail script if hardware rejects the threshold
+                if echo "60" > "$BAT_CTRL" 2>/dev/null; then
+                    msg_ok "Battery limit set to 60%."
+                else
+                    msg_warn "Battery threshold write rejected by hardware. Skipping."
+                fi
             fi
         else
             msg_warn "Battery threshold control exists but is not writable. Skipping."
