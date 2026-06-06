@@ -13,6 +13,7 @@ readonly C_RED=$'\033[31m'
 readonly C_GREEN=$'\033[32m'
 readonly C_YELLOW=$'\033[33m'
 readonly C_CYAN=$'\033[36m'
+readonly C_MAGENTA=$'\033[35m'
 readonly C_RESET=$'\033[0m'
 
 readonly TARGET_CRYPT_NAME="cryptroot"
@@ -619,14 +620,24 @@ run_provisioning_wizard() {
         echo -e "${C_YELLOW}>> Encryption disabled. Skipping LUKS password setup.${C_RESET}"
     fi
 
-    # Step 5: Final Warning
+    # Step 5: Final Confirmation Delay
+    echo -e "\n${C_MAGENTA}${C_BOLD}>>> Applying configurations in 5 seconds... <<<${C_RESET}"
+    
     if (( wipe_entire_disk == 1 )); then
-        echo -e "\n${C_RED}${C_BOLD}!!! WARNING: WIPING ALL DATA ON $target_dev IN 5 SECONDS !!!${C_RESET}"
-    elif (( manual_partition == 1 )); then
-        echo -e "\n${C_RED}${C_BOLD}!!! WARNING: OVERWRITING CHOSEN MANUAL LAYOUT ON $target_dev IN 5 SECONDS !!!${C_RESET}"
+        echo -e "${C_YELLOW}Action: Re-partitioning and formatting the entire drive (${C_CYAN}$target_dev${C_YELLOW}).${C_RESET}"
     else
-        echo -e "\n${C_RED}${C_BOLD}!!! WARNING: OVERWRITING SELECTED PARTITIONS ON $target_dev IN 5 SECONDS !!!${C_RESET}"
+        echo -e "${C_YELLOW}Action: Formatting the selected partitions:${C_RESET}"
+        echo -e "  ${C_BOLD}*${C_RESET} Root: ${C_CYAN}$part_root${C_RESET}"
+        if [[ "$BOOT_MODE" == "UEFI" && -n "${part_boot:-}" ]]; then
+            if (( format_efi == 1 )); then
+                echo -e "  ${C_BOLD}*${C_RESET} EFI:  ${C_CYAN}$part_boot${C_RESET} (Will be formatted)"
+            else
+                echo -e "  ${C_BOLD}*${C_RESET} EFI:  ${C_CYAN}$part_boot${C_RESET} (Data will be preserved)"
+            fi
+        fi
     fi
+    
+    echo -e "${C_MAGENTA}Press Ctrl+C to abort, or simply wait to continue.${C_RESET}"
     sleep 5
 
     # Step 6: Master Teardown & Validation
