@@ -2594,7 +2594,8 @@ class DuskyTUI(App):
         if item.is_parent and (prefix_len <= click_x <= prefix_len + 9):
             instant_action = True
             
-        if item.type_ in ("preset", "action") and click_x >= 44:
+        is_trigger_bool = item.type_ == "bool" and item.options and str(item.options[0]).lower() == "trigger"
+        if (item.type_ in ("preset", "action") or is_trigger_bool) and click_x >= 44:
             instant_action = True
             
         if item.key == "__save_new_preset" and (1 <= click_x <= 15):
