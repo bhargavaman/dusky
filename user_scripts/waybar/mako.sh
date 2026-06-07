@@ -23,10 +23,11 @@ for arg in "$@"; do
 done
 
 # Fetch buffers safely with DBus IPC timeout protection (prevents Waybar thread locks)
-ACTIVE=$(timeout 1 makoctl list -j 2>/dev/null || true)
+# We default to '[]' to ensure jq always gets valid JSON even if DBus is temporarily locked
+ACTIVE=$(timeout 1 makoctl list -j 2>/dev/null || echo "[]")
 ACTIVE=${ACTIVE:-[]}
 
-HISTORY=$(timeout 1 makoctl history -j 2>/dev/null || true)
+HISTORY=$(timeout 1 makoctl history -j 2>/dev/null || echo "[]")
 HISTORY=${HISTORY:-[]}
 
 # Fetch mode and evaluate DND purely in-memory
@@ -51,6 +52,10 @@ jq -c -n \
     --arg dnd "$DND_STATE" \
     --arg mode "$MODE" '
     
+    # Safely extract notification arrays. makoctl often nests them under .data[][] depending on the version
+    def extract_notifs:
+        if type == "object" and .data then [.data[][]?] else (if type == "array" then . else [] end) end;
+
     # SAFELY define all the apps and modules we want to ignore
     def is_ignored:
         . == "OSD" or . == "dusky-keys" or . == "dusky-cava" or . == "dusky-cava-alert" or 
@@ -71,15 +76,13 @@ jq -c -n \
     # 1. Construct O(1) lookup dictionary for blacklisted IDs
     ($bl | split("\n") | map(select(length > 0)) | reduce .[] as $id ({}; .[$id] = true)) as $blacklist_dict
     
-    # 2. Calculate true pending count in a single filtered pass
-    | ($active + $history) 
+    # 2. Calculate true pending count in a single filtered pass using extracted flat arrays
+    | (($active | extract_notifs) + ($history | extract_notifs)) 
     | unique_by(.id) 
     | map(select(.summary != null and .summary != ""))
     
-    # Apply the ignore filter securely mapping Rofi behavior
-    | map(select(.app_name | is_ignored | not))
-    
-    | map(select($blacklist_dict[.id | tostring] | not))
+    # Apply the ignore and blacklist filters securely in one pass
+    | map(select((.app_name | is_ignored | not) and ($blacklist_dict[.id | tostring] | not)))
     | length as $count
     
 # 3. Native JSON structural generation based on parsed arguments
