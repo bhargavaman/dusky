@@ -840,7 +840,12 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
         # Separate the visible fzf text from the hidden metadata payload packed via JSON
         line_parts = line.split('\x1f')
         visible_line = line_parts[0]
-        extra_data = json.loads(line_parts[1]) if len(line_parts) > 1 else {}
+        extra_data = {}
+        if len(line_parts) > 1:
+            try:
+                extra_data = json.loads(line_parts[1])
+            except ValueError:
+                pass
         
         # Strip all ANSI escape sequences to process raw FZF line natively
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -861,26 +866,29 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
         snap_cleanup = extra_data.get("cleanup", "")
         snap_userdata = extra_data.get("userdata", "")
         snap_pre_num = extra_data.get("pre_number", "")
+        snap_age = extra_data.get("age", "")
         
-        # 1. Cleanly Aligned Shortcuts Panel (Math-Calculated Padding ensuring right-side borders lock tight)
-        print("\033[1;38;5;220m╭─ 󰏖 KEYBOARD SHORTCUTS " + "─"*30 + "╮\033[0m")
+        # 1. Cleanly Aligned Shortcuts Panel (Math-Calculated Padding exactly 56 chars wide ensuring right-side borders lock tight)
+        print("\033[1;38;5;220m╭─ 󰏖 KEYBOARD SHORTCUTS " + "─"*31 + "╮\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;114m[ENTER]\033[0m   \033[38;5;253m󰁯 Restore Selected\033[0m" + " "*25 + "\033[1;38;5;220m│\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;196m[DEL]\033[0m     \033[38;5;253m󰆴 Delete Selected\033[0m" + " "*26 + "\033[1;38;5;220m│\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;81m[CTRL-S]\033[0m  \033[38;5;253m󰎈 Create New Snapshot\033[0m" + " "*22 + "\033[1;38;5;220m│\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;213m[TAB]\033[0m     \033[38;5;253m󰓡 Switch View (Root/Home)\033[0m" + " "*18 + "\033[1;38;5;220m│\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-A]\033[0m  \033[38;5;253m󰒉 Select All\033[0m" + " "*31 + "\033[1;38;5;220m│\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;246m[CTRL-X]\033[0m  \033[38;5;253m󰒓 Deselect All\033[0m" + " "*29 + "\033[1;38;5;220m│\033[0m")
-        print("\033[1;38;5;220m╰" + "─"*53 + "╯\033[0m\n")
+        print("\033[1;38;5;220m╰" + "─"*54 + "╯\033[0m\n")
 
-        # 2. Expanded Snapshot Meta Data leveraging hidden JSON payloads
+        # 2. Expanded Snapshot Meta Data leveraging hidden JSON payloads matching 56-char width design
         print(f"\033[1;38;5;81m󰆑 SNAPSHOT DETAILS\033[0m")
-        print(f"\033[38;5;238m" + "─" * 55 + "\033[0m")
+        print(f"\033[38;5;238m" + "─" * 56 + "\033[0m")
         print(f" \033[1;38;5;246mConfig \033[0m │ \033[1;38;5;253m{view.upper()}\033[0m")
         print(f" \033[1;38;5;246mID     \033[0m │ \033[1;38;5;39m{snap_id}\033[0m")
         print(f" \033[1;38;5;246mType   \033[0m │ \033[38;5;213m{snap_type}\033[0m")
         if snap_type.lower() == "post" and snap_pre_num:
             print(f" \033[1;38;5;246mPre-ID \033[0m │ \033[38;5;216m{snap_pre_num}\033[0m")
         print(f" \033[1;38;5;246mDate   \033[0m │ \033[38;5;220m{snap_date}\033[0m")
+        if snap_age:
+            print(f" \033[1;38;5;246mAge    \033[0m │ \033[38;5;114m{snap_age}\033[0m")
         print(f" \033[1;38;5;246mUser   \033[0m │ \033[38;5;114m{snap_user}\033[0m")
         if snap_cleanup and snap_cleanup.lower() != "none":
             print(f" \033[1;38;5;246mCleanup\033[0m │ \033[38;5;216m{snap_cleanup}\033[0m")
@@ -892,7 +900,7 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
         # Only runs when explicitly requested via Ctrl+V for instant UI responsiveness
         if show_diff:
             print(f"\033[1;38;5;114m󰏫 FILES CHANGED IF RESTORED\033[0m \033[3;38;5;246m(vs Current System)\033[0m")
-            print(f"\033[38;5;238m" + "─" * 55 + "\033[0m")
+            print(f"\033[38;5;238m" + "─" * 56 + "\033[0m")
 
             def run_diff(config: str, s_id: str):
                 print(f"\033[1;38;5;203m▶ System Profile: {config}\033[0m")
@@ -1005,8 +1013,11 @@ def launch_tui() -> None:
         
         # --- SEPARATOR AND PERFECTLY ALIGNED TABLE HEADERS ---
         c_sep = "\033[38;5;238m│\033[0m"
-        hr_width = min(80, shutil.get_terminal_size().columns - 4)
-        hr = "\033[38;5;238m" + "─" * hr_width + "\033[0m"
+        
+        # We deliberately over-render the horizontal line to 500 characters. 
+        # FZF naturally clips this out cleanly at the list pane boundary (with --no-hscroll active).
+        # This acts as a bulletproof workaround for Python's standard TTY limits inside piped processes.
+        hr = "\033[38;5;238m" + "─" * 500 + "\033[0m"
         
         # Employs identical Python format layout bounds (`:>4`, `:<7`, etc) to perfectly align with data rows 
         hdr_id = f"\033[1;38;5;242m{'ID':>4}\033[0m"
@@ -1054,7 +1065,8 @@ def launch_tui() -> None:
                     "user": s.get("user", "root"),
                     "cleanup": s.get("cleanup", ""),
                     "userdata": s.get("userdata", ""),
-                    "pre_number": s.get("pre_number", "")
+                    "pre_number": s.get("pre_number", ""),
+                    "age": age_str
                 }
                 
                 # Separated by hex control char '\x1f' ensuring zero collisions with UI aesthetics
