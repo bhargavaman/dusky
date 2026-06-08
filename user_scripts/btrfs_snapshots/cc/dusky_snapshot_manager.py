@@ -825,7 +825,6 @@ def handle_tui_preview(view: str, line: str, show_diff: bool = False) -> None:
         snap_desc = parts[4] if len(parts) > 4 else "No Description"
         
         # 1. Cleanly Aligned Shortcuts Panel
-        # Modified the top right boundary to cleanly render in yellow instead of gray to match layout symmetry
         print("\033[1;38;5;220m╭─ 󰏖 KEYBOARD SHORTCUTS " + "─"*30 + "╮\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;114m[ENTER]\033[0m   \033[38;5;253mRestore Selected\033[0m" + " "*26 + "\033[1;38;5;220m│\033[0m")
         print("\033[1;38;5;220m│\033[0m \033[1;38;5;196m[DEL]\033[0m     \033[38;5;253mDelete Selected\033[0m" + " "*27 + "\033[1;38;5;220m│\033[0m")
@@ -913,11 +912,11 @@ def launch_tui() -> None:
     if not shutil.which("fzf"):
         fail("[!] Fatal: 'fzf' is required for the interactive menu. Install it using: pacman -S fzf")
 
-    views = ["coordinated", "root", "home"]
+    # Reordered tabs to enforce exact user specification: Home -> Root -> Root+Home
+    views = ["home", "root", "coordinated"]
     view_idx = 0
 
     # Catppuccin Mocha vivid theme styling extracted from pkg reference
-    # Marker swapped to visually striking green (#a6e3a1) to form the arrow indicator
     fzf_colors = (
         "bg+:#1e1e2e,bg:#11111b,spinner:#f5e0dc,"
         "fg:#cdd6f4,fg+:#cdd6f4,header:#89b4fa,info:#cba6f7,"
@@ -935,15 +934,16 @@ def launch_tui() -> None:
         gb = 1024**3
         total, used, free = shutil.disk_usage("/")
         
-        # Vivid Nerd Font System Storage Header
+        # --- TOP LEVEL STORAGE HEADER ---
+        # This will be injected *above* the prompt line via `--header-first`
         storage_hdr = f" \033[1;38;5;81m󰋊 BTRFS STORAGE:\033[0m \033[38;5;253m{total/gb:.1f} GB Total\033[0m \033[38;5;238m|\033[0m \033[38;5;203m{used/gb:.1f} GB Used\033[0m \033[38;5;238m|\033[0m \033[38;5;114m{free/gb:.1f} GB Free\033[0m "
         
         # --- DYNAMIC INTERACTIVE TABS GENERATION ---
-        # Defines fixed widths mathematically allowing mouse mapping via fzf click-header col targeting
+        # Reordered tab definitions. Layout structure permits flawless FZF mouse coordination
         tab_defs = [
-            ("coordinated", "󰑐 ROOT+HOME", "213"),
+            ("home", "󰋜 HOME ONLY", "114"),
             ("root", "󰒋 ROOT ONLY", "39"),
-            ("home", "󰋜 HOME ONLY", "114")
+            ("coordinated", "󰑐 ROOT+HOME", "213")
         ]
 
         tab_strs = []
@@ -955,16 +955,36 @@ def launch_tui() -> None:
                 # Inactive tab styling: Transparent/dimmer
                 tab_strs.append(f"\033[38;5;246m {label} \033[0m")
 
-        # Two spaces before and in between tabs constructs precise hit-boxes for mouse clicks
+        # Constructed interactively below the prompt via `--header-lines`
         mode_hdr = "  " + "  ".join(tab_strs)
-        # ---------------------------------------------
         
+        # --- SEPARATOR AND PERFECTLY ALIGNED TABLE HEADERS ---
+        c_sep = "\033[38;5;238m│\033[0m"
+        hr_width = min(80, shutil.get_terminal_size().columns - 4)
+        hr = "\033[38;5;238m" + "─" * hr_width + "\033[0m"
+        
+        # Employs identical Python format layout bounds (`:>4`, `:<7`, etc) to perfectly align with data rows 
+        hdr_id = f"\033[1;38;5;242m{'ID':>4}\033[0m"
+        hdr_type = f"\033[1;38;5;242m{'TYPE':<7}\033[0m"
+        hdr_age = f"\033[1;38;5;242m{'AGE':<10}\033[0m"
+        hdr_date = f"\033[1;38;5;242m{'DATE':<18}\033[0m"
+        hdr_desc = f"\033[1;38;5;242mDESCRIPTION\033[0m"
+        
+        # The gutter offset will be automatically preserved by FZF because it's passed as a `--header-line`
+        table_hdr = f"{hdr_id} {c_sep} {hdr_type} {c_sep} {hdr_age} {c_sep} {hdr_date} {c_sep} {hdr_desc}"
+        
+        # --- CONSTRUCTING THE INPUT STREAM ---
+        lines_for_fzf = []
+        
+        # 1. Provide Sticky UI Headers to be fixed right underneath the fzf prompt:
+        lines_for_fzf.append(mode_hdr)
+        lines_for_fzf.append(hr)
+        lines_for_fzf.append(table_hdr)
+        
+        # 2. Append Snapshot Data:
         config_to_query = "root" if current_view in ("coordinated", "root") else "home"
         snaps = load_snapshot_list_for_gui(config_to_query)
-        
-        lines_for_fzf = []
         snap_map = {}
-        c_sep = "\033[38;5;238m│\033[0m"
         
         if snaps:
             snap_map = {s["id"]: s for s in snaps}
@@ -974,46 +994,44 @@ def launch_tui() -> None:
                 dt = parse_snapshot_datetime(s["raw_date"])
                 age_str = time_ago(dt) if dt else "Unknown"
                 
-                # Highly vivid 256-color column styling matching 'pkg' Atlas logic
-                id_str = f"\033[1;38;5;39m{s['id']:>4}\033[0m"         # Deep Sky Blue
-                type_str = f"\033[38;5;213m{s['type']:<7}\033[0m"       # Pink
-                age_colored = f"\033[38;5;114m{age_str:<10}\033[0m"    # Pale Green
-                date_str = f"\033[38;5;220m{s['date']:<18}\033[0m"     # Gold
-                desc_str = f"\033[38;5;253m{s['description']}\033[0m"  # Crisp White
+                # Symmetrical constraints ensure matching with `table_hdr`
+                id_str = f"\033[1;38;5;39m{s['id']:>4}\033[0m"         
+                type_str = f"\033[38;5;213m{s['type']:<7}\033[0m"       
+                age_colored = f"\033[38;5;114m{age_str:<10}\033[0m"    
+                date_str = f"\033[38;5;220m{s['date']:<18}\033[0m"     
+                desc_str = f"\033[38;5;253m{s['description']}\033[0m"  
                 
                 lines_for_fzf.append(f"{id_str} {c_sep} {type_str} {c_sep} {age_colored} {c_sep} {date_str} {c_sep} {desc_str}")
         else:
             lines_for_fzf.append(f"\033[1;38;5;196m No snapshots found for '{config_to_query}' configuration.\033[0m")
-        
-        # Static Matrix Header Table
-        table_hdr = f"  \033[1;38;5;242mID\033[0m   {c_sep} \033[1;38;5;242mTYPE\033[0m    {c_sep} \033[1;38;5;242mAGE\033[0m        {c_sep} \033[1;38;5;242mDATE\033[0m               {c_sep} \033[1;38;5;242mDESCRIPTION\033[0m"
-        hr_width = min(80, shutil.get_terminal_size().columns - 4)
-        hr = "\033[38;5;238m" + "─" * hr_width + "\033[0m"
-        
-        # Compile Ultra-Clean FZF Top Header
-        header = f"{storage_hdr}\n{mode_hdr}\n{hr}\n{table_hdr}"
 
         # Utilizing strict fzf 0.73.1 syntax and layout logic for async previewing
         preview_cmd = f"{executable} {script_path} --tui-preview {current_view} {{}}"
         preview_diff_cmd = f"{executable} {script_path} --tui-preview {current_view} --show-diff {{}}"
 
+        # Layout Engine Upgrades:
+        # 1. `--border-label` interrupts the frame exactly with "Dusky Snapshots"
+        # 2. `--prompt` shifted to strictly say ":: Snapshots ❯"
+        # 3. `--header` isolates the Storage metric and `--header-first` pins it exactly above the prompt
+        # 4. `--header-lines=3` pins the Tabs and Table aligned exactly underneath the prompt.
         fzf_cmd = [
             "fzf",
             "--multi",
             "--ansi",
             "--reverse",
-            "--header", header,
-            "--header-border=horizontal",
+            "--header", storage_hdr,
+            "--header-first",
+            "--header-lines=3",
             "--border=rounded",
-            "--prompt= :: Time Machine ❯ ",
+            "--border-label", " Dusky Snapshots ",
+            "--prompt= :: Snapshots ❯ ",
             f"--color={fzf_colors}",
             "--pointer=▌", 
             "--marker=▶",
             "--no-hscroll",
             "--ellipsis=",
             "--expect=enter,ctrl-d,delete,tab,ctrl-s,alt-s",
-            # Leverages advanced FZF `become` execution to elegantly resolve interactive mouse hits on the dynamically styled header
-            f"--bind=click-header:become(echo click-header; echo $FZF_CLICK_HEADER_LINE; echo $FZF_CLICK_HEADER_COLUMN),ctrl-a:select-all,ctrl-x:deselect-all,ctrl-space:toggle,shift-down:toggle+down,shift-up:toggle+up,ctrl-p:toggle-preview,ctrl-v:change-preview({preview_diff_cmd})+change-prompt( :: Diff Mode ON (Slower) ❯ ),ctrl-b:change-preview({preview_cmd})+change-prompt( :: Time Machine ❯ )",
+            f"--bind=click-header:become(echo click-header; echo $FZF_CLICK_HEADER_LINE; echo $FZF_CLICK_HEADER_COLUMN),ctrl-a:select-all,ctrl-x:deselect-all,ctrl-space:toggle,shift-down:toggle+down,shift-up:toggle+up,ctrl-p:toggle-preview,ctrl-v:change-preview({preview_diff_cmd})+change-prompt( :: Diff Mode ON (Slower) ❯ ),ctrl-b:change-preview({preview_cmd})+change-prompt( :: Snapshots ❯ )",
             "--info=hidden",
             "--preview", preview_cmd,
             "--preview-window", "right,45%,border-left,wrap"
@@ -1036,14 +1054,15 @@ def launch_tui() -> None:
             line = int(output_lines[1]) if len(output_lines) > 1 and output_lines[1].isdigit() else 0
             col = int(output_lines[2]) if len(output_lines) > 2 and output_lines[2].isdigit() else 0
             
-            # Map structural columns directly to the respective rendered tab
-            if line == 2:
-                if col <= 16:
-                    view_idx = 0
-                elif col <= 31:
-                    view_idx = 1
-                elif col <= 46:
-                    view_idx = 2
+            # Since mode_hdr is passed within --header-lines alongside the normal header, it safely triggers within lines 1 & 2.
+            # Bounds account exactly for the shifted FZF gutter offset (+2 chars).
+            if line in (1, 2):
+                if col <= 18:
+                    view_idx = 0      # Home
+                elif col <= 33:
+                    view_idx = 1      # Root
+                elif col <= 48:
+                    view_idx = 2      # Root+Home
             continue
         
         # --- Handle Active Tab Toggle (Via Keyboard / TAB key) ---
