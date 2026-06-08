@@ -1,13 +1,51 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Dusky Git Time Machine (Platinum Edition - Architecture v9.1 - Final Zenith)
+# Dusky Git Time Machine (Platinum Edition - Architecture v9.2 - Ephemeral Zenith)
 # Environment: Bash 5.3+, FZF 0.73+, Arch Linux
-# Mechanisms: Unit Separator (\x1f) indexing, Subshell Function Exporting,
+# Mechanisms: Self-Relocating Ephemeral RAM Execution, Unit Separator (\x1f) indexing,
 #             Calculated Byte-Parity Column Alignment, Dynamic ANSI Stripping,
 #             Automated Stash-and-Pop Safety Protocols, No-Ellipsis Truncation.
 # =============================================================================
 
-# 1. Global Git Bare Repository Overrides
+
+# =============================================================================
+# 0. The Grandfather Paradox Bypass: Ephemeral Self-Relocation
+# =============================================================================
+_dusky_volatile_shift() {
+    local -r current_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    local target_dir="/tmp"
+    local -r zram_dir="/mnt/zram1"
+
+    # Prioritize ZRAM, fallback to /tmp. Includes a strict write-test.
+    if [[ -d "$zram_dir" && -w "$zram_dir" ]]; then
+        if touch "${zram_dir}/.dusky_write_test" 2>/dev/null; then
+            target_dir="$zram_dir"
+            rm -f "${zram_dir}/.dusky_write_test"
+        fi
+    fi
+
+    # If we are already running inside the volatile zone, bypass relocation and proceed.
+    if [[ "$current_path" == "${target_dir}/_dusky_tm_run_"* ]]; then
+        return 0
+    fi
+
+    # We are in the volatile timeline (Git work tree). Clone to RAM and jump.
+    local -r volatile_path="${target_dir}/_dusky_tm_run_${$}_${RANDOM}.sh"
+    
+    cp "$current_path" "$volatile_path"
+    chmod +x "$volatile_path"
+    
+    # 'exec' replaces the current Bash process entirely. The script in the Git tree
+    # is abandoned, and execution seamlessly continues from the volatile RAM copy.
+    exec "$volatile_path" "$@"
+}
+
+# Execute the temporal shift before ANY Git variables are set or logic is parsed.
+_dusky_volatile_shift "$@"
+
+# =============================================================================
+# 1. Global Git Bare Repository Overrides & State Management
+# =============================================================================
 export GIT_DIR="$HOME/dusky/"
 export GIT_WORK_TREE="$HOME"
 
@@ -25,13 +63,21 @@ export LC_ALL=en_US.UTF-8
 # Purge global FZF options to ensure pristine rendering
 unset FZF_DEFAULT_OPTS
 
-# CRITICAL SAFETY: Trap EXIT guarantees stash pop even if the user forces Ctrl+C
+# CRITICAL SAFETY: Unified Janitorial Trap
 _dusky_cleanup() {
+    # 1. Stash Pop Safety (Protects user's uncommitted work)
     if [[ -f "/tmp/dusky_time_machine_stash_${DUSKY_SESSION_ID}" ]]; then
         _dusky_git_return >/dev/null 2>&1
     fi
     rm -f "/tmp/dusky_time_machine_stash_${DUSKY_SESSION_ID}" 2>/dev/null || true
+
+    # 2. Ephemeral Instance Self-Destruct (Cleans up the RAM clone)
+    local -r current_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    if [[ "$current_path" == *"/_dusky_tm_run_"* ]]; then
+        rm -f "$current_path" 2>/dev/null || true
+    fi
 }
+# Trap EXIT fires reliably in Bash 5+ for normal exits, Ctrl+C (SIGINT), and errors.
 trap _dusky_cleanup EXIT
 
 # =============================================================================
