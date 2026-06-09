@@ -40,7 +40,6 @@ declare -ra CHROOT_SEQUENCE=(
   "160_zram_config.sh"
   "170_services.sh"
   "051_pacman_repo_switch.sh --online --cachyos"
-  "180_exiting_unmounting.sh --auto"
 )
 
 # --- 2. SETUP & SAFETY ---
@@ -666,10 +665,6 @@ main() {
         local CHROOT_MNT="/mnt"
         local TMP_DIR="/root/arch_install_tmp"
         local TARGET_TMP="${CHROOT_MNT}${TMP_DIR}"
-        local finish_flag="${CHROOT_MNT}/root/.arch-installer-finish-auto"
-
-        log INFO "Clearing any stale autonomous-finish sentinel..."
-        rm -f "$finish_flag"
 
         log INFO "Cloning orchestrator payload to Phase 2 environment..."
         mkdir -p "$TARGET_TMP"
@@ -716,43 +711,113 @@ main() {
 
         printf "\n%s%s=== COMPLETE SYSTEM DEPLOYMENT SUCCESSFUL ===%s\n" "$G" "$HL" "$RS"
 
-        if [[ -f "$finish_flag" ]]; then
-            rm -f "$finish_flag"
-            log OK "Autonomous finish flag detected from 180_exiting_unmounting.sh."
-            
-            # --- THE FIX: Deactivate swap before unmounting ---
+        # --- THE FIX: Intuitive, Safe, & Diagnostic User Unmount Flow ---
+        local _poweroff_choice="y"
+        if [[ -t 0 ]]; then
+            printf "\n"
+            read -r -p ">>> Installation complete! Unmount filesystems and power off now? [Y/n]: " _poweroff_choice || _poweroff_choice="y"
+        fi
+
+        if [[ "${_poweroff_choice,,}" != "n" && "${_poweroff_choice,,}" != "no" ]]; then
+            log INFO "Flushing filesystem buffers to disk (sync)..."
+            sync
+
             log INFO "Deactivating swap to release kernel filesystem locks..."
             swapoff -a 2>/dev/null || true
             
-            log INFO "Unmounting filesystems securely..."
-            umount -R "$CHROOT_MNT"
-            log OK "All filesystems flushed and unmounted."
-            
-            # --- NEW: Ask before powering off ---
-            printf "\n"
-            local _poweroff_choice="y"
-            if [[ -t 0 ]]; then
-                read -r -p ">>> System is completely unmounted. Power off now? [Y/n]: " _poweroff_choice || _poweroff_choice="y"
-            fi
-            
-            if [[ "${_poweroff_choice,,}" != "n" && "${_poweroff_choice,,}" != "no" ]]; then
+            log INFO "Attempting graceful unmount of filesystems..."
+            if umount -R "$CHROOT_MNT" 2>/dev/null; then
+                log OK "All filesystems flushed and unmounted cleanly."
                 printf "\n%s>>> POWERING OFF. PULL YOUR USB DRIVE WHEN SCREEN GOES BLACK. <<<%s\n" "$Y" "$RS"
                 sleep 2
                 poweroff
+                return 0
             else
-                log INFO "Power off aborted. You are now back in the Live ISO environment."
-            fi
-        else
-            if (( AUTO_MODE )); then
-                log INFO "AUTO_MODE is enabled; skipping interactive shell prompt."
-            else
-                if ! read -r -p "Do you want to open an interactive shell in the new system? [y/N]: " shell_choice; then
-                    shell_choice=""
+                log WARN "Target is busy. Graceful unmount failed."
+                log INFO "Identifying background processes currently holding the mount hostage:"
+                
+                # Print the offenders in a highly visible warning block
+                printf "\n%s" "$Y"
+                
+                # CRITICAL BTRFS CONSIDERATION: fuser has a bug with memory-mapped files on BTRFS.
+                # Since we use BTRFS, lsof is the more reliable diagnostic tool here.
+                local found_blockers=0
+                
+                if command -v lsof >/dev/null 2>&1; then
+                    echo "[lsof diagnostic - checking $CHROOT_MNT]"
+                    lsof +D "$CHROOT_MNT" 2>/dev/null || true
+                    found_blockers=1
                 fi
-                if [[ "${shell_choice,,}" == "y" ]]; then
-                    arch-chroot "$CHROOT_MNT"
+                
+                if command -v fuser >/dev/null 2>&1; then
+                    echo "[fuser diagnostic - checking $CHROOT_MNT]"
+                    fuser -vm "$CHROOT_MNT" 2>/dev/null || true
+                    found_blockers=1
+                fi
+                
+                if (( found_blockers == 0 )); then
+                    echo "  [Cannot list processes: 'fuser' or 'lsof' not found on host]"
+                fi
+                printf "%s\n" "$RS"
+                
+                local _force_choice="n"
+                if [[ -t 0 ]]; then
+                    printf "%s[!] WARNING:%s Forcefully terminating processes actively writing data CAN cause filesystem corruption.\n" "$R" "$RS"
+                    printf "It is often safer to drop to manual mode or let the OS shutdown sequence handle them.\n"
+                    read -r -p ">>> Do you want to FORCEFULLY terminate these processes and retry unmounting? [y/N]: " _force_choice
+                fi
+                
+                if [[ "${_force_choice,,}" == "y" || "${_force_choice,,}" == "yes" ]]; then
+                    log INFO "Sending graceful termination signals (SIGTERM)..."
+                    # Using both lsof and fuser to catch all edge cases, especially on BTRFS
+                    if command -v lsof >/dev/null 2>&1; then
+                        lsof -t +D "$CHROOT_MNT" 2>/dev/null | xargs -r kill -TERM 2>/dev/null || true
+                    fi
+                    fuser -k -TERM -m "$CHROOT_MNT" >/dev/null 2>&1 || true
+                    sleep 2
+                    
+                    log INFO "Sending absolute kill signals (SIGKILL)..."
+                    if command -v lsof >/dev/null 2>&1; then
+                        lsof -t +D "$CHROOT_MNT" 2>/dev/null | xargs -r kill -KILL 2>/dev/null || true
+                    fi
+                    fuser -k -KILL -m "$CHROOT_MNT" >/dev/null 2>&1 || true
+                    sleep 1
+                    
+                    if umount -R "$CHROOT_MNT" 2>/dev/null; then
+                        log OK "Filesystems forcefully unmounted."
+                        printf "\n%s>>> POWERING OFF. PULL YOUR USB DRIVE WHEN SCREEN GOES BLACK. <<<%s\n" "$Y" "$RS"
+                        sleep 2
+                        poweroff
+                        return 0
+                    else
+                        log ERR "Still unable to unmount! A system process is critically locked."
+                        # If it STILL fails, fall through to manual mode so the user isn't trapped
+                        _poweroff_choice="n" 
+                    fi
+                else
+                    log INFO "Force unmount aborted by user."
+                    log INFO "Falling back to safe shutdown or manual mode."
+                    _poweroff_choice="n"
                 fi
             fi
+        fi
+
+        # --- MANUAL MODE / FALLBACK STATE ---
+        # This triggers if the user said 'n' originally, OR if force-unmounting was aborted/failed.
+        if [[ "${_poweroff_choice,,}" == "n" || "${_poweroff_choice,,}" == "no" ]]; then
+            log INFO "Filesystems remain safely mounted at $CHROOT_MNT."
+            printf "\n%s=== MANUAL MODE / POST-INSTALL TWEAKS ===%s\n" "$B" "$RS"
+            printf "To re-enter your new system to make manual adjustments, run:\n"
+            printf "  %sarch-chroot %s%s\n\n" "$Y" "$CHROOT_MNT" "$RS"
+            
+            printf "%s[!] CRITICAL: When you are finished, you MUST run these exact commands%s\n" "$R" "$RS"
+            printf "%sto flush data to the disk before pulling the USB drive:%s\n" "$R" "$RS"
+            printf "  1. %ssync%s\n" "$Y" "$RS"
+            printf "  2. %sswapoff -a%s\n" "$Y" "$RS"
+            printf "  3. %sumount -R %s%s\n" "$Y" "$CHROOT_MNT" "$RS"
+            printf "  4. %spoweroff%s\n\n" "$Y" "$RS"
+            
+            log INFO "Returning control to Live ISO shell. Have fun!"
         fi
     fi
 }
