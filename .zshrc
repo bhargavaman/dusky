@@ -112,8 +112,8 @@ alias ln='ln -v'
 alias df='df -hT'
 alias disk_usage='sudo btrfs filesystem usage /'
 alias ncdu='gdu'
-alias unlock='$HOME/user_scripts/drives/drive_manager.sh unlock'
-alias lock='$HOME/user_scripts/drives/drive_manager.sh lock'
+alias unlock='$HOME/user_scripts/drives/drive_manager/drive_manager.py unlock'
+alias lock='$HOME/user_scripts/drives/drive_manager/drive_manager.py lock'
 alias io_drives='~/user_scripts/drives/io_monitor.sh'
 
 # Searching & Differencing
