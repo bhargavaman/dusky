@@ -118,7 +118,31 @@ _prompt_build_mode() {
 }
 
 # ==============================================================================
-# SECTION 5 — PREFLIGHT FORENSICS & KEYS
+# SECTION 5 — DEPENDENCY RESOLUTION
+# ==============================================================================
+_install_dependencies() {
+  log_info "Resolving & Installing Host Build Dependencies"
+  
+  # Declare strict arrays of dependencies essential to the mkarchiso environment & script execution
+  local deps=(
+    archiso
+    git
+    curl
+    gawk
+    sed
+    grep
+  )
+
+  log_step "Enforcing required packages: ${deps[*]}..."
+  
+  # Explicitly sync and install strictly needed dependencies without user interaction
+  pacman -S --needed --noconfirm "${deps[@]}" >/dev/null || die "Failed to install required dependencies."
+  
+  log_ok "Core host dependencies are present."
+}
+
+# ==============================================================================
+# SECTION 6 — PREFLIGHT FORENSICS & KEYS
 # ==============================================================================
 _preflight_checks() {
   log_info "Running preflight forensics"
@@ -133,7 +157,7 @@ _preflight_checks() {
   fi
   
   if ! command -v git &>/dev/null; then die "git is required but not installed."; fi
-  if ! grep -q '^_build_iso_image() {' /usr/bin/mkarchiso; then die "Could not locate '_build_iso_image() {' in /usr/bin/mkarchiso."; fi
+  if ! grep -q '^_build_iso_image() {' /usr/bin/mkarchiso; then die "Could not locate '_build_iso_image() {' in /usr/bin/mkarchiso. Is archiso updated?"; fi
 
   log_step "Official cache object count: $(ls -lah "${OFFLINE_REPO_OFFICIAL}/" | wc -l)"
 
@@ -168,12 +192,10 @@ _preflight_checks() {
 }
 
 # ==============================================================================
-# SECTION 6 — ZRAM CLEAN ROOM & ARCHISO SETUP
+# SECTION 7 — ZRAM CLEAN ROOM & ARCHISO SETUP
 # ==============================================================================
 _setup_clean_room() {
   log_info "Configuring Archiso Clean Room"
-  log_step "Enforcing archiso dependency..."
-  pacman -S --needed --noconfirm archiso >/dev/null
 
   [[ -d "${WORKSPACE}" ]] && rm -rf "${WORKSPACE}"
   rm -f "${FINAL_DEST_DIR}/dusky_"*.iso
@@ -185,7 +207,7 @@ _setup_clean_room() {
 }
 
 # ==============================================================================
-# SECTION 7 — STAGING ORCHESTRATION PAYLOADS & SYSTEMD KEYS
+# SECTION 8 — STAGING ORCHESTRATION PAYLOADS & SYSTEMD KEYS
 # ==============================================================================
 _stage_payloads() {
   log_info "Injecting Airootfs Staging Payloads"
@@ -224,7 +246,7 @@ EOF
 }
 
 # ==============================================================================
-# SECTION 8 — LIVE ENVIRONMENT HOOKS (Auto-Start)
+# SECTION 9 — LIVE ENVIRONMENT HOOKS (Auto-Start)
 # ==============================================================================
 _configure_live_hooks() {
   log_info "Configuring Auto-Start Hooks"
@@ -252,7 +274,7 @@ EOF
 }
 
 # ==============================================================================
-# SECTION 9 — SKELETON DIRECTORY & DOTFILES
+# SECTION 10 — SKELETON DIRECTORY & DOTFILES
 # ==============================================================================
 _inject_dotfiles() {
   log_info "Fetching and Injecting GitHub Dotfiles"
@@ -294,7 +316,7 @@ _inject_dotfiles() {
 }
 
 # ==============================================================================
-# SECTION 10 — DYNAMIC MKARCHISO PATCHING (The Core Magic)
+# SECTION 11 — DYNAMIC MKARCHISO PATCHING (The Core Magic)
 # ==============================================================================
 _patch_mkarchiso() {
   log_info "Dynamically Patching Build Configurations"
@@ -443,7 +465,7 @@ EOF
 }
 
 # ==============================================================================
-# SECTION 11 — ISO GENERATION & CLEANUP
+# SECTION 12 — ISO GENERATION & CLEANUP
 # ==============================================================================
 _build_iso() {
   printf '\n%s==>%s %sSTARTING ARCHISO BUILD PROCESS%s\n\n' "${BOLD}${GREEN}" "${RESET}" "${BOLD}" "${RESET}"
@@ -465,13 +487,14 @@ _build_iso() {
 }
 
 # ==============================================================================
-# SECTION 12 — MAIN ORCHESTRATOR
+# SECTION 13 — MAIN ORCHESTRATOR
 # ==============================================================================
 main() {
   _parse_args "$@"
   _print_logo
   
   _prompt_build_mode
+  _install_dependencies
   _preflight_checks
   _setup_clean_room
   _stage_payloads
