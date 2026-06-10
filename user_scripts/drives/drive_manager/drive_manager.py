@@ -18,6 +18,8 @@
   - Pre-emptive `sudo -v` credential priming to prevent stdin pipe collision
   - Interactive Busy Process Resolver (Intelligent PID Tracking + Forensics)
   - Triple-Tier Teardown (udisksctl -> cryptsetup -> deferred async closure)
+  - Smart Password Retry Loop with Right-Aligned Memory History
+  - Secure /tmp Session Persistence with Auto-Scrolling Window Capping
 ==============================================================================
 """
 
@@ -44,6 +46,7 @@ try:
     from rich.table import Table
     from rich.panel import Panel
     from rich.prompt import Prompt
+    from rich.align import Align
 except ImportError:
     print("\n[INFO] Missing required Python libraries: 'keyring' and/or 'rich'.")
     print("[INFO] Attempting to auto-install via pacman...")
@@ -323,6 +326,54 @@ def run_cryptsetup_forensics(mapper_name: str):
         hint_msg(f"To lock it asynchronously once the kernel is finished, run: `sudo cryptsetup close --deferred {mapper_name}`")
 
 # ------------------------------------------------------------------------------
+#  PERSISTENT FAILED PASSWORD STORAGE
+# ------------------------------------------------------------------------------
+def get_temp_attempts_path(drive_name: str) -> Path:
+    """Returns a secure path to the temporary attempts file for a specific user and drive."""
+    uid = os.getuid()
+    return Path(f"/tmp/.drive_manager_{uid}_{drive_name}_attempts.json")
+
+def load_temp_attempts(drive_name: str) -> list[str]:
+    """Loads temporary failed password attempts securely from /tmp."""
+    path = get_temp_attempts_path(drive_name)
+    if not path.exists():
+        return []
+    
+    try:
+        # Strict validation: verify ownership and ensure no group/world permissions (0o600 mask)
+        stat_info = path.stat()
+        if stat_info.st_uid != os.getuid() or (stat_info.st_mode & 0o077) != 0:
+            path.unlink(missing_ok=True)
+            return []
+            
+        with open(path, "r") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def save_temp_attempts(drive_name: str, attempts: list[str]):
+    """Saves temporary failed password attempts securely to /tmp, capping the log size."""
+    path = get_temp_attempts_path(drive_name)
+    if len(attempts) > 50:
+        attempts = attempts[-50:]  # Cap memory history boundary to protect memory size
+    try:
+        # Atomic create using 0o600 permissions
+        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(attempts, f)
+    except Exception:
+        pass
+
+def clear_temp_attempts(drive_name: str):
+    """Deletes the temporary failed password attempts file securely."""
+    path = get_temp_attempts_path(drive_name)
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+# ------------------------------------------------------------------------------
 #  CONFIG PARSING
 # ------------------------------------------------------------------------------
 def load_config(override_path: Path | None = None) -> dict[str, Drive]:
@@ -477,9 +528,58 @@ def do_unlock(drive: Drive):
                 log("No password in keyring. Falling back to manual terminal prompt.")
                 if drive.hint:
                     hint_msg(drive.hint)
-                if not run_sudo_cmd(base_cmd):
-                    err("Decryption failed or was cancelled.")
-                    sys.exit(1)
+                
+                # Retrieve temporary attempts across runs safely
+                tried_passwords = load_temp_attempts(drive.name)
+                
+                while True:
+                    if tried_passwords:
+                        # Display only the last 6 entries to fit perfectly in standard viewports
+                        max_display = 6
+                        display_items = tried_passwords[-max_display:]
+                        hidden_count = len(tried_passwords) - len(display_items)
+                        
+                        panel_lines = []
+                        if hidden_count > 0:
+                            panel_lines.append(f"[dim]... {hidden_count} older attempt{'s' if hidden_count > 1 else ''} hidden ...[/]")
+                        
+                        panel_lines.extend(f"[red]✗[/] {p}" for p in display_items)
+                        
+                        # Render a nice right-aligned history panel using Rich
+                        hist_panel = Panel(
+                            "\n".join(panel_lines),
+                            title="[yellow]Previously Tried[/]",
+                            border_style="yellow",
+                            expand=False
+                        )
+                        console.print(Align.right(hist_panel))
+                        
+                    try:
+                        pwd_attempt = Prompt.ask(
+                            f"Enter passphrase for /dev/disk/by-uuid/[bold cyan]{drive.outer_uuid}[/]", 
+                            password=True
+                        )
+                    except (KeyboardInterrupt, EOFError):
+                        console.print()
+                        err("Cancelled by user.")
+                        sys.exit(1)
+                        
+                    if not pwd_attempt:
+                        continue
+                        
+                    cmd = base_cmd + ["--key-file", "-"]
+                    
+                    # Passing stdin_data mimics pipe mechanics so the password isn't visible in `ps` processes
+                    if run_sudo_cmd(cmd, stdin_data=pwd_attempt):
+                        # Successful unlock: completely wipe temporary failed attempts history
+                        clear_temp_attempts(drive.name)
+                        break
+                    else:
+                        err("Decryption failed. Please try again.")
+                        if pwd_attempt not in tried_passwords:
+                            tried_passwords.append(pwd_attempt)
+                            # Sync history dynamically to secure /tmp JSON file
+                            save_temp_attempts(drive.name, tried_passwords)
 
             log("Waiting for filesystem block device to populate...")
             if not wait_for_device(drive.inner_uuid, FILESYSTEM_TIMEOUT):
@@ -634,6 +734,7 @@ def set_keyring_password(drives: dict[str, Drive], target: str):
         sys.exit(1)
 
     keyring.set_password(KEYRING_SERVICE, target, pwd)
+    clear_temp_attempts(target) # Reset failures history since password was stored
     success(f"Password stored securely in the system keyring for '{target}'.")
 
 # ------------------------------------------------------------------------------
