@@ -1,6 +1,6 @@
 # ==============================================================================
 # FZF Scripts Finder - Absolute Cutting-Edge for Arch Linux
-# Requires: zsh 5.9+, fzf 0.73.1+, bat, wl-clipboard (or xclip), Nerd Fonts
+# Requires: zsh 5.9+, fzf 0.73.1+, bat, wl-clipboard (or xclip), nvim, Nerd Fonts
 # ==============================================================================
 
 function scripts() {
@@ -77,6 +77,7 @@ function scripts() {
             --read0 \
             --ansi \
             --exact \
+            --cycle \
             --layout=reverse \
             --scheme=history \
             --highlight-line \
@@ -114,12 +115,14 @@ function scripts() {
         "2.  Type in terminal (don't run)"
         "3.  Copy to clipboard"
         "4. 󰆧 Copy & Type in terminal"
+        "5.  Edit in Neovim"
     )
 
     # 7. Secondary FZF Action Menu
     action=$(
         print -N "${action_menu[@]}" | fzf \
             --read0 \
+            --cycle \
             --style=minimal \
             --border=rounded \
             --border-label=" 󰢱 Action " \
@@ -128,7 +131,7 @@ function scripts() {
             --header-border=horizontal \
             --color='bg+:#313244,bg:#1e1e2e,hl:#f38ba8,fg+:#cdd6f4,header:#89b4fa' \
             --info=hidden \
-            --height=~30% \
+            --height=~40% \
             --layout=reverse
     )
 
@@ -145,7 +148,8 @@ function scripts() {
     # Using $$ (Process ID) + $RANDOM guarantees atomicity if run in multiple panes at once
     local tmp_state="${state_file}.tmp.$$.$RANDOM"
     
-    # (@kv) strictly quotes the keys/values. This guarantees that scripts with spaces in their
+    # (@kv) strictly quotes the keys/values.
+    # This guarantees that scripts with spaces in their
     # names will NEVER break the word-splitting boundaries or corrupt the state file.
     for k v in "${(@kv)weights}"; do
         if [[ -f "$k" ]]; then
@@ -205,6 +209,13 @@ function scripts() {
                 print -P "%F{red}󰚌 No clipboard utility found. Pushed to buffer only.%f"
             fi
             print -z "$portable_path"
+            ;;
+        5*)
+            # ACTION 5: Edit in Neovim
+            # Prints cleanly to standard output, then replaces the process foreground 
+            # with Neovim targeting the securely expanded absolute path.
+            print -P "\n%F{blue} Opening in Neovim:%f $portable_path\n"
+            nvim "$expanded_path"
             ;;
     esac
 }
