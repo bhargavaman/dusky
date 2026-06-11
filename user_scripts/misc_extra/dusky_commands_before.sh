@@ -28,6 +28,10 @@ declare -ra FLEET_COMMANDS=(
     "U | mkdir -p ~/.config/opencode/themes || true"
     "U | mkdir -p ~/.config/Kvantum/matugen || true"
     "U | systemctl --user disable --now dusky_sliders.service || true"
+    # --- Remove old dusky_snaapshot timer (typo) before re-deploying dusky_snapshot ---
+    "S | systemctl stop dusky_snaapshot.timer dusky_snaapshot.service 2>/dev/null; systemctl disable dusky_snaapshot.timer 2>/dev/null; true"
+    "S | rm -f /etc/systemd/system/dusky_snaapshot.service /etc/systemd/system/dusky_snaapshot.timer"
+    "S | systemctl daemon-reload"
     # --- System Services ---
 #    "U | systemctl --user disable dusky.service || true"
 #    "S | systemctl enable --now tlp.service || true"

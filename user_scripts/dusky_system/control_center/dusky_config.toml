@@ -264,7 +264,7 @@ description = "Manage filesystem snapshots"
 [[pages.layout.items]]
 type = "button"
 [pages.layout.items.properties]
-title = "Snapshot Manager"
+title = "Dusky System Snapshots"
 description = "Create, restore, and delete snapshots"
 icon = "document-revert-symbolic"
 button_text = "Open"

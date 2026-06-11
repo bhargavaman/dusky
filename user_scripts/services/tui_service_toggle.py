@@ -23,74 +23,78 @@ SCHEMA = {i: [] for i in range(len(TABS))}
 # --- DETAILED EXTENDED HELP DICTIONARIES ---
 CORE_USER_DEFS = {
     "hyprsunset.service": (
-        "Night Light (Blue Light Filter)", 
+        "Night Light (Blue Light Filter)",
         "Manages hyprsunset, a Wayland-native blue light filter. Turning this on will adjust the color temperature of your display to reduce eye strain at night."
     ),
     "battery_notify.service": (
-        "Battery Level Notifications", 
+        "Battery Level Notifications",
         "Background daemon that monitors your battery level and sends desktop notifications using libnotify when power is running low."
     ),
     "network_meter.service": (
-        "Waybar Network Traffic Monitor", 
+        "Waybar Network Traffic Monitor",
         "Service to track network traffic. Often used in conjunction with Waybar to display real-time upload and download speeds."
     ),
     "dusky.service": (
-        "Dusky Background Service", 
+        "Dusky Background Service",
         "The primary Dusky ecosystem background service. Handles core daemon tasks required for the environment."
     ),
     "dusky_quickpanal.service": (
-        "Dusky quickpanal Service", 
+        "Dusky quickpanal Service",
         "Manages the Dusky quick access panel (Quickpanal) overlay."
     ),
     "update_checker.timer": (
-        "Automatic Update Checker", 
+        "Automatic Update Checker",
         "Periodically checks your package manager for system updates and caches the result for your status bar."
     ),
     "hypridle.service": (
-        "Hyprland Idle Daemon", 
+        "Hyprland Idle Daemon",
         "Hyprland's idle management daemon. Handles screen dimming, locking, and DPMS sleep states when you are away from the computer."
     ),
     "osd_lock.service": (
-        "OSD for CapsLock,NumLock,ScrollLock", 
+        "OSD for CapsLock,NumLock,ScrollLock",
         "On-Screen Display service for hardware lock keys. Shows a visual pop-up when Caps Lock, Num Lock, or Scroll Lock is toggled."
     ),
     "hyprpolkitagent.service": (
-        "(Polkit) Root Password Prompt", 
+        "(Polkit) Root Password Prompt",
         "The authentication agent for Hyprland. This is what prompts you for a password when an app requests root access (like pkexec)."
     )
 }
 
 CORE_SYSTEM_DEFS = {
     "vsftpd.service": (
-        "FTP Server (vsftpd)", 
+        "FTP Server (vsftpd)",
         "Very Secure FTP Daemon. Manages the FTP server for file transfers. Only enable this if you actively need to host an FTP server."
     ),
     "tlp.service": (
-        "TLP Power Management", 
+        "TLP Power Management",
         "Advanced power management for Linux. Applies various battery-saving tweaks to the kernel, PCI, and USB devices."
     ),
     "tlp-pd.service": (
-        "TLP Daemon", 
+        "TLP Daemon",
         "Daemon for TLP power management. Should generally be enabled alongside tlp.service."
     ),
     "swayosd-libinput-backend.service": (
-        "SwayOSD Input Backend", 
+        "SwayOSD Input Backend",
         "Backend service for SwayOSD. Handles raw libinput events to render volume/brightness overlays without relying on the window manager."
     ),
     "sshd.service": (
-        "SSH Server (OpenSSH)", 
+        "SSH Server (OpenSSH)",
         "OpenSSH server daemon. Allows remote access to this machine via SSH. Ensure your firewall is configured if exposing this to the internet."
     ),
     "warp-svc.service": (
-        "Cloudflare WARP VPN", 
+        "Cloudflare WARP VPN",
         "Cloudflare WARP daemon. Provides a fast, secure VPN tunnel using WireGuard to route your DNS and internet traffic."
     ),
     "firewalld.service": (
-        "Firewall (firewalld)", 
+        "Firewall (firewalld)",
         "Dynamic firewall manager. Provides a D-Bus interface to manage firewall rules and network zones."
     ),
+    "dusky_snapshot.timer": (
+        "3 Day Auto Snapshots (Backup)",
+        "Triggers a snapshot automaticaly every 3 days, while automatically cleaning up the oldest snapshot (max 6)."
+    ),
     "ufw.service": (
-        "Firewall (UFW)", 
+        "Firewall (UFW)",
         "Uncomplicated Firewall. A user-friendly front-end for iptables to manage network access rules."
     )
 }
