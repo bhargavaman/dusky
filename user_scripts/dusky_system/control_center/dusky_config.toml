@@ -1010,7 +1010,7 @@ type = "button"
 [pages.layout.items.properties]
 title = "Network Scan (ARP)"
 description = "Scan for local devices"
-icon = "network-transmit-receive-symbolic"
+icon = "network-wired-symbolic"
 button_text = "Scan"
 [pages.layout.items.on_press]
 type = "exec"
@@ -1041,7 +1041,7 @@ type = "button"
 [pages.layout.items.properties]
 title = "Brain Rot Block"
 description = "Blocks social media sites"
-icon = "security-high-symbolic"
+icon = "window-close-symbolic"
 button_text = "Block"
 [pages.layout.items.on_press]
 type = "exec"
@@ -1415,7 +1415,7 @@ type = "navigation"
 [pages.layout.items.properties]
 title = "Theme & Colors"
 description = "Color schemes and generation"
-icon = "palette-symbolic"
+icon = "preferences-color-symbolic"
 
 [[pages.layout.items.layout]]
 type = "section"
@@ -1427,7 +1427,7 @@ type = "button"
 [pages.layout.items.layout.items.properties]
 title = "Cycle Theme"
 description = "Randomize colors from wallpaper"
-icon = "palette-symbolic"
+icon = "preferences-color-symbolic"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
 command = "$HOME/user_scripts/theme_matugen/theme_ctl.sh next"
@@ -2485,7 +2485,7 @@ type = "navigation"
 [pages.layout.items.properties]
 title = "Theming (Matugen)"
 description = "Material You theme generation config"
-icon = "palette-symbolic"
+icon = "preferences-color-symbolic"
 
 [[pages.layout.items.layout]]
 type = "section"
@@ -2805,7 +2805,7 @@ type = "button"
 [pages.layout.items.properties]
 title = "Setup Cloudflare Warp"
 description = "Install and configure Warp VPN"
-icon = "security-high-symbolic"
+icon = "network-vpn-symbolic"
 button_text = "Setup"
 [pages.layout.items.on_press]
 type = "exec"
@@ -3475,7 +3475,7 @@ path = "~/.config/dusky/version"
 type = "label"
 [pages.layout.items.properties]
 title = "Hyprland Version"
-icon = "window-symbolic"
+icon = "video-display-symbolic"
 [pages.layout.items.value]
 type = "exec"
 command = "hyprctl version | grep Hyprland | awk '{print $2}'"
