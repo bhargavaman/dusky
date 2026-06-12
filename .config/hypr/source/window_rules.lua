@@ -1164,8 +1164,7 @@ hl.window_rule({
     },
     float = true,
     size = {"monitor_w * 0.3958", "monitor_h * 0.9093"},
-    animation = "slide right",
-    dim_around = true,
+    animation = "slide up"
 })
 
 --- Dusky_QuickPanal Script ---
