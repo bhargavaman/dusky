@@ -308,7 +308,7 @@ declare -ra UPDATE_SEQUENCE=(
 
     "U | copy_service_files.sh --default"
     "U | update_checker.sh --num"
-    "U | cc_restart.sh --quiet"
+#    "U | cc_restart.sh --quiet"
     "U | wallpaper_selector.py --build-cache"
     "S | dusky_service_manager.sh"
 #    "U | append_defaults_keybinds_edit_here.sh"
