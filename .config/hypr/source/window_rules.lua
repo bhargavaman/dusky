@@ -1223,6 +1223,30 @@ hl.window_rule({
     center = true,
 })
 
+--- Thunar file operation progress ---
+hl.window_rule({
+    name = "thunar_file_operation_progress",
+    match = {
+        class = "^(thunar|Thunar)$",
+        title = "^File Operation Progress$"
+    },
+    float = true,
+    center = true,
+})
+
+--- Thunar confirm replace files dialog ---
+hl.window_rule({
+    name = "thunar_confirm_replace_files",
+    match = {
+        class = "^(thunar|Thunar)$",
+        title = "^Confirm to replace files$"
+    },
+    float = true,
+    center = true,
+    move = {"((monitor_w-window_w)/2)", "((monitor_h-window_h)/2) + 80"},
+})
+
+
 -- Mousepad save dialog ---
 hl.window_rule({
     name = "mousepad_save_dialog",
@@ -1660,7 +1684,7 @@ hl.window_rule({
 hl.window_rule({
     name = "float-dialogs-title",
     -- Regex Logic: Matches specific phrases OR any title containing "dialog"
-    match = { title = "^(Open|Open File|Select a File|Choose wallpaper|Open Folder|Save As|Library|File Upload|Authentication Required|Add Folder to Workspace|Choose Files|Confirm to replace files|File Operation Progress)(.*)$|^(.*dialog.*)$" },
+    match = { title = "^(Open|Open File|Select a File|Choose wallpaper|Open Folder|Save As|Library|File Upload|Authentication Required|Add Folder to Workspace|Choose Files)(.*)$|^(.*dialog.*)$" },
     float = true,
     center = true,
     size = {816, 537}
