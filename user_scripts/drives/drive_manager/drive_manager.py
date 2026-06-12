@@ -299,10 +299,10 @@ def resolve_busy_processes(mountpoint: Path) -> bool:
         return False
 
     console.print(Panel(
-        "[bold red]⚠️  WARNING: DATA CORRUPTION RISK ⚠️[/]\n\n"
+        "[bold red]⚠️  WARNING: FILESYSTEM IS BUSY ⚠️[/]\n\n"
         f"The following processes are currently locking [bold white]{mountpoint}[/]\n"
-        "Force-killing them may result in unsaved work being lost or file corruption.",
-        title="Filesystem Busy", border_style="red"
+        "Attempting a graceful termination allows applications to save their data.",
+        title="Filesystem Locked", border_style="red"
     ))
 
     table = Table(show_header=True, header_style="bold yellow", border_style="yellow")
@@ -323,18 +323,33 @@ def resolve_busy_processes(mountpoint: Path) -> bool:
             continue
 
         ans = Prompt.ask(
-            f"Force kill [bold cyan]{escape(p['cmd'])}[/] (PID: [bold yellow]{p['pid']}[/])?", 
+            f"Attempt graceful termination of [bold cyan]{escape(p['cmd'])}[/] (PID: [bold yellow]{p['pid']}[/])?", 
             choices=["y", "n"], 
             default="n"
         )
         if ans == "y":
-            kill_res = subprocess.run(["sudo", "kill", "-9", p['pid']], capture_output=True, text=True)
-            if kill_res.returncode == 0:
-                success(f"Successfully killed {escape(p['cmd'])} (PID: {p['pid']}).")
-                action_taken = True
+            # Step 1: Gentle SIGTERM
+            log(f"Sending SIGTERM (15) to {escape(p['cmd'])} (PID: {p['pid']})...")
+            term_res = subprocess.run(["sudo", "kill", "-15", p['pid']], capture_output=True, text=True)
+            
+            if term_res.returncode == 0:
+                # Give application time to run shutdown hooks and save to OS RAM
+                time.sleep(2)
+                
+                if not is_process_alive(p['pid']):
+                    success(f"Successfully terminated {escape(p['cmd'])} gracefully.")
+                    action_taken = True
+                else:
+                    # Step 2: Forceful SIGKILL if still alive
+                    err(f"Process {p['pid']} refused to close gracefully. Engaging SIGKILL (9)...")
+                    kill_res = subprocess.run(["sudo", "kill", "-9", p['pid']], capture_output=True, text=True)
+                    if kill_res.returncode == 0:
+                        success(f"Forcefully killed {escape(p['cmd'])} (PID: {p['pid']}).")
+                        action_taken = True
+                    else:
+                        err(f"Failed to force kill PID {p['pid']}: {kill_res.stderr.strip()}")
             else:
-                stderr_msg = kill_res.stderr.strip()
-                err(f"Failed to kill PID {p['pid']}: {stderr_msg}")
+                err(f"Failed to send SIGTERM to PID {p['pid']}: {term_res.stderr.strip()}")
     
     return action_taken
 
@@ -668,7 +683,9 @@ def do_lock(drive: Drive):
                     log("Retrying unmount sequence...")
                     time.sleep(1)
                 else:
-                    break 
+                    log("No userspace processes found. Waiting for kernel locks to clear...")
+                    time.sleep(1)
+                    continue
         
         if unmounted:
             log("Unmount successful.")
