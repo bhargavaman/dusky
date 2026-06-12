@@ -208,7 +208,7 @@ UPDATE_SEQUENCE = [
     "S | 485_sudoers_nopassword.sh",
     "U | copy_service_files.sh --default",
     "U | update_checker.sh --num",
-    "U | cc_restart.sh --quiet",
+ #   "U | cc_restart.sh --quiet",
     "S | dusky_service_manager.sh",
     "U | ignore-fail | interactive | dusky_matugen_config_tui.sh --smart",
     "U | ignore-fail | hypr_anim.sh --current",
