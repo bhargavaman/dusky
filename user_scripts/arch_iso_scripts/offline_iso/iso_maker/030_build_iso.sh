@@ -300,6 +300,36 @@ _inject_dotfiles() {
   cp -a /tmp/dusky_dots/. "${SKEL_DIR}/"
   rm -rf "${SKEL_DIR}/.git" "/tmp/dusky_dots"
 
+  log_step "Injecting default editor exports and Yazi wrapper..."
+  # We inject into both 'skel' (for new users) and 'root' (for the live environment)
+  for rc_target in "${SKEL_DIR}" "${PROFILE_DIR}/airootfs/root"; do
+      mkdir -p "${rc_target}"
+      # Target both bash and zsh to guarantee availability
+      for rc_file in .bashrc .zshrc; do
+          
+          # Ensure a clean newline exists before appending to prevent syntax merging 
+          # in the event the cloned repo files lack a trailing empty line.
+          echo "" >> "${rc_target}/${rc_file}"
+          
+          cat << 'EOF' >> "${rc_target}/${rc_file}"
+# --- AUTOMATED ISO INJECTION: EDITOR & YAZI WRAPPER ---
+export EDITOR='nvim'
+export VISUAL='nvim'
+
+# Yazi Wrapper (Changes directory upon exiting Yazi)
+y() {
+    local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+    yazi "$@" --cwd-file="$tmp"
+    if cwd="$(cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+        builtin cd -- "$cwd"
+    fi
+    rm -f -- "$tmp"
+}
+# ------------------------------------------------------
+EOF
+      done
+  done
+
   log_step "Injecting local hyprland.lua override..."
   mkdir -p "${SKEL_DIR}/.config/hypr"
   cp -a "${SOURCE_DIR}/assets/hyprland/hyprland.lua" "${SKEL_DIR}/.config/hypr/hyprland.lua"
@@ -312,7 +342,7 @@ _inject_dotfiles() {
   done < <(find "${SKEL_DIR}" -type f -executable -print0)
   echo "# --- DUSKY PERMISSIONS END ---" >> "${PROFILE_DIR}/profiledef.sh"
   
-  log_ok "Dotfiles secured."
+  log_ok "Dotfiles and shell variables secured."
 }
 
 # ==============================================================================
