@@ -645,7 +645,7 @@ hl.window_rule({
     name = "dusky_disk_monitor_io.py",
     match = { class = "^(dusky_disk_monitor_io.py)$" },
     float = true,
-    size = {980, 620},
+    size = {871, 607},
     center = true
 })
 
