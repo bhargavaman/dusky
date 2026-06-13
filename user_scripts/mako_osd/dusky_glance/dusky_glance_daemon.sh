@@ -212,7 +212,7 @@ case "$MODE" in
             name_file="${hwmon_dir}name"
             [[ -f "$name_file" ]] || continue
             read -r name < "$name_file"
-            if [[ "$name" == "spd5118" ]]; then
+            if [[ "$name" == "spd5118" || "$name" == "jc42" || "$name" == "tmp421" ]]; then
                 tfile="${hwmon_dir}temp1_input"
                 [[ -f "$tfile" ]] && temp_files+=("$tfile")
             fi
