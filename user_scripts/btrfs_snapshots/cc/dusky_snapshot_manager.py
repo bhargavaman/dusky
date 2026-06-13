@@ -1173,6 +1173,12 @@ def launch_tui() -> None:
         preview_cmd = f"{executable} {script_path} --tui-preview {current_view} {{}}"
         preview_diff_cmd = f"{executable} {script_path} --tui-preview {current_view} --show-diff {{}}"
 
+        # LATEST FZF METHODOLOGY: We use the exact bracket notation documented in FZF 0.73.1 manual 
+        # (e.g. `transform[...]`) to encapsulate actions containing nested parenthesis.
+        # This prevents `print(...)` from prematurely closing the parsing of the `transform` action!
+        transform_cmd = 'echo "print(click-header:$FZF_CLICK_HEADER_LINE:$FZF_CLICK_HEADER_COLUMN)+accept"'
+        click_bind = f"click-header:transform[{transform_cmd}]"
+
         fzf_cmd = [
             "fzf",
             "--multi",
@@ -1192,7 +1198,7 @@ def launch_tui() -> None:
             "--no-hscroll",
             "--ellipsis=",
             "--expect=enter,ctrl-d,delete,tab,ctrl-s,alt-s",
-            f"--bind=click-header:become(echo click-header; echo $FZF_CLICK_HEADER_LINE; echo $FZF_CLICK_HEADER_COLUMN),ctrl-a:select-all,ctrl-x:deselect-all,ctrl-space:toggle,shift-down:toggle+down,shift-up:toggle+up,ctrl-p:toggle-preview,ctrl-v:change-preview({preview_diff_cmd})+change-prompt( :: Diff Mode ON (Slower) ❯ ),ctrl-b:change-preview({preview_cmd})+change-prompt( :: Snapshots ❯ )",
+            f"--bind={click_bind},ctrl-a:select-all,ctrl-x:deselect-all,ctrl-space:toggle,shift-down:toggle+down,shift-up:toggle+up,ctrl-p:toggle-preview,ctrl-v:change-preview({preview_diff_cmd})+change-prompt( :: Diff Mode ON (Slower) ❯ ),ctrl-b:change-preview({preview_cmd})+change-prompt( :: Snapshots ❯ )",
             "--info=hidden",
             "--preview", preview_cmd,
             "--preview-window", "right,45%,border-left,wrap"
@@ -1214,18 +1220,29 @@ def launch_tui() -> None:
 
         output_lines = stdout.strip().split("\n")
         key_pressed = output_lines[0]
+
+        # Process the newly captured mouse-click stream directly matching the columns layout
+        clicked_tab = False
+        for out_line in output_lines:
+            if out_line.startswith("click-header:"):
+                parts = out_line.split(":")
+                if len(parts) >= 3:
+                    line = int(parts[1]) if parts[1].isdigit() else 0
+                    col = int(parts[2]) if parts[2].isdigit() else 0
+                    
+                    # Flexibility if user slightly clicks near the border
+                    if line in (1, 2, 3):
+                        # Safely adjusted hitboxes targeting tabs independently of inner ANSI codes mapping
+                        if col <= 16:
+                            view_idx = 0      # Home
+                        elif col <= 31:
+                            view_idx = 1      # Root
+                        else:
+                            view_idx = 2      # Root+Home
+                        clicked_tab = True
+                break
         
-        if key_pressed == "click-header":
-            line = int(output_lines[1]) if len(output_lines) > 1 and output_lines[1].isdigit() else 0
-            col = int(output_lines[2]) if len(output_lines) > 2 and output_lines[2].isdigit() else 0
-            
-            if line in (1, 2):
-                if col <= 18:
-                    view_idx = 0      # Home
-                elif col <= 33:
-                    view_idx = 1      # Root
-                elif col <= 48:
-                    view_idx = 2      # Root+Home
+        if clicked_tab:
             continue
         
         if key_pressed == "tab":
