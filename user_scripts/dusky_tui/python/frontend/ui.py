@@ -312,7 +312,8 @@ class HybridInputScreen(ModalScreen[str | None]):
             else:
                 yield Label("Press Enter to save • Esc to cancel", id="modal-hint")
             with Horizontal(classes="modal-btn-container"):
-                yield Label(" Cancel ", classes="modal-close-btn")
+                yield Label(" Cancel ", classes="modal-cancel-btn", id="btn-cancel")
+                yield Label(" Ok ", classes="modal-close-btn", id="btn-confirm")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -338,9 +339,15 @@ class HybridInputScreen(ModalScreen[str | None]):
     def action_focus_input(self) -> None:
         self.query_one(Input).focus()
 
-    @on(events.Click, ".modal-close-btn")
-    def on_close_click(self) -> None:
+    @on(events.Click, "#btn-cancel")
+    def on_cancel_click(self) -> None:
         self.dismiss(None)
+
+    @on(events.Click, "#btn-confirm")
+    def on_confirm_click(self) -> None:
+        inp = self.query_one(Input)
+        if inp.value is not None:
+            self.dismiss(inp.value)
 
     @on(events.Click)
     def on_background_click(self, event: events.Click) -> None:
@@ -689,7 +696,7 @@ class ConfigOptionList(OptionList):
                 parsed = self.app._get_item_from_id(opt.id)
                 if parsed:
                     tab_idx, item_idx, item = parsed
-                    if item.type_ == "preset" and item.group == "User Presets" and item.key != "__save_new_preset":
+                    if item.type_ == "preset" and item.group == "User Presets" and item.key not in ("__save_new_preset", "__import_new_preset"):
                         name = item.label.replace("User: ", "", 1)
                         path = self.app.user_presets_dir / f"{name}.json"
                         new_tooltip = f"Preset Path: {path}\nLeft/Right Click to open externally"
@@ -1523,9 +1530,9 @@ class DuskyTUI(App):
         
         # 1. Remove dynamically added User Presets from previous loads
         for t_idx, items in self.schema.items():
-            self.schema[t_idx] = [itm for itm in items if not (itm.group == "User Presets" and (itm.key.startswith("__user_preset_") or itm.key == "__save_new_preset"))]
+            self.schema[t_idx] = [itm for itm in items if not (itm.group == "User Presets" and (itm.key.startswith("__user_preset_") or itm.key in ("__save_new_preset", "__import_new_preset")))]
 
-        # 2. Add Dynamic Save Button Node
+        # 2. Add Dynamic Save/Import Button Nodes
         save_btn = ConfigItem(
             label="[+] Save as Preset",
             key="__save_new_preset",
@@ -1536,7 +1543,19 @@ class DuskyTUI(App):
             extended_help="Click here to save the current configuration state as a new reusable preset."
         )
         save_btn.exists_in_target = True
-        user_preset_items = [save_btn]
+
+        import_btn = ConfigItem(
+            label="[+] Import Preset",
+            key="__import_new_preset",
+            scope="DEFAULT",
+            type_="action",
+            default=None,
+            group="User Presets",
+            extended_help="Click here to create a new empty preset template and instantly open it so you can paste in an external payload."
+        )
+        import_btn.exists_in_target = True
+
+        user_preset_items = [save_btn, import_btn]
 
         # 3. Read presets from disk
         for file_path in self.user_presets_dir.glob("*.json"):
@@ -1580,8 +1599,9 @@ class DuskyTUI(App):
 
         try:
             if button == 1:
+                cmd = ["mousepad", str(expanded_path)] if shutil.which("mousepad") else ["xdg-open", str(expanded_path)]
                 subprocess.Popen(
-                    ["xdg-open", str(expanded_path)],
+                    cmd,
                     start_new_session=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
@@ -1649,6 +1669,7 @@ class DuskyTUI(App):
             self.set_interval(0.5, self.watch_theme_file)
             
         self.set_interval(1.0, self.watch_target_file)
+        self.set_interval(2.0, self.watch_presets_dir)
 
         self.call_after_refresh(self.check_tab_overflow)
         self.call_after_refresh(self._update_scroll_indicators)
@@ -1874,6 +1895,40 @@ class DuskyTUI(App):
         if changed_any:
             self._refresh_all_ui()
             self.notify_status("Config modified externally. Refreshed UI.")
+
+    async def watch_presets_dir(self) -> None:
+        if not self.enable_user_presets or not hasattr(self, 'user_presets_dir') or not self.user_presets_dir.exists(): return
+        try:
+            if not hasattr(self, "_preset_mtimes"):
+                self._preset_mtimes = {}
+
+            def check_mtimes():
+                return {f.name: f.stat().st_mtime for f in self.user_presets_dir.glob("*.json")}
+
+            current_mtimes = await asyncio.to_thread(check_mtimes)
+            changed_any = False
+            
+            for fname, mtime in current_mtimes.items():
+                if self._preset_mtimes.get(fname, 0.0) < mtime:
+                    changed_any = True
+                    break
+                    
+            if set(self._preset_mtimes.keys()) - set(current_mtimes.keys()):
+                changed_any = True
+                
+            if not getattr(self, "_initial_presets_mtime_set", False):
+                self._preset_mtimes = current_mtimes
+                self._initial_presets_mtime_set = True
+                return
+                
+            if changed_any:
+                self._preset_mtimes = current_mtimes
+                self._load_user_presets()
+                self._rebuild_key_map()
+                self._refresh_all_ui()
+                
+        except Exception:
+            pass
 
     async def watch_theme_file(self) -> None:
         if not self.theme_path: return
@@ -2632,6 +2687,32 @@ class DuskyTUI(App):
 
         self.push_screen(HybridInputScreen("Save Current State as Preset (Name):", ""), check_reply)
 
+    def action_import_preset(self) -> None:
+        def check_reply(name: str | None) -> None:
+            if not name: return
+            # SECURITY PATCH: Sanitize input to prevent Path Traversal (CWE-22)
+            name = re.sub(r'[\\/*?:"<>|]', "", name.strip())
+            if not name: return
+
+            self.user_presets_dir.mkdir(parents=True, exist_ok=True)
+            file_path = self.user_presets_dir / f"{name}.json"
+
+            try:
+                # Dump empty JSON to create template and prevent parser crash
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump({}, f, indent=4)
+                self.notify_status(f"Created import template: {name}")
+                self._load_user_presets()
+                self._rebuild_key_map()
+                self._refresh_all_ui()
+                
+                # Launch external editor explicitly forcing button=1 to hit our new mousepad logic
+                self.open_file_externally(file_path, button=1, touch_first=False)
+            except Exception as e:
+                self.notify_status(f"Error importing preset: {e}")
+
+        self.push_screen(HybridInputScreen("Import Preset (Enter new name):", ""), check_reply)
+
     def action_delete_user_preset(self) -> None:
         ol = self.current_option_list
         if not ol or not ol.last_highlighted_id: return
@@ -2694,14 +2775,14 @@ class DuskyTUI(App):
         if (item.type_ in ("preset", "action") or is_trigger_bool) and click_x >= 44:
             instant_action = True
             
-        if item.key == "__save_new_preset" and (1 <= click_x <= 15):
+        if item.key in ("__save_new_preset", "__import_new_preset") and (1 <= click_x <= 17):
             instant_action = True
 
         if not is_keyboard and not instant_action and not was_already_selected:
             return  # First click on text just highlights it
 
         # --- QoL: Left/Right Click to openly edit preset in User Presets ---
-        if not is_keyboard and not instant_action and item.type_ == "preset" and item.group == "User Presets" and item.key != "__save_new_preset":
+        if not is_keyboard and not instant_action and item.type_ == "preset" and item.group == "User Presets" and item.key not in ("__save_new_preset", "__import_new_preset"):
             name = item.label.replace("User: ", "", 1)
             path = self.user_presets_dir / f"{name}.json"
             if path.exists():
@@ -2736,6 +2817,9 @@ class DuskyTUI(App):
     def execute_action(self, item: ConfigItem) -> None:
         if item.key == "__save_new_preset":
             self.action_save_preset()
+            return
+        elif item.key == "__import_new_preset":
+            self.action_import_preset()
             return
 
         command = str(item.default) if item.default else ""
@@ -2785,6 +2869,17 @@ class DuskyTUI(App):
             do_execute()
 
     def apply_preset(self, preset_item: ConfigItem) -> None:
+        # Hot-reload the payload from disk right before applying to ensure instant external edits are captured
+        if preset_item.group == "User Presets" and preset_item.key.startswith("__user_preset_"):
+            name = preset_item.label.replace("User: ", "", 1)
+            file_path = self.user_presets_dir / f"{name}.json"
+            if file_path.exists():
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        preset_item.preset_payload = json.load(f)
+                except Exception:
+                    pass
+
         if preset_item.preset_payload is None:
             self.notify_status("Preset contains no payload.")
             return
