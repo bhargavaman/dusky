@@ -205,6 +205,57 @@ case "$MODE" in
         done
         ;;
 
+    --ram-temp)
+        # Discover all DDR5 SPD5118 temperature sensors
+        temp_files=()
+        for hwmon_dir in /sys/class/hwmon/hwmon*/; do
+            name_file="${hwmon_dir}name"
+            [[ -f "$name_file" ]] || continue
+            read -r name < "$name_file"
+            if [[ "$name" == "spd5118" ]]; then
+                tfile="${hwmon_dir}temp1_input"
+                [[ -f "$tfile" ]] && temp_files+=("$tfile")
+            fi
+        done
+
+        while true; do
+            if [[ ${#temp_files[@]} -gt 0 ]]; then
+                temps=()
+                for tf in "${temp_files[@]}"; do
+                    if read -r t < "$tf" 2>/dev/null; then
+                        temps+=("$((t/1000))°")
+                    fi
+                done
+                if [[ ${#temps[@]} -gt 0 ]]; then
+                    send_osd "${temps[*]}"
+                else
+                    send_osd "N/A"
+                fi
+            else
+                send_osd "N/A"
+            fi
+            sleep 1
+        done
+        ;;
+
+    --zram)
+        zram_file="/sys/block/zram0/mm_stat"
+        while true; do
+            if [[ -f "$zram_file" ]] && read -r orig_data compr_data mem_used _ _ _ _ _ _ < "$zram_file" 2>/dev/null; then
+                used_mb=$(( mem_used / 1048576 ))
+                if (( compr_data > 0 )); then
+                    ratio=$(( orig_data / compr_data ))
+                    send_osd "${used_mb}MB ${ratio}:1"
+                else
+                    send_osd "${used_mb}MB"
+                fi
+            else
+                send_osd "N/A"
+            fi
+            sleep 1
+        done
+        ;;
+
     --temp)
         zone_file=""
         

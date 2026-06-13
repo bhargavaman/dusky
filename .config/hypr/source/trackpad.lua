@@ -19,7 +19,7 @@ hl.gesture({
     fingers   = 3,
     direction = "up",
     action    = function()
-        hl.exec_cmd("")
+        hl.exec_cmd([[gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate "{}"]])
     end,
 })
 

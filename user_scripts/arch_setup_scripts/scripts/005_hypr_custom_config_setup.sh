@@ -959,16 +959,25 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("systemctl --user import-environment $(env | cut -d'=' -f 1)")
     hl.exec_cmd("dbus-update-activation-environment --systemd --all")
 
-    -- --- dusky glance ---
     -- EG: dusky glance (uncomment only one at a time)
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-temp")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --temp")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --battery")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --uptime")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --workspace")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --clock")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-read nvme0n1")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-write nvme0n1")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-temp nvme0n1")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --zram")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --stopwatch")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --timer 15m")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --pomodoro")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --stop")
 
 end)
 
@@ -1532,7 +1541,7 @@ hl.gesture({
     fingers   = 3,
     direction = "up",
     action    = function()
-        hl.exec_cmd("notify-send 'overview coming soong'")
+        hl.exec_cmd([[gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate "{}"]])
     end,
 })
 

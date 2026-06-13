@@ -346,7 +346,18 @@ case "$choice" in
     '󱑎  Stopwatch')      "$DAEMON_SCRIPT" --stopwatch & disown ;;
     '󰥔  Live Clock')     "$DAEMON_SCRIPT" --clock & disown ;;
     '  CPU Usage')      "$DAEMON_SCRIPT" --cpu & disown ;;
-    '󰘚  Memory (RAM)')   "$DAEMON_SCRIPT" --ram & disown ;;
+    '󰘚  Memory (RAM)')
+        m_opts=("󰘚  RAM Usage" "󰘚  RAM Temperature" "󰘚  ZRAM Usage")
+        mchoice=$(printf '%s\n' "${m_opts[@]}" | "${ROFI_SUB[@]}" -p "Memory") || exit 0
+
+        if [[ "$mchoice" == *"Usage"* ]] && [[ "$mchoice" != *"ZRAM"* ]]; then
+            "$DAEMON_SCRIPT" --ram & disown
+        elif [[ "$mchoice" == *"Temperature"* ]]; then
+            "$DAEMON_SCRIPT" --ram-temp & disown
+        elif [[ "$mchoice" == *"ZRAM"* ]]; then
+            "$DAEMON_SCRIPT" --zram & disown
+        fi
+        ;;
     '  CPU Temp')       "$DAEMON_SCRIPT" --temp & disown ;;
     '󰁹  Battery / Power')"$DAEMON_SCRIPT" --battery & disown ;;
     '󰈀  Network Speed')  "$DAEMON_SCRIPT" --network & disown ;;
