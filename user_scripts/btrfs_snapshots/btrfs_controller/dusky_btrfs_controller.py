@@ -859,12 +859,17 @@ def launch_tui() -> None:
 
         preview_cmd = f"{executable} {script_path} --tui-preview {current_view} {{}}"
 
+        # Latest FZF 0.73.1 bracket notation methodology perfectly encapsulating the FZF actions
+        transform_cmd = 'echo "print(click-header:$FZF_CLICK_HEADER_LINE:$FZF_CLICK_HEADER_COLUMN)+accept"'
+        click_bind = f"click-header:transform[{transform_cmd}]"
+
         # Native terminal interruption via code 130 is preserved here.
         fzf_cmd = [
             "fzf", "--ansi", "--reverse", "--delimiter=\\x1f", "--with-nth=1",
             "--header-lines=3", "--border=rounded", "--border-label", " Dusky BTRFS Controller ",
             "--prompt= :: Action ❯ ", f"--color={fzf_colors}", "--pointer=▌", "--marker=▶",
             "--no-hscroll", "--expect=enter,ctrl-d,delete,tab,ctrl-s,ctrl-n,ctrl-b,ctrl-g",
+            f"--bind={click_bind}",
             "--info=hidden", "--preview", preview_cmd, "--preview-window", "right,45%,border-left,wrap"
         ]
 
@@ -884,6 +889,29 @@ def launch_tui() -> None:
 
         output_lines = stdout.strip().split("\n")
         key_pressed = output_lines[0]
+        
+        # Process the newly captured mouse-click stream directly matching the columns layout
+        clicked_tab = False
+        for out_line in output_lines:
+            if out_line.startswith("click-header:"):
+                parts = out_line.split(":")
+                if len(parts) >= 3:
+                    line = int(parts[1]) if parts[1].isdigit() else 0
+                    col = int(parts[2]) if parts[2].isdigit() else 0
+                    
+                    # Flexibility if user slightly clicks near the border
+                    if line in (1, 2, 3):
+                        # Measured hitboxes perfectly matching the lengths of:
+                        # " 󰆑 SYSTEM SNAPSHOTS " (24 columns) vs " 󰋊 BTRFS SUBVOLUMES " 
+                        if col <= 24:
+                            view_idx = 0      # snapper
+                        else:
+                            view_idx = 1      # subvolumes
+                        clicked_tab = True
+                break
+        
+        if clicked_tab:
+            continue
         
         if key_pressed == "tab":
             view_idx = (view_idx + 1) % len(views)
