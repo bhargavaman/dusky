@@ -26,12 +26,14 @@ class FormatPlan(TypedDict):
     fs_type: str
     csum: Optional[str]
     label: str
+    passphrase: Optional[str]
 
 class ExecutionStep(TypedDict):
     action: str
     desc: str
     cmd: list[str]
     interactive: bool
+    input_data: Optional[str]
 
 # ==============================================================================
 # 2. AUTO-ELEVATION & DEPENDENCY RESOLUTION
@@ -112,7 +114,6 @@ def get_all_paths(devices: list[dict[str, Any]]) -> list[str]:
     return paths
 
 def get_all_mountpoints(device_node: Optional[dict[str, Any]]) -> list[str]:
-    """Recursively collects all active mount points for a device and its children."""
     if not device_node:
         return []
     mounts: list[str] = []
@@ -192,7 +193,6 @@ def display_device_tree(devices: list[dict[str, Any]], table: Table, mount_data:
             display_device_tree(get_val(dev, "children", []), table, mount_data, level + 1)
 
 def resolve_busy_processes(mountpoint: str) -> bool:
-    """Finds processes keeping the drive busy parsing lsof directly and offers a force kill."""
     try:
         res = subprocess.run(["lsof", "+f", "--", mountpoint], capture_output=True, text=True)
     except FileNotFoundError:
@@ -244,7 +244,7 @@ def resolve_busy_processes(mountpoint: str) -> bool:
         for p in processes:
             console.print(f"Killing {p['cmd']} (PID: {p['pid']})...")
             subprocess.run(["kill", "-9", p['pid']], capture_output=True)
-        time.sleep(1) # Give kernel time to drop the file descriptors
+        time.sleep(1)
         return True
     return False
 
@@ -253,13 +253,11 @@ def resolve_busy_processes(mountpoint: str) -> bool:
 # ==============================================================================
 
 def generate_secure_mapper_name() -> str:
-    """Generates a collision-resistant mapper UUID."""
     return f"dusky_luks_{uuid.uuid4().hex[:8]}"
 
 def interactive_setup() -> FormatPlan:
     console.print(Panel.fit("[bold magenta]Dusky Formatter v5.3[/] - [cyan]Arch Linux Storage & Analysis Utility[/]", border_style="magenta"))
     
-    # Render table once at startup
     initial_devices = get_block_devices()
     mount_data = get_mount_options()
     
@@ -280,14 +278,18 @@ def interactive_setup() -> FormatPlan:
     display_device_tree(initial_devices, table, mount_data)
     console.print(table)
     
+    target_device: Optional[str] = None
+    
     while True:
-        # DYNAMIC RE-POLL: Prevents memory caching bugs if user unmounts externally
         current_devices = get_block_devices()
         valid_paths = get_all_paths(current_devices)
         
-        target_device = Prompt.ask("\nEnter the [bold green]Path[/] of the device to format (e.g., /dev/nvme0n1p1)")
-        if target_device not in valid_paths or not target_device.startswith("/dev/"):
+        if not target_device:
+            target_device = Prompt.ask("\nEnter the [bold green]Path[/] of the device to format (e.g., /dev/nvme0n1p1)")
+            
+        if not target_device or target_device not in valid_paths or not target_device.startswith("/dev/"):
             console.print("[bold red]Invalid device path selected. Ensure it matches a physical path in the table.[/]")
+            target_device = None
             continue
         
         device_node = find_device_node(current_devices, target_device)
@@ -301,7 +303,6 @@ def interactive_setup() -> FormatPlan:
             
             if Confirm.ask("Would you like Dusky Formatter to attempt a [bold red]force unmount[/] now?", default=False):
                 unmount_failed = False
-                # Sort descending by length to unmount deeply nested points first
                 for m in sorted(active_mounts, key=len, reverse=True):
                     console.print(f"[bold yellow]➜[/] Attempting to unmount {m}...")
                     res = subprocess.run(["umount", m], capture_output=True, text=True)
@@ -322,41 +323,54 @@ def interactive_setup() -> FormatPlan:
                             
                 if unmount_failed:
                     console.print("[red]Could not free all mounts. Please resolve manually or reboot if kernel locked.[/]")
+                    target_device = None 
                     continue
                 else:
                     console.print("[green]All mount points cleared. Verifying state...[/]")
-                    continue # Re-evaluates in the next loop iteration safely
+                    continue 
             else:
                 console.print("[dim]Aborting selection. Please handle unmounting manually.[/]")
+                target_device = None 
                 continue
 
         break
 
     console.print("\n[bold cyan]--- Security & Encryption ---[/]")
     encrypt = Confirm.ask(f"Encrypt [bold yellow]{target_device}[/] using [bold]LUKS2[/]?", default=False)
+    
+    passphrase = None
+    if encrypt:
+        console.print("[dim]Note: Providing the passphrase here enables a fully unattended formatting pipeline.[/]")
+        while True:
+            p1 = Prompt.ask("Enter a strong LUKS2 passphrase", password=True)
+            p2 = Prompt.ask("Verify passphrase", password=True)
+            if p1 == p2 and len(p1) > 0:
+                passphrase = p1
+                break
+            else:
+                console.print("[bold red]Passphrases do not match or are empty. Try again.[/]")
 
     console.print("\n[bold cyan]--- Filesystem Configuration ---[/]")
     fs_options = ["btrfs", "ext4", "xfs", "fat32"]
     fs_type = Prompt.ask("Select target filesystem", choices=fs_options, default="btrfs")
-
-    plan: FormatPlan = {
-        "device": target_device,
-        "encrypt": encrypt,
-        "fs_type": fs_type,
-        "csum": None,
-        "label": ""
-    }
-
+    
+    csum = None
     if fs_type == "btrfs":
-        # Upgraded default to blake2 for Kernel 7.0+ standard compliance
         csum = Prompt.ask("Select BTRFS checksum algorithm", choices=["crc32c", "xxhash", "sha256", "blake2"], default="blake2")
-        plan["csum"] = csum
 
     label = Prompt.ask("Enter a volume label (leave blank for none)", default="")
     if fs_type == "fat32" and len(label) > 11:
         console.print("[bold yellow]Warning:[/] FAT32 limits labels to 11 characters. Truncating.")
         label = label[:11].upper()
-    plan["label"] = label
+
+    plan: FormatPlan = {
+        "device": target_device,
+        "encrypt": encrypt,
+        "fs_type": fs_type,
+        "csum": csum,
+        "label": label,
+        "passphrase": passphrase
+    }
 
     return plan
 
@@ -369,6 +383,7 @@ def build_execution_plan(plan: FormatPlan) -> tuple[list[ExecutionStep], str, Op
     fs_type = plan["fs_type"]
     label = plan["label"]
     encrypt = plan["encrypt"]
+    passphrase = plan.get("passphrase")
     
     commands: list[ExecutionStep] = []
     bash_script = "#!/bin/bash\n# Dusky Formatter Native Execution Pipeline\n# Copy-pasteable syntax directly mirroring system execution:\n\n"
@@ -381,31 +396,38 @@ def build_execution_plan(plan: FormatPlan) -> tuple[list[ExecutionStep], str, Op
         "action": "wipe_fs",
         "desc": f"Sterilizing target device to remove stale signatures",
         "cmd": wipe_cmd,
-        "interactive": False
+        "interactive": False,
+        "input_data": None
     })
     bash_script += f"# Clear stale partition tables and filesystems\n{shlex.join(wipe_cmd)}\n\n"
 
-    if encrypt:
+    if encrypt and passphrase:
         mapper_name = generate_secure_mapper_name()
         target_block = f"/dev/mapper/{mapper_name}"
         
-        luks_fmt = ["cryptsetup", "luksFormat", "--type", "luks2", device]
+        # `-q` runs batch mode (suppressing the manual YES confirmation) 
+        # `-` reads the keyfile directly from Standard Input
+        luks_fmt = ["cryptsetup", "-q", "luksFormat", "--type", "luks2", device, "-"]
         commands.append({
             "action": "luks_format",
             "desc": "Initializing LUKS2 Encryption Container",
             "cmd": luks_fmt,
-            "interactive": True 
+            "interactive": False, 
+            "input_data": passphrase
         })
-        bash_script += f"# Initialize modern LUKS2 Container\n{shlex.join(luks_fmt)}\n"
+        bash_script += f"# Initialize modern LUKS2 Container (Passphrase securely piped)\n"
+        bash_script += f"echo -n 'YOUR_PASSPHRASE' | {shlex.join(luks_fmt[:-1])} -\n"
         
-        luks_open = ["cryptsetup", "open", "--type", "luks", device, mapper_name]
+        luks_open = ["cryptsetup", "open", "--type", "luks", "--key-file", "-", device, mapper_name]
         commands.append({
             "action": "luks_open",
             "desc": f"Opening encrypted volume as '{mapper_name}'",
             "cmd": luks_open,
-            "interactive": True
+            "interactive": False,
+            "input_data": passphrase
         })
-        bash_script += f"# Map the LUKS volume\n{shlex.join(luks_open)}\n\n"
+        bash_script += f"# Map the LUKS volume\n"
+        bash_script += f"echo -n 'YOUR_PASSPHRASE' | cryptsetup open --type luks --key-file - {device} {mapper_name}\n\n"
 
     mkfs_cmd: list[str] = []
     match fs_type:
@@ -434,12 +456,20 @@ def build_execution_plan(plan: FormatPlan) -> tuple[list[ExecutionStep], str, Op
         "action": "mkfs",
         "desc": f"Building {fs_type.upper()} filesystem on {target_block}",
         "cmd": mkfs_cmd,
-        "interactive": False
+        "interactive": False,
+        "input_data": None
     })
     bash_script += f"# Format the block device\n{shlex.join(mkfs_cmd)}\n\n"
 
     if encrypt:
         close_cmd = ["cryptsetup", "close", mapper_name]
+        commands.append({
+            "action": "luks_close",
+            "desc": f"Locking and securing volume '{mapper_name}'",
+            "cmd": close_cmd,
+            "interactive": False,
+            "input_data": None
+        })
         bash_script += f"# Securely lock the container\n{shlex.join(close_cmd)}\n"
 
     return commands, bash_script, mapper_name
@@ -454,22 +484,37 @@ def execute_plan(commands: list[ExecutionStep], mapper_name: Optional[str] = Non
     
     try:
         for step in commands:
-            console.print(f"[bold yellow]➜[/] {step['desc']}...")
-            
-            try:
-                if step["interactive"]:
-                    subprocess.run(step["cmd"], check=True)
-                else:
-                    subprocess.run(step["cmd"], capture_output=True, text=True, check=True)
-                
-                if step["action"] == "luks_open":
-                    luks_is_open = True
+            # Wrapped in a rich status spinner to prevent the UI from freezing
+            # during long background executions like LUKS key benchmarking.
+            with console.status(f"[bold yellow]Executing:[/] {step['desc']}...", spinner="dots"):
+                try:
+                    if step["interactive"]:
+                        subprocess.run(step["cmd"], check=True)
+                    else:
+                        # Dynamically construct kwargs to safely pipe input to the process
+                        kwargs: dict[str, Any] = {
+                            "capture_output": True,
+                            "text": True,  # Allows str I/O, subprocess handles encoding autonomously
+                            "check": True
+                        }
+                        if step.get("input_data") is not None:
+                            kwargs["input"] = step["input_data"]
+                            
+                        subprocess.run(step["cmd"], **kwargs)
                     
-            except subprocess.CalledProcessError as e:
-                console.print(f"[bold red]Fatal Error executing:[/] {shlex.join(step['cmd'])}")
-                if not step["interactive"] and e.stderr is not None:
-                    console.print(f"[red]Kernel/API Output: {e.stderr.strip()}[/]")
-                raise Exception("Execution pipeline aborted.")
+                    if step["action"] == "luks_open":
+                        luks_is_open = True
+                    elif step["action"] == "luks_close":
+                        luks_is_open = False
+                        
+                except subprocess.CalledProcessError as e:
+                    console.print(f"[bold red]Fatal Error executing:[/] {shlex.join(step['cmd'])}")
+                    if not step["interactive"] and e.stderr is not None:
+                        console.print(f"[red]Kernel/API Output:\n{e.stderr.strip()}[/]")
+                    raise Exception("Execution pipeline aborted.")
+            
+            # Print a permanent success message once the spinner disappears
+            console.print(f"[bold green]✔[/] {step['desc']} [dim](Completed)[/]")
                 
         console.print("\n[bold green]✔ All formatting operations successfully completed![/]")
 
@@ -479,7 +524,7 @@ def execute_plan(commands: list[ExecutionStep], mapper_name: Optional[str] = Non
         
     finally:
         if luks_is_open and mapper_name:
-            console.print(f"[bold yellow]➜[/] Securing mapping: Locking LUKS volume '{mapper_name}'...")
+            console.print(f"\n[bold yellow]➜[/] Emergency fallback: Locking dangling LUKS volume '{mapper_name}'...")
             try:
                 subprocess.run(["cryptsetup", "close", mapper_name], capture_output=True, check=True)
                 console.print("[bold green]✔ Volume locked cleanly.[/]")
