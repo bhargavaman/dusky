@@ -47,8 +47,8 @@ mount_options = ["noatime", "uid=1000", "gid=1000", "umask=002", "windows_names"
 [drives.fast]
 type = "PROTECTED"
 mountpoint = "/mnt/fast"
-outer_uuid = "dbbe37b5-af7a-4c80-8991-b12982fd3573"
-inner_uuid = "fec5f227-9935-4a4d-a35f-ff26ead98ff3"
+outer_uuid = "542c6463-2ad7-4e88-b577-2f47650f7555"
+inner_uuid = "8c1f87fc-dcea-4d2e-81fd-d8028c0fa86b"
 fstype = "ext4"
 hint = "game_simple"
 mount_options = ["noatime", "delalloc", "commit=20"]
