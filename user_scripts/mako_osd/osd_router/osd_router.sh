@@ -117,45 +117,50 @@ main() {
             flock -x "$lock_fd"
 
             local icon="gpm-brightness-lcd" title bright
-            local warn_msg="Swipe again to turn off"
-            
-            # Read the last known UI state to determine if we already warned the user
+            local WARN_MSG="Swipe again to turn off"
+            local SCREEN_OFF_MSG="Screen Off"
+
+            # Safely read the last known UI state
             local last_title=""
             if [[ -f "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt" ]]; then
                 last_title=$(awk -F'|' '{print $2}' "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt")
             fi
 
             local current_bright
-            current_bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
+            current_bright=$(brightnessctl -m 2>/dev/null | awk -F, '{print int($4 + 0.5)}')
+            [[ -z "$current_bright" ]] && current_bright=0
 
             if [[ "$action" == "--bright-down" ]]; then
-                # Robust regex: catches both 'false' and '0' regardless of Hyprland sub-version
                 local dpms_off=0
-                if hyprctl monitors all | grep -Eiq "dpmsstatus:\s*(0|false)"; then
-                    dpms_off=1
+                
+                # Fix IPC spam: ONLY query Hyprland when at the absolute bottom threshold
+                if [[ "$current_bright" -le 1 ]]; then
+                    if hyprctl monitors all | grep -Eiq "dpmsstatus:\s*(0|false)"; then
+                        dpms_off=1
+                    fi
                 fi
 
                 if [[ "$dpms_off" -eq 1 ]]; then
-                    # Monitor is already off, just update OSD passively
                     icon="display-brightness-off"
-                    title="Screen Off"
+                    title="$SCREEN_OFF_MSG"
                     bright=0
                 elif [[ "$current_bright" -le 1 ]]; then
-                    # We are at the 1% floor. Check if we already warned them.
-                    if [[ "$last_title" == "$warn_msg" ]]; then
-                        # Warning was acknowledged. Execute DPMS off via Hyprland Lua eval.
+                    # At 1% or 0% with DPMS still ON
+                    if [[ "$last_title" == "$WARN_MSG" ]]; then
+                        # Execute screen off (Hyprland v0.45+ Lua syntax)
                         hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "disable" }))' &>/dev/null
                         icon="display-brightness-off"
-                        title="Screen Off"
+                        title="$SCREEN_OFF_MSG"
                         bright=0
                     else
-                        # Issue the warning notification. Keep brightness at 1%.
+                        # First time hitting bottom: issue the warning
                         brightnessctl set 1% -q
-                        title="$warn_msg"
+                        icon="display-brightness-warning"
+                        title="$WARN_MSG"
                         bright=1
                     fi
                 else
-                    # We are > 1%. Calculate if the step would take us below the 1% floor.
+                    # Normal brightness down execution
                     local target=$((current_bright - step))
                     if [[ "$target" -le 1 ]]; then
                         brightnessctl set 1% -q
@@ -167,21 +172,28 @@ main() {
                         title="Brightness: ${bright}%"
                     fi
                 fi
+
             else
                 # --bright-up
-                # Unconditionally dispatch DPMS enable. Swiping up inherently means "I want to see the screen."
-                hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "enable" }))' &>/dev/null
+                local dpms_needs_wake=0
                 
-                # Hardware Race Condition Fix: If waking from 0/1%, give the backlight controller
-                # 150ms to initialize before blasting it with brightness increments.
-                if [[ "$current_bright" -le 1 || "$last_title" == "Screen Off" ]]; then
-                    sleep 0.15
+                # Only assess wake requirements if we are at bottom bounds
+                if [[ "$current_bright" -le 1 || "$last_title" == "$SCREEN_OFF_MSG" || "$last_title" == "$WARN_MSG" ]]; then
+                    if hyprctl monitors all | grep -Eiq "dpmsstatus:\s*(0|false)"; then
+                        dpms_needs_wake=1
+                    fi
+                fi
+
+                if [[ "$dpms_needs_wake" -eq 1 ]]; then
+                    hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "enable" }))' &>/dev/null
+                    # Sleep ONLY executes when DPMS physically wakes, preventing queue locks
+                    sleep 0.15 
                 fi
 
                 brightnessctl set "${step}%+" -q
                 bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
                 
-                if [[ "$current_bright" -le 1 || "$last_title" == "Screen Off" ]]; then
+                if [[ "$dpms_needs_wake" -eq 1 || "$last_title" == "$SCREEN_OFF_MSG" ]]; then
                     title="Screen On: ${bright}%"
                 else
                     title="Brightness: ${bright}%"
@@ -191,6 +203,7 @@ main() {
             atomic_write "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt" "$icon|$title|$bright"
             exec {lock_fd}>&-
             
+            # Asynchronous UI worker
             (
                 flock -n 9 || exit 0
                 while true; do
@@ -305,7 +318,7 @@ main() {
             elif [[ "$status" == "Paused" ]]; then
                 icon="media-playback-pause"
                 title="Paused: $metadata"
-            elif [[ "$status" == "Stopped" || -z "$status" ]] && metadata="Unknown Track"; then
+            elif [[ "$status" == "Stopped" || -z "$status" ]]; then
                 icon="media-playback-stop"
                 title="Stopped"
             else
