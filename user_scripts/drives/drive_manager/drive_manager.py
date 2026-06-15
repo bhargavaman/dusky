@@ -561,7 +561,8 @@ def do_unlock(drive: Drive):
             else:
                 log("Could not auto-detect encryption type. Relying on cryptsetup defaults.")
 
-            base_cmd = ["sudo", "cryptsetup", "open"] + crypto_type_args + [outer_dev_path, mapper_name]
+            # SURGICALLY ADDED --allow-discards HERE
+            base_cmd = ["sudo", "cryptsetup", "open", "--allow-discards"] + crypto_type_args + [outer_dev_path, mapper_name]
             pwd = keyring.get_password(KEYRING_SERVICE, drive.name)
             
             if pwd:
