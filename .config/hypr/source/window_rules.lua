@@ -635,7 +635,7 @@ hl.window_rule({
     name = "dusky_snapshot_manager.py",
     match = { class = "^(dusky_snapshot_manager.py)$" },
     float = true,
-    size = {"(monitor_w*0.9)", "(monitor_h*0.9)"},
+    size = {"(monitor_w*0.95)", "(monitor_h*0.9)"},
     move = {"(monitor_w*0.05)", "(monitor_h*0.05)"},
     center = true
 })
