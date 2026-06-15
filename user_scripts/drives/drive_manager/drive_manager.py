@@ -20,6 +20,7 @@
   - Triple-Tier Teardown (udisksctl -> cryptsetup -> deferred async closure)
   - Smart Password Retry Loop with Right-Aligned Memory History
   - Secure XDG_RUNTIME_DIR Session Persistence with Atomic Writes
+  - Contextual Asynchronous SSD Maintenance (Orphaned fstrim Dispatcher)
 ==============================================================================
 """
 
@@ -660,6 +661,21 @@ def do_unlock(drive: Drive):
     
     if run_sudo_cmd(cmd):
         success(f"'{drive.name}' successfully mounted.")
+        
+        # --- DYNAMIC ASYNC SSD MAINTENANCE ---
+        # Btrfs/ZFS handle this natively via async mount options.
+        # Ext4/FAT32/NTFS3 lack async discard, so we dynamically trigger it here.
+        fstype_to_check = (drive.fstype or detected_fstype or "").lower()
+        if fstype_to_check not in ["btrfs", "zfs"]:
+            log("Dispatching asynchronous background TRIM operation to SSD firmware...")
+            # Utilizing start_new_session completely detaches the process from the terminal
+            subprocess.Popen(
+                ["sudo", "fstrim", str(drive.mountpoint)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True
+            )
     else:
         err(f"Failed to mount UUID={target_uuid} to {drive.mountpoint}.")
         sys.exit(1)

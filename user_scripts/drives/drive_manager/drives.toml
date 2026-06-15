@@ -35,11 +35,11 @@ mount_options = ["nodatacow", "ssd", "discard=async", "noatime", "space_cache=v2
 [drives.media]
 type = "PROTECTED"
 mountpoint = "/mnt/media"
-outer_uuid = "55d50d6d-a1ed-41d9-ba38-a6542eebbcd9"
-inner_uuid = "9C38076638073F30"
+outer_uuid = "98353f6a-b21b-4966-9f57-948678bde66d"
+inner_uuid = "55d50d6d-a1ed-41d9-ba38-a6542eebbcd9"
 hint = "LAP_P"
-fstype = "ntfs3"
-mount_options = ["noatime", "uid=1000", "gid=1000", "umask=002", "windows_names"]
+fstype = "ext4"
+mount_options = ["noatime", "delalloc", "commit=20"]
 
 
 # --- MECHANICAL HARD DISKS (HDD) ---
