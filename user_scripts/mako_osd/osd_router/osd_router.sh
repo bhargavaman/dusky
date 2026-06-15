@@ -116,15 +116,77 @@ main() {
             exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_display.lock"
             flock -x "$lock_fd"
 
-            if [[ "$action" == "--bright-up" ]]; then
-                brightnessctl set "${step}%+" -q
-            else
-                brightnessctl set "${step}%-" -q
-            fi
-            
             local icon="gpm-brightness-lcd" title bright
-            bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
-            title="Brightness: ${bright}%"
+            local warn_msg="Swipe again to turn off"
+            
+            # Read the last known UI state to determine if we already warned the user
+            local last_title=""
+            if [[ -f "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt" ]]; then
+                last_title=$(awk -F'|' '{print $2}' "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt")
+            fi
+
+            local current_bright
+            current_bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
+
+            if [[ "$action" == "--bright-down" ]]; then
+                # Robust regex: catches both 'false' and '0' regardless of Hyprland sub-version
+                local dpms_off=0
+                if hyprctl monitors all | grep -Eiq "dpmsstatus:\s*(0|false)"; then
+                    dpms_off=1
+                fi
+
+                if [[ "$dpms_off" -eq 1 ]]; then
+                    # Monitor is already off, just update OSD passively
+                    icon="display-brightness-off"
+                    title="Screen Off"
+                    bright=0
+                elif [[ "$current_bright" -le 1 ]]; then
+                    # We are at the 1% floor. Check if we already warned them.
+                    if [[ "$last_title" == "$warn_msg" ]]; then
+                        # Warning was acknowledged. Execute DPMS off via Hyprland Lua eval.
+                        hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "disable" }))' &>/dev/null
+                        icon="display-brightness-off"
+                        title="Screen Off"
+                        bright=0
+                    else
+                        # Issue the warning notification. Keep brightness at 1%.
+                        brightnessctl set 1% -q
+                        title="$warn_msg"
+                        bright=1
+                    fi
+                else
+                    # We are > 1%. Calculate if the step would take us below the 1% floor.
+                    local target=$((current_bright - step))
+                    if [[ "$target" -le 1 ]]; then
+                        brightnessctl set 1% -q
+                        bright=1
+                        title="Brightness: 1%"
+                    else
+                        brightnessctl set "${step}%-" -q
+                        bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
+                        title="Brightness: ${bright}%"
+                    fi
+                fi
+            else
+                # --bright-up
+                # Unconditionally dispatch DPMS enable. Swiping up inherently means "I want to see the screen."
+                hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "enable" }))' &>/dev/null
+                
+                # Hardware Race Condition Fix: If waking from 0/1%, give the backlight controller
+                # 150ms to initialize before blasting it with brightness increments.
+                if [[ "$current_bright" -le 1 || "$last_title" == "Screen Off" ]]; then
+                    sleep 0.15
+                fi
+
+                brightnessctl set "${step}%+" -q
+                bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
+                
+                if [[ "$current_bright" -le 1 || "$last_title" == "Screen Off" ]]; then
+                    title="Screen On: ${bright}%"
+                else
+                    title="Brightness: ${bright}%"
+                fi
+            fi
             
             atomic_write "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt" "$icon|$title|$bright"
             exec {lock_fd}>&-
@@ -216,12 +278,10 @@ main() {
             esac
             
             local status metadata
-            # 100 iterations * 10ms = 1.0 second max timeout for network streams
             for ((i=0; i<100; i++)); do
                 status=$(playerctl status 2>/dev/null)
                 metadata=$(playerctl metadata --format "{{ artist }} - {{ title }}" 2>/dev/null)
                 
-                # Strict state-transition validation
                 case "$action" in
                     --play-pause)
                         [[ "$status" != "$old_status" && -n "$status" ]] && break
@@ -245,7 +305,7 @@ main() {
             elif [[ "$status" == "Paused" ]]; then
                 icon="media-playback-pause"
                 title="Paused: $metadata"
-            elif [[ "$status" == "Stopped" || -z "$status" ]]; then
+            elif [[ "$status" == "Stopped" || -z "$status" ]] && metadata="Unknown Track"; then
                 icon="media-playback-stop"
                 title="Stopped"
             else
