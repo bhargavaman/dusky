@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Dusky Formatter v5.3 (Architect Edition - Hardened)
+Dusky Formatter v5.3.3 (Architect Edition - Patched)
 A cutting-edge, interactive TUI for securely formatting and encrypting drives.
 Engineered for modern Arch Linux environments (Kernel 7.0+, Python 3.14.5).
 """
@@ -113,29 +113,42 @@ def get_all_paths(devices: list[dict[str, Any]]) -> list[str]:
             paths.extend(get_all_paths(get_val(dev, "children", [])))
     return paths
 
-def get_all_mountpoints(device_node: Optional[dict[str, Any]]) -> list[str]:
+def get_all_mountpoints(device_node: Optional[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Returns a list of tuples containing (block_device_path, mountpoint)."""
     if not device_node:
         return []
-    mounts: list[str] = []
+    mounts: list[tuple[str, str]] = []
+    path = get_val(device_node, "path", "unknown_path")
     raw_mounts = get_val(device_node, "mountpoints", [])
+    
     if isinstance(raw_mounts, list):
-        mounts.extend([m for m in raw_mounts if m])
+        for m in raw_mounts:
+            if m: mounts.append((path, m))
+            
     for child in get_val(device_node, "children", []):
         mounts.extend(get_all_mountpoints(child))
     return mounts
 
+def get_all_mappings(device_node: Optional[dict[str, Any]]) -> list[str]:
+    """Recursively scans for logical volumes or crypto mappings holding the device open."""
+    if not device_node: return []
+    mappings: list[str] = []
+    for child in get_val(device_node, "children", []):
+        if get_val(child, "type") in ["crypt", "dm", "lvm"]:
+            path = get_val(child, "path")
+            if path: mappings.append(path)
+        mappings.extend(get_all_mappings(child))
+    return mappings
+
 def is_mounted_recursively(device_node: Optional[dict[str, Any]]) -> bool:
     if not device_node: 
         return False
-        
     mounts = get_val(device_node, "mountpoints", [])
     if isinstance(mounts, list) and any(m for m in mounts if m):
         return True
-        
     for child in get_val(device_node, "children", []):
         if is_mounted_recursively(child):
             return True
-            
     return False
 
 def find_device_node(devices: list[dict[str, Any]], target_path: str) -> Optional[dict[str, Any]]:
@@ -172,6 +185,7 @@ def display_device_tree(devices: list[dict[str, Any]], table: Table, mount_data:
         
         raw_mounts = get_val(dev, "mountpoints", [])
         mounts = [m for m in raw_mounts if m] if isinstance(raw_mounts, list) else []
+        mappings = get_all_mappings(dev)
         
         if mounts:
             mount_details = []
@@ -184,6 +198,8 @@ def display_device_tree(devices: list[dict[str, Any]], table: Table, mount_data:
             mount_str = "\n".join(mount_details)
         elif is_mounted_recursively(dev):
             mount_str = "[dim yellow]↳ Active Child Mount[/]"
+        elif mappings:
+            mount_str = "[dim magenta]↳ Active Mapped Volume[/]"
         else:
             mount_str = "[dim]Unmounted[/]"
 
@@ -248,6 +264,41 @@ def resolve_busy_processes(mountpoint: str) -> bool:
         return True
     return False
 
+def teardown_descendants(device_node: Optional[dict[str, Any]]) -> bool:
+    """Tears down mapped logical volumes (LUKS, LVM) bottom-up to free kernel locks."""
+    if not device_node: return True
+    success = True
+    
+    # Bottom-up recursion: Handle children before parent
+    for child in get_val(device_node, "children", []):
+        if not teardown_descendants(child):
+            success = False
+        
+        dev_type = get_val(child, "type")
+        path = get_val(child, "path")
+        if dev_type in ["crypt", "lvm", "dm"] and path:
+            console.print(f"[bold yellow]➜[/] Attempting to close mapped volume {path}...")
+            try:
+                res = subprocess.run(["cryptsetup", "close", path], capture_output=True, text=True)
+                if res.returncode == 0:
+                    console.print(f"  [bold green]✔ Successfully closed {path}[/]")
+                else:
+                    console.print(f"  [bold red]✗ Standard close failed for {path}. Trying dmsetup fallback...[/]")
+                    try:
+                        res2 = subprocess.run(["dmsetup", "remove", "--force", path], capture_output=True, text=True)
+                        if res2.returncode == 0:
+                            console.print(f"  [bold green]✔ Successfully removed {path} via dmsetup.[/]")
+                        else:
+                            console.print(f"  [bold red]✗ Kernel lock prevents closing {path}.[/]")
+                            success = False
+                    except FileNotFoundError:
+                        console.print(f"  [bold red]✗ dmsetup not found. Lock remains.[/]")
+                        success = False
+            except FileNotFoundError:
+                console.print(f"  [bold red]✗ cryptsetup not found! Lock remains.[/]")
+                success = False
+    return success
+
 # ==============================================================================
 # 4. INTERACTIVE TUI & CONFIGURATION
 # ==============================================================================
@@ -256,7 +307,7 @@ def generate_secure_mapper_name() -> str:
     return f"dusky_luks_{uuid.uuid4().hex[:8]}"
 
 def interactive_setup() -> FormatPlan:
-    console.print(Panel.fit("[bold magenta]Dusky Formatter v5.3[/] - [cyan]Arch Linux Storage & Analysis Utility[/]", border_style="magenta"))
+    console.print(Panel.fit("[bold magenta]Dusky Formatter v5.3.3[/] - [cyan]Arch Linux Storage & Analysis Utility[/]", border_style="magenta"))
     
     initial_devices = get_block_devices()
     mount_data = get_mount_options()
@@ -293,20 +344,34 @@ def interactive_setup() -> FormatPlan:
             continue
         
         device_node = find_device_node(current_devices, target_device)
-        if is_mounted_recursively(device_node):
-            active_mounts = get_all_mountpoints(device_node)
-            console.print(f"\n[bold red blink]CRITICAL SAFETY LOCK:[/]\n[yellow]{target_device}[/] (or a child volume) is actively mounted at:")
-            for m in active_mounts:
-                console.print(f"  - [cyan]{m}[/]")
+        active_mounts = get_all_mountpoints(device_node)
+        active_mappings = get_all_mappings(device_node)
+        
+        if active_mounts or active_mappings:
+            console.print(f"\n[bold red blink]CRITICAL SAFETY LOCK:[/]\n[yellow]{target_device}[/] (or a child volume) is actively locked by the kernel:")
+            for dev_path, m in active_mounts:
+                console.print(f"  - [cyan]Mounted at: {m} (via {dev_path})[/]")
+            for m in active_mappings:
+                console.print(f"  - [magenta]Mapped volume: {m}[/]")
             
-            console.print("\n[yellow]Formatting an active mount is strictly prohibited and will corrupt the live filesystem.[/]")
+            console.print("\n[yellow]Formatting an active mount or mapped device is strictly prohibited and will fail.[/]")
             
-            if Confirm.ask("Would you like Dusky Formatter to attempt a [bold red]force unmount[/] now?", default=False):
+            if Confirm.ask("Would you like Dusky Formatter to attempt a [bold red]force unlock & unmount[/] now?", default=False):
                 unmount_failed = False
-                for m in sorted(active_mounts, key=len, reverse=True):
+                # Sort mounts by path length descending to unmount deepest paths first
+                for dev_path, m in sorted(active_mounts, key=lambda x: len(x[1]), reverse=True):
                     console.print(f"[bold yellow]➜[/] Attempting to unmount {m}...")
-                    res = subprocess.run(["umount", m], capture_output=True, text=True)
                     
+                    if m == "[SWAP]":
+                        res = subprocess.run(["swapoff", dev_path], capture_output=True, text=True)
+                        if res.returncode == 0:
+                            console.print(f"  [bold green]✔ Successfully disabled swap on {dev_path}[/]")
+                        else:
+                            console.print(f"  [bold red]✗ Failed to disable swap on {dev_path}.[/]")
+                            unmount_failed = True
+                        continue
+
+                    res = subprocess.run(["umount", m], capture_output=True, text=True)
                     if res.returncode == 0:
                         console.print(f"  [bold green]✔ Successfully unmounted {m}[/]")
                     else:
@@ -325,11 +390,20 @@ def interactive_setup() -> FormatPlan:
                     console.print("[red]Could not free all mounts. Please resolve manually or reboot if kernel locked.[/]")
                     target_device = None 
                     continue
-                else:
-                    console.print("[green]All mount points cleared. Verifying state...[/]")
-                    continue 
+                
+                if active_mappings:
+                    console.print("[bold yellow]➜[/] Tearing down cryptographic and logical mappings...")
+                    if not teardown_descendants(device_node):
+                        console.print("[red]Could not release all mapped child volumes. The kernel still locks the drive.[/]")
+                        target_device = None
+                        continue
+
+                console.print("[green]All locks and mount points cleared. State-machine is re-verifying kernel tree...[/]")
+                # The continue loops back, pulls fresh lsblk JSON, ensures locks are genuinely gone, 
+                # and then safely drops out of the loop.
+                continue 
             else:
-                console.print("[dim]Aborting selection. Please handle unmounting manually.[/]")
+                console.print("[dim]Aborting selection. Please handle unlocks manually.[/]")
                 target_device = None 
                 continue
 
