@@ -191,6 +191,19 @@ def resolve_device(uuid: str) -> Path | None:
         return dev_path.resolve()
     return None
 
+def is_device_readable(dev_path: Path) -> bool:
+    """Verifies a block device is responsive by attempting to read its first block."""
+    try:
+        res = subprocess.run(
+            ["sudo", "dd", f"if={dev_path}", "bs=4096", "count=1", "of=/dev/null"],
+            capture_output=True, timeout=10
+        )
+        return res.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
+
 def wait_for_device(uuid: str, timeout: int) -> bool:
     """Waits strictly and safely for udev to populate the /dev/disk/by-uuid tree."""
     start = time.time()
@@ -540,11 +553,20 @@ def do_unlock(drive: Drive):
             err(f"Physical drive not found (Outer UUID: {drive.outer_uuid}). Is it plugged in?")
             sys.exit(1)
 
-        if resolve_device(drive.inner_uuid):
+        mapper_name = f"luks-{drive.outer_uuid}"
+        inner_dev = resolve_device(drive.inner_uuid)
+
+        if inner_dev and is_device_readable(inner_dev):
             log("Crypt container is already unlocked.")
         else:
+            if inner_dev:
+                err("Crypt device is unresponsive. Closing stale mapping and reopening...")
+                if not run_sudo_cmd(["sudo", "cryptsetup", "close", mapper_name]):
+                    err(f"Failed to close stale mapping for {mapper_name}. Manual intervention required.")
+                    sys.exit(1)
+                time.sleep(1)
+
             log("Unlocking encrypted container...")
-            mapper_name = f"luks-{drive.outer_uuid}"
             outer_dev_path = f"/dev/disk/by-uuid/{drive.outer_uuid}"
             
             # --- DYNAMIC CRYPTO PROBER ---
