@@ -104,6 +104,32 @@ For systemd to clean up the IPC namespaces and transition to the modular archite
 systemctl reboot
 ```
 
+## Step 5: Verify the Configuration
+
+Once your system has rebooted, you can verify that your new modular setup is working flawlessly.
+
+**1. Check if the sockets are listening:**
+
+```
+systemctl list-sockets | grep virt
+```
+
+> [!SUCCESS] Expected Output
+> 
+> You should see a long list showing sockets like `virtqemud.socket`, `virtnetworkd.socket`, etc., sitting in the `LISTEN` state. This means the doorways are open and waiting.
+
+**2. Prove the daemons are sleeping:**
+
+```
+systemctl status virtqemud.service
+```
+
+> [!SUCCESS] Expected Output
+> 
+> It should say `Active: inactive (dead)`.
+> 
+> _This is exactly what we want!_ It proves the daemon is using 0MB of RAM. The moment you open your virtual machine manager or run a `virsh` command, systemd will instantly flip this to `active (running)`.
+
 ## Appendix: How to Undo (Disable)
 
 > [!WARNING] Reverting
