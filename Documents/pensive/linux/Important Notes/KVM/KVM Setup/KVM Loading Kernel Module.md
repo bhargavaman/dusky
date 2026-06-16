@@ -11,7 +11,7 @@ In modern Arch Linux (Kernel 7.1+), the `systemd-udevd` service automatically de
 Let's verify that this automatic process succeeded. Open your terminal and check the loaded modules:
 
 ```
-lsmod | grep -iE "kvm_intel|kvm_amd"
+lsmod | grep -iE kvm
 ```
 
 ### Understanding the Output
