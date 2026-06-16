@@ -698,6 +698,22 @@ def do_unlock(drive: Drive):
                 close_fds=True,
                 start_new_session=True
             )
+    elif drive.fstype and "ntfs3" in drive.fstype.lower():
+        log("Mount with ntfs3 failed. Retrying with ntfs type...")
+        mount_args = ["--mkdir", "-t", "ntfs"]
+        if options:
+            mount_args.extend(["-o", ",".join(options)])
+        cmd = [
+            "sudo", "mount",
+            *mount_args,
+            "--source", f"UUID={target_uuid}",
+            "--target", str(drive.mountpoint)
+        ]
+        if run_sudo_cmd(cmd):
+            success(f"'{drive.name}' successfully mounted (via ntfs fallback).")
+        else:
+            err(f"Failed to mount UUID={target_uuid} to {drive.mountpoint}.")
+            sys.exit(1)
     else:
         err(f"Failed to mount UUID={target_uuid} to {drive.mountpoint}.")
         sys.exit(1)
