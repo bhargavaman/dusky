@@ -244,7 +244,7 @@ case "$choice" in
         read -r lw_sec lb_sec <<< "$(parse_pomodoro "$last_pomo")"
         
         p_opts=(
-            "󰐊  ($(fmt_t "$lw_sec") Work / $(fmt_t "$lb_sec") Break)"
+            "󰐊  Start Last ($(fmt_t "$lw_sec") Work / $(fmt_t "$lb_sec") Break)"
             "󰒓  Set in Minutes"
             "󰒓  Set in Seconds"
         )
@@ -392,7 +392,7 @@ case "$choice" in
         fi
         ;;
     '  CPU Temp')       "$DAEMON_SCRIPT" --temp & disown ;;
-    '󰁹  Battery / Power')"$DAEMON_SCRIPT" --battery & disown ;;
+    '󰁹  Battery')       "$DAEMON_SCRIPT" --battery & disown ;;
     '󰈀  Network Speed')  "$DAEMON_SCRIPT" --network & disown ;;
     '󰔚  System Uptime')  "$DAEMON_SCRIPT" --uptime & disown ;;
     '󰽽  Workspace')      "$DAEMON_SCRIPT" --workspace & disown ;;
