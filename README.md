@@ -84,6 +84,11 @@ The setup scripts are written to auto detect your hardware and set the appropria
 
 after installing arch, boot into the os and then run this in the terminal. 
 
+
+# Dusky ISO is available if you want to use it to install it, its an offline installer.
+```https://drive.google.com/drive/folders/1P368khN1p-IfzWoaDnPyQNEcpkKBsOte?usp=sharing```
+
+
 ### Step 1: Clone Dotfiles (Bare Repo Method)
 
 i use a bare git repository method to drop files exactly where they belong in your home directory.
