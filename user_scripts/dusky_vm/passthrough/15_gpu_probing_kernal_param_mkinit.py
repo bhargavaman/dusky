@@ -2,7 +2,7 @@
 """
 Phase 3: VFIO Kernel Isolation & Bootloader Configuration
 Target: Arch Linux (Kernel 7.1.0+), Python 3.14.5+, systemd 260
-Scope: Dynamic hardware probing, bootctl JSON parsing, mkinitcpio hook enforcement.
+Scope: Dynamic hardware probing, UKI-aware bootctl JSON parsing, mkinitcpio structural hook enforcement.
 Philosophy: Zero-Clutter Idempotency, Atomic Writes, Sysfs Topography.
 """
 
@@ -16,7 +16,7 @@ import tempfile
 import subprocess
 import dataclasses
 from pathlib import Path
-from typing import Dict, Any, List, Set, Optional, Never
+from typing import Dict, List, Set, Optional, Never, Tuple
 
 # ==============================================================================
 # BOOTSTRAP: Strict Privilege & Auto-Elevation
@@ -26,7 +26,6 @@ def require_root() -> None:
     if os.geteuid() != 0:
         print("\n[INFO] Administrative privileges required. Elevating via sudo...")
         try:
-            # Replace the current process with a sudo call, preserving exact binary and args
             os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
         except OSError as e:
             print(f"\n[FATAL] Failed to elevate privileges dynamically: {e}")
@@ -58,7 +57,7 @@ class VFIODevice:
     iommu_group: str = "Unknown"
 
 # ==============================================================================
-# CORE UTILITIES (Borrowed from Elite DevOps pattern)
+# CORE UTILITIES
 # ==============================================================================
 def bail(msg: str) -> Never:
     """Exit gracefully with a clear error panel."""
@@ -120,7 +119,6 @@ def probe_gpus() -> List[VFIODevice]:
     check_deps()
     
     try:
-        # Use -D to get the full domain address (0000:xx:xx.x) needed for sysfs
         res = subprocess.run(["lspci", "-Dnn"], capture_output=True, text=True, check=True)
         lspci_out = res.stdout
     except subprocess.CalledProcessError:
@@ -128,7 +126,6 @@ def probe_gpus() -> List[VFIODevice]:
 
     gpu_map: Dict[str, VFIODevice] = {}
     
-    # Pass 1: Identify all VGA/3D Controllers
     for line in lspci_out.splitlines():
         if "[0300]" in line or "[0302]" in line:
             bus_match = re.match(r'^([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.\d)', line)
@@ -136,8 +133,6 @@ def probe_gpus() -> List[VFIODevice]:
             
             if bus_match and id_match:
                 bus = bus_match.group(1)
-                
-                # Directly interrogate the Kernel via Sysfs for IOMMU grouping
                 iommu_group = "Unknown"
                 iommu_path = Path(f"/sys/bus/pci/devices/{bus}/iommu_group")
                 if iommu_path.is_symlink():
@@ -150,7 +145,6 @@ def probe_gpus() -> List[VFIODevice]:
                     iommu_group=iommu_group
                 )
 
-    # Pass 2: Identify companion Audio controllers on the same base bus (usually .1)
     for line in lspci_out.splitlines():
         if "Audio device" in line or "[0403]" in line:
             bus_match = re.match(r'^([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})\.(\d)', line)
@@ -164,7 +158,6 @@ def probe_gpus() -> List[VFIODevice]:
                         gpu_map[gpu_bus].audio_id = id_match.group(1)
                         gpu_map[gpu_bus].audio_desc = line[len(bus_match.group(0)):].strip()
 
-    # Sort deterministically by PCI bus address
     return sorted(list(gpu_map.values()), key=lambda x: x.pci_bus)
 
 def select_target_gpu(devices: List[VFIODevice]) -> List[str]:
@@ -185,7 +178,6 @@ def select_target_gpu(devices: List[VFIODevice]) -> List[str]:
         table.add_row(str(idx + 1), dev.pci_bus, dev.iommu_group, v_str, a_str)
 
     console.print(table)
-    
     choice = IntPrompt.ask("\n[bold cyan]Select the discrete GPU to isolate for VFIO[/bold cyan]", choices=[str(i+1) for i in range(len(devices))])
     
     selected = devices[choice - 1]
@@ -197,10 +189,30 @@ def select_target_gpu(devices: List[VFIODevice]) -> List[str]:
     return ids
 
 # ==============================================================================
-# BOOTLOADER INJECTION: SYSTEMD-BOOT (JSON NATIVE)
+# BOOTLOADER INJECTION: SYSTEMD-BOOT (JSON NATIVE + UKI AWARE)
 # ==============================================================================
-def get_systemd_boot_entry() -> Path:
-    """Uses systemd 260 native JSON output to flawlessly locate the active boot entry."""
+def resolve_boot_path() -> Path:
+    """Dynamically resolves the XBOOTLDR or ESP path via systemd 260 bootctl."""
+    try:
+        # Attempt 1: -x prints XBOOTLDR if it exists, or ESP otherwise.
+        res = subprocess.run(["bootctl", "-x"], capture_output=True, text=True, check=True)
+        return Path(res.stdout.strip())
+    except Exception:
+        pass
+
+    try:
+        # Attempt 2: Explicit fallback to -p (ESP only) if -x inexplicably fails.
+        res = subprocess.run(["bootctl", "-p"], capture_output=True, text=True, check=True)
+        return Path(res.stdout.strip())
+    except Exception:
+        console.print("[yellow]  ⚠ bootctl path resolution failed entirely. Falling back to legacy /boot.[/yellow]")
+        return Path("/boot")
+
+def get_systemd_boot_target() -> Tuple[Path, str, str]:
+    """
+    Uses JSON output to locate the active entry.
+    Returns: (File Path, Boot Loader Specification Type, Baked Options String)
+    """
     console.print("  [cyan]Querying systemd-boot EFI payload data...[/cyan]")
     
     try:
@@ -208,50 +220,32 @@ def get_systemd_boot_entry() -> Path:
         entries = json.loads(res.stdout)
         
         for entry in entries:
-            # When default=@saved, 'is_selected' or 'is_default' dictates the target.
             if entry.get("is_default") or entry.get("is_selected"):
                 source_path = entry.get("source")
+                entry_type = entry.get("type", "Type #1")
+                options = entry.get("options", "")
+                
                 if source_path and Path(source_path).exists():
-                    return Path(source_path)
+                    return Path(source_path), entry_type, options
                     
     except Exception as e:
-        console.print(f"[yellow]  ⚠ bootctl JSON query failed: {e}. Falling back to standard paths.[/yellow]")
+        console.print(f"[yellow]  ⚠ bootctl JSON query failed: {e}. Attempting dynamic fallback path resolution.[/yellow]")
 
-    # Fallback to absolute paths if bootctl is unreachable via chroot/vars
-    entries_dir = Path("/boot/loader/entries")
+    boot_dir = resolve_boot_path()
+    entries_dir = boot_dir / "loader" / "entries"
+    
     for name in ["arch-linux.conf", "arch.conf"]:
         candidate = entries_dir / name
         if candidate.exists():
-            return candidate
+            return candidate, "Type #1", ""
 
-    bail("Could not dynamically resolve the target systemd-boot entry via bootctl or fallback paths.")
+    bail("Could not dynamically resolve the target boot entry or configuration.")
 
-def inject_bootloader_parameters(vfio_ids: List[str]) -> None:
-    """Safely and idempotently parses and updates kernel command line parameters."""
-    conf_path = get_systemd_boot_entry()
-    console.print(f"\n[bold blue]==>[/bold blue] [bold]Targeting systemd-boot payload:[/bold] {conf_path.name}")
-    
-    cpu_flag = get_cpu_iommu_flag()
-    id_str = ",".join(vfio_ids)
-    
-    content = conf_path.read_text(encoding="utf-8")
-    opt_match = re.search(r'^options\s+(.*)', content, re.MULTILINE)
-    if not opt_match:
-        bail(f"Could not locate the 'options' line in {conf_path.name}.")
-        
-    current_opts = opt_match.group(1).split()
+def generate_parameter_string(current_opts: List[str], targets: Dict[str, str], blacklist_set: Set[str]) -> str:
+    """Deduplicates and merges kernel parameters cleanly."""
     new_opts: List[str] = []
-    
-    targets = {
-        cpu_flag: "on",
-        "iommu": "pt",
-        "vfio-pci.ids": id_str
-    }
-    
-    blacklist_set: Set[str] = {"nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm"}
     existing_bl: Set[str] = set()
 
-    # Extract clean list and deduplicate existing blacklists
     for opt in current_opts:
         if "=" in opt:
             k, v = opt.split("=", 1)
@@ -264,33 +258,96 @@ def inject_bootloader_parameters(vfio_ids: List[str]) -> None:
         else:
             new_opts.append(opt)
             
-    # Inject parameters
     for k, v in targets.items():
         new_opts.append(f"{k}={v}")
         
     merged_bl = existing_bl.union(blacklist_set)
     merged_bl.discard("")
     new_opts.append(f"module_blacklist={','.join(sorted(merged_bl))}")
-        
-    updated_opts_line = "options " + " ".join(new_opts)
-    new_content = content[:opt_match.start()] + updated_opts_line + content[opt_match.end():]
     
-    if atomic_write(conf_path, new_content):
-        console.print(f"[bold green]  ✓ Injected IOMMU and VFIO parameters securely into {conf_path.name}.[/bold green]")
+    return " ".join(new_opts)
+
+def inject_bootloader_parameters(vfio_ids: List[str]) -> None:
+    """Safely injects kernel parameters, strictly preventing volatile pollution."""
+    target_path, entry_type, baked_options = get_systemd_boot_target()
+    cpu_flag = get_cpu_iommu_flag()
+    id_str = ",".join(vfio_ids)
+    
+    targets = {cpu_flag: "on", "iommu": "pt", "vfio-pci.ids": id_str}
+    blacklist_set = {"nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm"}
+
+    # BRANCH A: Standard Boot Loader Spec Type #1 (.conf)
+    if "Type #1" in entry_type or target_path.suffix == ".conf":
+        console.print(f"\n[bold blue]==>[/bold blue] [bold]Targeting Standard Config:[/bold] {target_path.name}")
+        content = target_path.read_text(encoding="utf-8")
+        opt_match = re.search(r'^options\s+(.*)', content, re.MULTILINE)
+        
+        if not opt_match:
+            bail(f"Could not locate the 'options' line in {target_path.name}.")
+            
+        current_opts = shlex.split(opt_match.group(1), posix=False)
+        updated_opts_line = "options " + generate_parameter_string(current_opts, targets, blacklist_set)
+        new_content = content[:opt_match.start()] + updated_opts_line + content[opt_match.end():]
+        
+        if atomic_write(target_path, new_content):
+            console.print(f"[bold green]  ✓ Injected parameters into {target_path.name}.[/bold green]")
+        else:
+            console.print("[bold green]  ✓ Kernel parameters already optimal in config.[/bold green]")
+
+    # BRANCH B: Boot Loader Spec Type #2 (Unified Kernel Image)
     else:
-        console.print("[bold green]  ✓ Kernel parameters already perfectly optimized. No changes made.[/bold green]")
+        console.print(f"\n[bold blue]==>[/bold blue] [bold]UKI Detected (Type #2):[/bold] {target_path.name}")
+        console.print("  [cyan]Pivoting parameter injection to /etc/kernel/cmdline for mkinitcpio compilation...[/cyan]")
+        
+        cmdline_path = Path("/etc/kernel/cmdline")
+        current_opts = []
+        
+        # 1. Respect explicit static configuration if it exists
+        if cmdline_path.exists():
+            content = cmdline_path.read_text(encoding="utf-8").strip()
+            current_opts = shlex.split(content, posix=False)
+            
+        # 2. Inherit safely from the compiled `.efi` payload binary
+        elif baked_options:
+            console.print("  [cyan]No static cmdline found. Extracting baseline parameters directly from active UKI binary payload...[/cyan]")
+            current_opts = shlex.split(baked_options, posix=False)
+            
+        # 3. Last resort fallback to /proc/cmdline (with explicit filtering of dynamic bootloader flags)
+        else:
+            console.print("  [yellow]⚠ No static cmdline or UKI payload options found. Attempting safe fallback via /proc/cmdline...[/yellow]")
+            proc_content = Path("/proc/cmdline").read_text(encoding="utf-8").strip()
+            
+            volatile_flags = {"single", "1", "s", "S", "rescue", "emergency", "nomodeset", "systemd.unit=rescue.target", "systemd.unit=emergency.target"}
+            raw_opts = shlex.split(proc_content, posix=False)
+            
+            # Prevent double-initrd loading or invalid BOOT_IMAGE mappings in generated UKIs
+            for opt in raw_opts:
+                if opt in volatile_flags:
+                    continue
+                if opt.startswith("BOOT_IMAGE=") or opt.startswith("initrd="):
+                    continue
+                current_opts.append(opt)
+            
+        updated_opts = generate_parameter_string(current_opts, targets, blacklist_set)
+        if atomic_write(cmdline_path, updated_opts + "\n"):
+            console.print(f"[bold green]  ✓ Injected persistent parameters safely into /etc/kernel/cmdline.[/bold green]")
+        else:
+            console.print("[bold green]  ✓ cmdline already perfectly optimized for UKI generation.[/bold green]")
 
 # ==============================================================================
-# INITRAMFS MANIPULATION
+# INITRAMFS MANIPULATION 
 # ==============================================================================
 def configure_mkinitcpio() -> None:
-    """Enforces VFIO modules and hook ordering securely using AST-like parsing."""
+    """Enforces VFIO modules and hook ordering securely using AST-like string manipulation."""
     mk_path = Path("/etc/mkinitcpio.conf")
     console.print("\n[bold blue]==>[/bold blue] [bold]Hardening initramfs via mkinitcpio.conf...[/bold]")
     
+    if not mk_path.exists():
+        bail(f"{mk_path} does not exist.")
+
     new_content = mk_path.read_text(encoding="utf-8")
     
-    # 1. Inject MODULES safely
+    # 1. Inject MODULES
     mod_match = re.search(r'^MODULES=\((.*?)\)', new_content, re.MULTILINE)
     if mod_match:
         raw_mods = mod_match.group(1).replace('"', '').replace("'", "")
@@ -326,7 +383,7 @@ def configure_mkinitcpio() -> None:
     if atomic_write(mk_path, new_content):
         console.print("[bold green]  ✓ Enforced VFIO modules and structural hook priorities.[/bold green]")
     else:
-        console.print("[bold green]  ✓ mkinitcpio.conf already enforces VFIO isolation constraints.[/bold green]")
+        console.print("[bold green]  ✓ mkinitcpio.conf already enforces strict VFIO isolation constraints.[/bold green]")
 
 # ==============================================================================
 # MODPROBE KERNEL RULES
@@ -369,18 +426,13 @@ def main() -> None:
     console.print(Panel("[bold green]KVM GPU Passthrough: Phase 3[/bold green]\nTarget: VFIO Isolation & Host Kernel Configuration", expand=False))
     
     try:
-        # 1. Hardware Intelligence (Sysfs + pciutils)
         devices = probe_gpus()
         target_ids = select_target_gpu(devices)
         
-        # 2. Bootloader Strategy (systemd 260 JSON NATIVE + Atomic Write)
         inject_bootloader_parameters(target_ids)
-        
-        # 3. Kernel Strategy (Atomic Writes)
         configure_mkinitcpio()
         write_modprobe_rules(target_ids)
         
-        # 4. Compilation
         console.print("\n[bold blue]==>[/bold blue] [bold]Compiling Initramfs Environment (mkinitcpio -P)...[/bold]")
         subprocess.run(["mkinitcpio", "-P"], check=True)
         
