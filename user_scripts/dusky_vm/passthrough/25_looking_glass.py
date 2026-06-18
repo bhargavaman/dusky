@@ -3,7 +3,7 @@
 Phase 5: Looking Glass KVMFR Host Configuration
 Target: Arch Linux (Kernel 7.1.0+), Python 3.14.5+, systemd 260
 Scope: KVMFR Modprobe, udev rules, cgroup whitelisting, dynamic IVSHMEM calculation.
-Philosophy: Zero-Clutter Idempotency, Atomic Writes, Strict Regex Array Parsing, Ring 0 Safety.
+Philosophy: Zero-Clutter Idempotency, Atomic Writes, Strict Cgroup Regex Parsing, Ring 0 Safety.
 """
 
 import os
@@ -17,13 +17,18 @@ from pathlib import Path
 from typing import Never, Tuple
 
 # ==============================================================================
-# BOOTSTRAP: Strict Privilege & UI Enforcement
+# BOOTSTRAP: Strict Privilege & Auto-Elevation
 # ==============================================================================
 def require_root() -> None:
+    """Enforce eUID 0. Auto-elevate via sudo if executed as a standard user."""
     if os.geteuid() != 0:
-        print("\n[FATAL] Phase 5 must be executed as root.")
-        print("        Run with: sudo ./25_kvmfr_host_setup.py\n")
-        sys.exit(1)
+        print("\n[INFO] Administrative privileges required. Elevating via sudo...")
+        try:
+            # Replace the current process with a sudo call, preserving exact binary and args
+            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+        except OSError as e:
+            print(f"\n[FATAL] Failed to elevate privileges dynamically: {e}")
+            sys.exit(1)
 
 require_root()
 
@@ -34,7 +39,7 @@ try:
     from rich.table import Table
     from rich.syntax import Syntax
 except ImportError:
-    print("\n[FATAL] 'python-rich' is missing. Please ensure previous phases completed successfully.")
+    print("\n[FATAL] 'python-rich' is missing. Please run: sudo pacman -S python-rich")
     sys.exit(1)
 
 console = Console()
@@ -49,7 +54,7 @@ def bail(msg: str) -> Never:
 
 def atomic_write(target_path: Path, new_content: str) -> bool:
     """
-    Safely writes data using a temporary file and atomic swap.
+    Safely writes data using a temporary file and an atomic swap.
     Inherits exact file permissions (st_mode) to prevent security regressions.
     Zero-clutter: NO .bak files are ever created.
     """
@@ -58,7 +63,7 @@ def atomic_write(target_path: Path, new_content: str) -> bool:
             return False
         mode = target_path.stat().st_mode
     else:
-        mode = 0o644
+        mode = 0o644 # Default standard file permissions
         
     target_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path_str = tempfile.mkstemp(dir=target_path.parent, prefix=f".{target_path.name}.tmp.")
@@ -137,7 +142,7 @@ def configure_host_modules(mib_size: int) -> None:
     else:
         console.print(f"[bold green]  ✓ Systemd module load already optimal: {load_path}[/bold green]")
 
-    # 3. Udev Rules (Must sort before 73-seat-late.rules)
+    # 3. Udev Rules (Must sort before 73-seat-late.rules per systemd 260 spec)
     udev_path = Path("/etc/udev/rules.d/70-kvmfr.rules")
     udev_content = 'SUBSYSTEM=="kvmfr", GROUP="kvm", MODE="0660", TAG+="uaccess"\n'
     if atomic_write(udev_path, udev_content):
@@ -145,9 +150,10 @@ def configure_host_modules(mib_size: int) -> None:
     else:
         console.print(f"[bold green]  ✓ Udev access controls already optimal: {udev_path}[/bold green]")
 
-    with console.status("[cyan]Triggering udev rule reload...", spinner="dots"):
-        run_cmd(["udevadm", "control", "--reload-rules"])
-        run_cmd(["udevadm", "trigger"])
+    with console.status("[cyan]Triggering surgical udev rule reload...", spinner="dots"):
+        run_cmd(["udevadm", "control", "--reload"])
+        # Surgical trigger: only target the kvmfr subsystem to prevent micro-stutters
+        run_cmd(["udevadm", "trigger", "--action=add", "--subsystem-match=kvmfr"])
 
 def enforce_device_integrity() -> None:
     """Detects and mitigates the QEMU regular file creation race condition."""
@@ -166,7 +172,7 @@ def enforce_device_integrity() -> None:
             run_cmd(["modprobe", "kvmfr"])
             console.print("[bold green]  ✓ KVMFR char device dynamically loaded and secured.[/bold green]")
         except Exception:
-            console.print("[bold yellow]  ⚠ KVMFR module not found. Assuming DKMS build is pending.[/bold yellow]")
+            console.print("[bold yellow]  ⚠ KVMFR module not found. Assuming DKMS build is pending or requires a reboot.[/bold yellow]")
 
 # ==============================================================================
 # LIBVIRT CGROUP INJECTION
@@ -174,7 +180,7 @@ def enforce_device_integrity() -> None:
 def configure_qemu_cgroups() -> None:
     """
     Bulletproof Regex parsing to cleanly uncomment and inject /dev/kvmfr0.
-    Handles trailing commas and indentation perfectly without naive string replacement.
+    Utilizes [^\]]* to prevent multiline runaway regex crashes.
     """
     conf_path = Path("/etc/libvirt/qemu.conf")
     console.print("\n[bold blue]==>[/bold blue] [bold]Securing QEMU Cgroup Device ACLs...[/bold]")
@@ -185,23 +191,24 @@ def configure_qemu_cgroups() -> None:
     content = conf_path.read_text(encoding="utf-8")
     target_device = '"/dev/kvmfr0"'
 
-    # Regex definitions capturing exactly the prefix, interior array, and suffix brackets
-    pattern_active = re.compile(r'^(cgroup_device_acl\s*=\s*\[)(.*?)(\])', re.MULTILINE | re.DOTALL)
-    pattern_commented = re.compile(r'^(#\s*cgroup_device_acl\s*=\s*\[)(.*?)(\])', re.MULTILINE | re.DOTALL)
+    # Regex constraints explicitly bound inside the array braces
+    pattern_active = re.compile(r'^\s*cgroup_device_acl\s*=\s*\[([^\]]*)\]', re.MULTILINE)
+    pattern_commented = re.compile(r'^\s*#\s*cgroup_device_acl\s*=\s*\[([^\]]*)\]', re.MULTILINE)
 
     if match := pattern_active.search(content):
-        inner = match.group(2)
+        inner = match.group(1)
         if target_device not in inner:
             clean_inner = inner.rstrip(" \n\r\t,")
-            new_array = f"{match.group(1)}{clean_inner},\n    {target_device}\n{match.group(3)}"
-            content = content[:match.start()] + new_array + content[match.end():]
+            new_block = f"cgroup_device_acl = [{clean_inner},\n    {target_device}\n]"
+            content = content[:match.start()] + new_block + content[match.end():]
             
     elif match := pattern_commented.search(content):
-        # Strip comments line-by-line to preserve structure
-        uncommented_inner = "\n".join([line.lstrip('#').rstrip("\n\r") for line in match.group(2).splitlines()])
+        inner = match.group(1)
+        # Strip comments line-by-line to preserve structure perfectly
+        uncommented_inner = "\n".join([line.lstrip(' \t#') for line in inner.splitlines()])
         clean_inner = uncommented_inner.rstrip(" \n\r\t,")
-        new_array = f"cgroup_device_acl = [{clean_inner},\n    {target_device}\n]"
-        content = content[:match.start()] + new_array + content[match.end():]
+        new_block = f"cgroup_device_acl = [{clean_inner},\n    {target_device}\n]"
+        content = content[:match.start()] + new_block + content[match.end():]
         
     else:
         # Failsafe fallback appended to EOF
@@ -237,6 +244,7 @@ def main() -> None:
         enforce_device_integrity()
         configure_qemu_cgroups()
         
+        # Absolute correct QOM JSON formatting for QEMU commandline mapping
         xml_payload = f"""  <qemu:commandline>
     <qemu:arg value="-device"/>
     <qemu:arg value="{{'driver':'ivshmem-plain','id':'shmem0','memdev':'looking-glass'}}"/>
