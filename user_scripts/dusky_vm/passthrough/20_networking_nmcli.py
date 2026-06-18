@@ -53,11 +53,16 @@ def run_cmd(cmd: list, check: bool = True, capture: bool = True, timeout: int = 
         return e
 
 def verify_environment():
-    """Ensure immutable privileges and mandatory toolchain presence."""
+    """Ensure immutable privileges and mandatory toolchain presence. Auto-elevates."""
     if os.geteuid() != 0:
-        console.print("[bold red]ERROR: Phase 4 requires immutable root privileges (sudo).[/bold red]")
-        sys.exit(1)
-        
+        print("\n[INFO] Administrative privileges required. Elevating via sudo...")
+        try:
+            # Replace the current process with a sudo call, preserving exact binary and args
+            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+        except OSError as e:
+            print(f"\n[FATAL] Failed to elevate privileges dynamically: {e}")
+            sys.exit(1)
+            
     required_binaries = ["ip", "nmcli", "virsh"]
     missing = [bin for bin in required_binaries if not shutil.which(bin)]
     if missing:

@@ -14,13 +14,18 @@ from pathlib import Path
 from typing import List, Tuple
 
 # ==============================================================================
-# BOOTSTRAP: Strict Privilege & UI Enforcement
+# BOOTSTRAP: Strict Privilege & Auto-Elevation
 # ==============================================================================
 def require_root() -> None:
+    """Enforce eUID 0. Auto-elevates via sudo if executed as standard user."""
     if os.geteuid() != 0:
-        print("\n[FATAL] This daemon configuration script must be executed as root.")
-        print("        Run with: sudo ./kvm_stage_two.py\n")
-        sys.exit(1)
+        print("\n[INFO] Administrative privileges required. Elevating via sudo...")
+        try:
+            # Replace the current process with a sudo call, preserving exact binary and args
+            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+        except OSError as e:
+            print(f"\n[FATAL] Failed to elevate privileges dynamically: {e}")
+            sys.exit(1)
 
 require_root()
 
