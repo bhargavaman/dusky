@@ -449,10 +449,10 @@ except Exception:
 
 _package_is_current() {
     local pkg="$1"
-    local ver_no_epoch="$2"
+    local target_ver="$2"
     local found
     found=$(find "$OFFLINE_REPO_DIR" -maxdepth 1 \
-        -name "${pkg}-${ver_no_epoch}-*.pkg.tar.*" \
+        -name "${pkg}-${target_ver}-*.pkg.tar.*" \
         ! -name '*.sig' -type f 2>/dev/null | head -n 1)
     [[ -n "$found" ]]
 }
@@ -529,10 +529,8 @@ _build_aur_package() {
         log_err "'${pkg}' not found on AUR or in official repos. Skipping."
         return 1
     fi
-    
-    local ver_no_epoch="${aur_version##*:}"
 
-    if _package_is_current "$pkg" "$ver_no_epoch"; then
+    if _package_is_current "$pkg" "$aur_version"; then
         log_skip "'${pkg}-${aur_version}' already present in repo. Nothing to do."
         _LAST_PKG_SKIPPED=1
         return 0
@@ -613,7 +611,7 @@ _build_aur_package() {
     done
 
     if (( ${#new_pkg_files[@]} == 0 )); then
-        mapfile -t new_pkg_files < <(find "$OFFLINE_REPO_DIR" -maxdepth 1 -name "${pkg}-${ver_no_epoch}-*.pkg.tar.*" ! -name '*.sig' -type f 2>/dev/null)
+        mapfile -t new_pkg_files < <(find "$OFFLINE_REPO_DIR" -maxdepth 1 -name "${pkg}-${aur_version}-*.pkg.tar.*" ! -name '*.sig' -type f 2>/dev/null)
         if (( ${#new_pkg_files[@]} == 0 )); then return 1; fi
     fi
 
