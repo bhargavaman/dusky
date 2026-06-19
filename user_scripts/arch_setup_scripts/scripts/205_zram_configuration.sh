@@ -2,9 +2,9 @@
 # =============================================================================
 # Elite Arch Linux ZRAM Configurator
 # Target: Arch Linux Cutting-Edge (Kernel 7.0+, Bash 5.3+, systemd 260+)
-# Scope: Platinum Grade. Maximum Memory Efficiency via pure ZRAM & Tmpfs.
-# Updates: Integrated Kernel 7.0 Direct Writeback Pipeline (Pure zstd, 20-min flush)
-#          + Dynamic User Ownership for Tmpfs Mount point.
+# Scope: Platinum Grade. Maximum Memory Efficiency via pure ZRAM Swap.
+# Updates: Decoupled. Strictly handles ZSWAP annihilation and zram0 swap block.
+#          Integrated Kernel 7.0 Direct Writeback Pipeline (Pure zstd, 20-min flush)
 # =============================================================================
 
 set -euo pipefail
@@ -82,14 +82,13 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # --- Dependency Checks ---
-for cmd in systemctl systemd-escape findmnt grep sed; do
+for cmd in systemctl grep sed; do
     command -v "$cmd" >/dev/null 2>&1 || die "'$cmd' is required but missing."
 done
 
 readonly CMDLINE_FILE="/etc/kernel/cmdline"
 readonly CONFIG_DIR="/etc/systemd/zram-generator.conf.d"
 readonly CONFIG_FILE="${CONFIG_DIR}/99-elite-zram.conf"
-readonly MOUNT_POINT="/mnt/zram1"
 
 readonly ZRAM_SWAP_DEV="/dev/zram0"
 readonly ZRAM_SIZE_EXPR="ram"
@@ -98,16 +97,9 @@ readonly COMPRESSION_ALGORITHM="zstd"
 readonly GENERATOR_BIN="/usr/lib/systemd/system-generators/zram-generator"
 readonly SWAP_SETUP_UNIT="systemd-zram-setup@zram0.service"
 readonly SWAP_UNIT="dev-zram0.swap"
-readonly MOUNT_UNIT_NAME="$(systemd-escape --path --suffix=mount "$MOUNT_POINT")"
-readonly MOUNT_UNIT_PATH="/etc/systemd/system/${MOUNT_UNIT_NAME}"
 
 tmp_config="$(umask 077 && mktemp)"
-tmp_mount="$(umask 077 && mktemp)"
-trap 'rm -f "$tmp_config" "$tmp_mount"' EXIT
-
-mount_source_exact() {
-    findmnt -rn -o SOURCE --mountpoint "$MOUNT_POINT" 2>/dev/null || true
-}
+trap 'rm -f "$tmp_config"' EXIT
 
 unit_is_loaded() {
     [[ "$(systemctl show -p LoadState --value "$1" 2>/dev/null || true)" == "loaded" ]]
@@ -164,7 +156,7 @@ else
 fi
 
 # =============================================================================
-# --- 2. ZRAM & TMPFS CONFIGURATION ---
+# --- 2. ZRAM SWAP CONFIGURATION ---
 # =============================================================================
 
 if [[ ! -x "$GENERATOR_BIN" ]]; then
@@ -181,16 +173,7 @@ if grep -Eq '(^|[[:space:]])systemd\.zram=0([[:space:]]|$)' /proc/cmdline; then
     die "FATAL: Kernel cmdline explicitly disables zram device creation."
 fi
 
-# Determine the real user UID/GID to grant ownership of the mount point.
-# If invoked via sudo, it targets your normal user account instead of root.
-readonly TARGET_UID="${SUDO_UID:-0}"
-readonly TARGET_GID="${SUDO_GID:-0}"
-
 install -d -m 0755 -- "$CONFIG_DIR"
-# The -d flag natively creates the directory only if it doesn't already exist.
-# -o and -g securely map ownership of the base folder to your normal user account.
-install -d -m 0755 -o "$TARGET_UID" -g "$TARGET_GID" -- "$MOUNT_POINT"
-log_info "Directories prepared with user ownership mapping."
 
 cat > "$tmp_config" <<EOF
 # Managed by Elite Arch Linux ZRAM Configurator.
@@ -237,57 +220,20 @@ EOF
     log_success "ZRAM Writeback timer configured and enabled (Every 20 minutes)."
 fi
 
-cat > "$tmp_mount" <<EOF
-# Managed by Elite Arch Linux ZRAM Configurator
-# Scope: High-Performance Tmpfs back-end for Wayland/Scripts.
-[Unit]
-Description=High-Performance tmpfs (ZRAM-backed) for ${MOUNT_POINT}
-Before=local-fs.target
-ConditionPathExists=${MOUNT_POINT}
-
-[Mount]
-What=tmpfs
-Where=${MOUNT_POINT}
-Type=tmpfs
-# mode=0755,uid=,gid= sets the active mounted filesystem strictly to your ownership
-Options=rw,nosuid,nodev,relatime,size=100%,mode=0755,uid=${TARGET_UID},gid=${TARGET_GID}
-
-[Install]
-WantedBy=local-fs.target
-EOF
-
 install -Dm0644 "$tmp_config" "$CONFIG_FILE"
 log_success "ZRAM pool configuration written to ${CONFIG_FILE}"
-
-install -Dm0644 "$tmp_mount" "$MOUNT_UNIT_PATH"
-log_success "Tmpfs mount unit written to ${MOUNT_UNIT_PATH}"
 
 log_info "Reloading systemd daemon to ingest new architecture..."
 systemctl daemon-reload
 
 assert_unit_loaded "$SWAP_SETUP_UNIT"
 assert_unit_loaded "$SWAP_UNIT"
-assert_unit_loaded "$MOUNT_UNIT_NAME"
-
-systemctl enable "$MOUNT_UNIT_NAME" >/dev/null 2>&1 || true
-
-current_source="$(mount_source_exact)"
-if [[ $current_source == "/dev/zram1" || $current_source == "zram1" ]]; then
-    log_warn "$MOUNT_POINT is currently mounted via legacy ext2 ZRAM block."
-    log_warn "The new tmpfs architecture will seamlessly take over upon reboot."
-else
-    # Attempt live mount if it's purely unmounted right now
-    systemctl start "$MOUNT_UNIT_NAME" >/dev/null 2>&1 || true
-    if [[ "$(mount_source_exact)" == "tmpfs" ]]; then
-        log_success "Live memory: tmpfs successfully attached to ${MOUNT_POINT}."
-    fi
-fi
 
 if systemctl is-active --quiet "$SWAP_UNIT"; then
     log_info "$SWAP_UNIT is currently active."
 fi
 
-log_success "Platinum ZRAM (Pure ZSTD + Writeback) architecture installed safely."
+log_success "Platinum ZRAM (Pure ZSTD + Writeback) swap architecture installed safely."
 log_info "Reboot the system to apply the new memory topology natively."
 
 exit 0
