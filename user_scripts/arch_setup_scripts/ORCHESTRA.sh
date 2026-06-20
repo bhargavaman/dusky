@@ -122,7 +122,7 @@ INSTALL_SEQUENCE=(
 #    "U | 265_mouse_button_reverse.sh --right"
     "U | 280_dusk_clipboard_errands_delete.sh --delete"
     "S | 290_system_services.sh"
-#    "S | 295_initramfs_optimization.sh"
+#    "S | 295_initramfs_optimization.py"
     "U | 300_git_config.sh"
 #    "U | 305_new_github_repo_to_backup.sh"
 #    "U | 310_reconnect_and_push_new_changes_to_github.sh"
