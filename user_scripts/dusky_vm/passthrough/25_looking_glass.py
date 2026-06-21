@@ -9,6 +9,7 @@ Philosophy: Zero-Clutter Idempotency, Atomic Writes, Strict Cgroup Regex Parsing
 import os
 import sys
 import re
+import pwd
 import stat
 import shutil
 import tempfile
@@ -41,7 +42,8 @@ except ImportError:
     print("\n[FATAL] 'python-rich' is missing. Please run: sudo pacman -S python-rich")
     sys.exit(1)
 
-console = Console()
+# Force terminal characteristics for orchestrator tee compatibility 
+console = Console(force_terminal=True, force_interactive=True)
 
 # ==============================================================================
 # CORE UTILITIES
@@ -79,12 +81,56 @@ def atomic_write(target_path: Path, new_content: str) -> bool:
             tmp_path.unlink()
         bail(f"Atomic write failed on {target_path}: {e}")
 
-def run_cmd(cmd: list) -> None:
-    """Execute shell commands silently, raising on failure."""
+def run_cmd(cmd: list, check: bool = True) -> int:
+    """
+    Execute shell commands silently. 
+    Raises fatal error if check=True and command fails. Returns the exit code.
+    """
+    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if check and result.returncode != 0:
+        bail(f"Command execution failed: {' '.join(cmd)}\nExit Code: {result.returncode}")
+    return result.returncode
+
+# ==============================================================================
+# USER RESOLUTION & PACKAGE INSTALLATION
+# ==============================================================================
+def resolve_target_user() -> str:
+    """Forensically determine the real human user interacting with the system."""
+    user = os.environ.get("SUDO_USER") or os.environ.get("DOAS_USER")
+    
+    if not user or user == "root":
+        try:
+            user = os.getlogin()
+        except OSError:
+            pass # TTY might not be attached properly
+            
+    if not user or user == "root":
+        console.print("[yellow]⚠ Could not automatically determine standard user from environment.[/yellow]")
+        user = Prompt.ask("[bold cyan]Enter your non-root Arch username[/bold cyan]").strip()
+    
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        pwd.getpwnam(user)
+    except KeyError:
+        bail(f"The user '{user}' does not exist in the local passwd database.")
+        
+    return user
+
+def install_looking_glass_packages(user: str) -> None:
+    """Install required packages via AUR using the standard user."""
+    packages = ["looking-glass-module-dkms-git", "looking-glass-git", "freerdp", "dkms"]
+    console.print("\n[bold blue]==>[/bold blue] [bold]Synchronizing Looking Glass packages...[/bold]")
+    
+    if not shutil.which("paru"):
+        bail("'paru' not found in PATH. Cannot install AUR packages.")
+        
+    # Drop privileges to standard user to run paru; bypass pagers with --noconfirm
+    cmd = ["sudo", "-u", user, "paru", "-S", "--needed", "--noconfirm"] + packages
+    
+    try:
+        subprocess.run(cmd, check=True)
+        console.print("[bold green]  ✓ Looking Glass & DKMS packages staged successfully.[/bold green]")
     except subprocess.CalledProcessError as e:
-        bail(f"Command execution failed: {' '.join(cmd)}\nExit Code: {e.returncode}")
+        bail(f"Package installation failed with code {e.returncode}.")
 
 # ==============================================================================
 # DYNAMIC IVSHMEM CALCULATION
@@ -167,11 +213,12 @@ def enforce_device_integrity() -> None:
             dev_path.unlink()
     
     with console.status("[cyan]Injecting KVMFR into Ring 0...", spinner="dots"):
-        try:
-            run_cmd(["modprobe", "kvmfr"])
+        # We pass check=False here to bypass the strict gatekeeper check in run_cmd.
+        # This allows us to catch the missing module without assassinating the script.
+        if run_cmd(["modprobe", "kvmfr"], check=False) == 0:
             console.print("[bold green]  ✓ KVMFR char device dynamically loaded and secured.[/bold green]")
-        except Exception:
-            console.print("[bold yellow]  ⚠ KVMFR module not found. Assuming DKMS build is pending or requires a reboot.[/bold yellow]")
+        else:
+            console.print("[bold yellow]  ⚠ KVMFR module failed to load. (DKMS build might be pending or requires a reboot).[/bold yellow]")
 
 # ==============================================================================
 # LIBVIRT CGROUP INJECTION
@@ -238,6 +285,9 @@ def main() -> None:
     console.print(Panel("[bold green]Phase 5: KVMFR Host Configuration[/bold green]\nTarget: Arch Linux | Kernel 7.1.0+ | systemd 260", expand=False))
     
     try:
+        target_user = resolve_target_user()
+        install_looking_glass_packages(target_user)
+        
         mib_size, byte_size = calculate_kvmfr_size()
         configure_host_modules(mib_size)
         enforce_device_integrity()

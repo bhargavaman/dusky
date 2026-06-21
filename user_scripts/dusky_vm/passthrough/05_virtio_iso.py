@@ -63,7 +63,9 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.progress import Progress, DownloadColumn, TransferSpeedColumn, TextColumn, TimeRemainingColumn
 
-console = Console()
+# Force terminal and interactive capabilities so the progress bar renders 
+# correctly even when stdout is piped through 'tee' in the orchestrator.
+console = Console(force_terminal=True, force_interactive=True)
 
 # ==============================================================================
 # CORE LOGIC
@@ -105,7 +107,8 @@ def stage_packages() -> None:
     console.print("\n[bold blue]==>[/bold blue] [bold]Synchronizing official hypervisor packages...[/bold]")
     
     try:
-        subprocess.run(["pacman", "-S", "--needed"] + packages, check=True)
+        # Added --noconfirm to prevent interactive provider prompts from hanging the script
+        subprocess.run(["pacman", "-S", "--needed", "--noconfirm"] + packages, check=True)
         console.print("[bold green]  ✓ Core KVM packages staged.[/bold green]")
     except subprocess.CalledProcessError as e:
         bail(f"Pacman transaction failed with code {e.returncode}.")
@@ -119,7 +122,8 @@ def try_aur_virtio(user: str) -> bool:
     console.print(f"\n[bold blue]==>[/bold blue] [bold]Invoking AUR helper as '{user}' for virtio-win...[/bold]")
     
     # paru strictly blocks root execution. Drop privileges via sudo.
-    cmd = ["sudo", "-u", user, "paru", "-S", "--needed", "virtio-win"]
+    # Added --noconfirm to bypass the PKGBUILD review pager which breaks inside log pipes
+    cmd = ["sudo", "-u", user, "paru", "-S", "--needed", "--noconfirm", "virtio-win"]
     try:
         subprocess.run(cmd, check=True)
         console.print("[bold green]  ✓ AUR package 'virtio-win' staged.[/bold green]")
@@ -154,7 +158,8 @@ def download_iso_stream(url: str, dest: Path) -> None:
     req = urllib.request.Request(url, headers={'User-Agent': 'Arch-KVM-Deploy/1.0'})
     
     try:
-        with urllib.request.urlopen(req) as response:
+        # Added timeout to prevent socket hangs causing a silent stall
+        with urllib.request.urlopen(req, timeout=30) as response:
             total_size = int(response.headers.get("Content-Length", 0))
             
             with Progress(
