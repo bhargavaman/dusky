@@ -5,9 +5,35 @@
 -- unbinds keybinds and checks for conflicts. 
 
 -- -------------------------------------------------------------------------------------------------
--- HYPRLAND KEYBINDINGS
+-- window classes to not have global keybinds applied in
 -- -------------------------------------------------------------------------------------------------
 
+local function is_target_app_active()
+    local w = hl.get_active_window()
+    if not w then return false end
+    local class = w.class or ""
+    return class == "dusky_tui" or class == "wallpaper_selector.py" or class == "terminal_clipboard.sh"
+end
+
+local function cond_bind(key, default_dsp, flags)
+    hl.bind(key, function()
+        if is_target_app_active() then
+            hl.dispatch(hl.dsp.pass({ window = "activewindow" }))
+        else
+            if default_dsp then
+                hl.dispatch(default_dsp)
+            else
+                hl.dispatch(hl.dsp.pass({ window = "activewindow" }))
+            end
+        end
+    end, flags)
+end
+
+
+-- -------------------------------------------------------------------------------------------------
+-- HYPRLAND KEYBINDINGS
+-- -------------------------------------------------------------------------------------------------
+--
 -- terminal    = "foot"
 -- fileManager = "thunar"
 -- menu        = "rofi -show drun"
@@ -285,7 +311,7 @@ hl.bind(
     { description = "Reload Hyprland", locked = true }
 )
 
-hl.bind(
+cond_bind(
     "ALT + V",
     hl.dsp.exec_cmd([[gdbus call --session --dest org.dusky.quickpanal --object-path /org/dusky/quickpanal --method org.freedesktop.Application.Activate "{}"]]),
     { description = "Dusky QuickPanal" }
@@ -328,6 +354,7 @@ hl.bind(
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "rofi/shader_menu.sh"),
     { description = "Shader Menu" }
 )
+
 
 hl.bind(
     "SUPER + ALT + X",
@@ -471,7 +498,7 @@ hl.bind(
 
 
 -- --- Screen Recorder ---
-hl.bind(
+cond_bind(
     "ALT + R",
     hl.dsp.exec_cmd("pkill rofi; " ..dusky_scripts .. "dusky_recorder/dusky_recorder.sh"),
     { description = "Screen Recorder" }
@@ -1150,27 +1177,27 @@ hl.bind(
 )
 
 -- Custom Audio/Mic Switching Scripts
-hl.bind(
+cond_bind(
     "ALT + P",
     hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-mute"),
     { description = "Mute Audio", locked = true }
 )
 
 -- Mono Audio toggle
-hl.bind(
+cond_bind(
     "ALT + M",
     hl.dsp.exec_cmd(dusky_scripts .. "audio/mono_audio_pipewire.py"),
     { description = "Mono Audio Toggle", locked = true }
 )
 
 -- Audio/Mic Switching
-hl.bind(
+cond_bind(
     "ALT + O",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "audio/dusky_output.sh"),
     { description = "Switch Audio Output", locked = true }
 )
 
-hl.bind(
+cond_bind(
     "ALT + I",
     hl.dsp.exec_cmd("pkill rofi; " .. dusky_scripts .. "audio/dusky_input.sh"),
     { description = "Switch Mic Input", locked = true }
