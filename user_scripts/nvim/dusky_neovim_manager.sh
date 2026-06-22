@@ -78,7 +78,7 @@ check_dependencies() {
 # ==============================================================================
 
 print_help() {
-    clear
+    clear || true
     printf "${BOLD}====================================================${RESET}\n"
     printf "${BOLD}               Dusky Neovim Manager                 ${RESET}\n"
     printf "${BOLD}====================================================${RESET}\n\n"
@@ -373,7 +373,16 @@ prompt_reset_management() {
     
     select opt in "Backup before reset (Includes config)" "Wipe state directly (No Backup)" "Cancel"; do
         case "${REPLY}" in
-            1) backup_neovim_state; reset_neovim_state; state_handled=true; reset_status=0; break ;;
+            1) 
+                backup_neovim_state
+                if [[ -n "${CURRENT_BACKUP_PATH}" && -d "${CURRENT_BACKUP_PATH}/config" ]]; then
+                    cp -a "${CURRENT_BACKUP_PATH}/config" "${NVIM_PATHS[config]}"
+                fi
+                log_success "State reset successfully. Configuration preserved."
+                state_handled=true
+                reset_status=0
+                break 
+                ;;
             2) reset_neovim_state; state_handled=true; reset_status=0; break ;;
             3) 
                 log_info "Reset cancelled."
@@ -471,7 +480,7 @@ main() {
         
     else
         # INTERACTIVE FALLBACK (Classic Flow)
-        clear
+        clear || true
         printf "${BOLD}====================================================${RESET}\n"
         printf "${BOLD}               Dusky Neovim Manager                 ${RESET}\n"
         printf "${BOLD}====================================================${RESET}\n\n"
