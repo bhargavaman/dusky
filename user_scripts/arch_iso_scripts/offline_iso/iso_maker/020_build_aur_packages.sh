@@ -577,6 +577,7 @@ _build_aur_package() {
         PKGDEST="${temp_pkgdest}" BUILDDIR="${build_work_dir}" SRCDEST="${build_work_dir}/src" \
         timeout "${BUILD_TIMEOUT_SEC}" paru -B "$pkgbuild_dir" \
             --noconfirm \
+            --useask \
             --noprogressbar \
             --sudoloop \
             --nocheck \
