@@ -81,7 +81,6 @@ main() {
     log_info "Dispatching $action sound to $target_user via pw-play"
 
     systemd-run -M "${target_user}@.host" --user --quiet --collect \
-        --unit="usb_audio_${action}" \
         --description="USB Audio ${action}" \
         pw-play "$sound_file" 2>/dev/null || true
 
