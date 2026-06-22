@@ -16,8 +16,13 @@ if [[ $EUID -ne 0 ]]; then
     exec sudo bash "$0" "$@"
 fi
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SOURCE_SCRIPT="${SCRIPT_DIR}/usb_sound.sh"
+if [[ -z "${SUDO_USER:-}" ]]; then
+    log_error "Cannot determine original user. Run without sudo."
+    exit 1
+fi
+
+readonly USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+readonly SOURCE_SCRIPT="${USER_HOME}/user_scripts/external/usb_sound.sh"
 readonly TARGET_BIN="/usr/local/bin/usb_sound.sh"
 readonly UDEV_RULE_FILE="/etc/udev/rules.d/90-usb-sound.rules"
 

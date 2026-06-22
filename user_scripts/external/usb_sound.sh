@@ -5,9 +5,22 @@ set -euo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin"
 readonly LOG_TAG="usb-sound"
 
-# System sounds
-readonly SOUND_CONNECT="/usr/share/sounds/freedesktop/stereo/device-added.oga"
-readonly SOUND_DISCONNECT="/usr/share/sounds/freedesktop/stereo/device-removed.oga"
+# Define primary and fallback audio targets
+readonly SOUND_CONNECT_PRIMARY="/usr/share/sounds/freedesktop/stereo/device-added.oga"
+readonly SOUND_CONNECT_FALLBACK="/usr/share/sounds/freedesktop/stereo/dialog-information.oga"
+readonly SOUND_DISCONNECT_PRIMARY="/usr/share/sounds/freedesktop/stereo/device-removed.oga"
+readonly SOUND_DISCONNECT_FALLBACK="/usr/share/sounds/freedesktop/stereo/dialog-warning.oga"
+
+resolve_sound() {
+    local file
+    for file in "$@"; do
+        if [[ -f "$file" ]]; then
+            printf '%s' "$file"
+            return 0
+        fi
+    done
+    return 1
+}
 
 log_info()  { logger -t "$LOG_TAG" -- "$*"; }
 log_error() { logger -t "$LOG_TAG" -p user.err -- "ERROR: $*"; }
@@ -33,10 +46,16 @@ main() {
 
     case "$action" in
         connect)
-            sound_file="$SOUND_CONNECT"
+            sound_file=$(resolve_sound "$SOUND_CONNECT_PRIMARY" "$SOUND_CONNECT_FALLBACK") || {
+                log_error "No valid connection sound files found."
+                exit 1
+            }
             ;;
         disconnect)
-            sound_file="$SOUND_DISCONNECT"
+            sound_file=$(resolve_sound "$SOUND_DISCONNECT_PRIMARY" "$SOUND_DISCONNECT_FALLBACK") || {
+                log_error "No valid disconnection sound files found."
+                exit 1
+            }
             ;;
         -h|--help)
             echo "Usage: ${0##*/} <connect|disconnect>"
@@ -48,11 +67,6 @@ main() {
             exit 1
             ;;
     esac
-
-    if [[ ! -f "$sound_file" ]]; then
-        log_error "Sound file missing: $sound_file"
-        exit 1
-    fi
 
     if ! target_user=$(get_active_user); then
         log_info "No active user session found. Exiting quietly."
