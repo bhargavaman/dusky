@@ -675,16 +675,23 @@ enable_snapper_timers() {
 }
 
 deploy_custom_timer() {
-    info "Deploying custom scheduled snapshot creation timer..."
+    info "Deploying custom scheduled snapshot creation timer with gatekeeper..."
     local service_file="/etc/systemd/system/dusky_snapshot.service"
     local timer_file="/etc/systemd/system/dusky_snapshot.timer"
 
+    local tmp_service tmp_timer
+    tmp_service="$(mktemp)"
+    tmp_timer="$(mktemp)"
+    ACTIVE_TEMP_FILES+=("$tmp_service" "$tmp_timer")
+
+    # Construct the Service Unit
     # CRITICAL FIX 1: Snapper manual supports --csvout and --no-headers. We use this instead of `tail|tr` 
     # so the parser never breaks, even if the user changes their terminal language or UI spacing later.
     # CRITICAL FIX 2: Removed --no-dbus from the ExecStart. This service runs on the LIVE booted system,
     # where DBus is active. Snapper warns against bypassing DBus while the live daemon is running.
     # CRITICAL FIX 3: Ported official kernel capability sandboxing from the snapper-timeline.service.
-    cat << EOF > "$service_file"
+    # CRITICAL ADDITION: The 20-hour (72000 seconds) Gatekeeper ExecCondition.
+    cat << EOF > "$tmp_service"
 [Unit]
 Description=Create Automated Snapper Snapshots
 Documentation=man:snapper(8)
@@ -703,10 +710,12 @@ RestrictRealtime=true
 Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
+ExecCondition=/usr/bin/bash -c 'if [ -f /var/lib/dusky_snapshot_time ]; then elapsed=\$\$((\$\$(date +%%s) - \$\$(stat -c %%Y /var/lib/dusky_snapshot_time))); if [ \$\$elapsed -lt 72000 ]; then exit 1; fi; fi; exit 0'
 ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated timer snapshot" --cleanup-algorithm number; done'
+ExecStartPost=/usr/bin/touch /var/lib/dusky_snapshot_time
 EOF
 
-    cat << EOF > "$timer_file"
+    cat << EOF > "$tmp_timer"
 [Unit]
 Description=Trigger Automated Snapper Snapshots
 Documentation=man:snapper(8)

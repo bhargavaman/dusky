@@ -665,14 +665,9 @@ enable_snapper_timers() {
 }
 
 deploy_custom_timer() {
-    info "Deploying custom scheduled snapshot creation timer..."
+    info "Deploying custom scheduled snapshot creation timer with gatekeeper..."
     local service_file="/etc/systemd/system/dusky_snapshot.service"
     local timer_file="/etc/systemd/system/dusky_snapshot.timer"
-
-    # Clean up the old tracking file from the previous version of the script if it exists
-    if sudo test -f /var/lib/dusky_snapshot_time; then
-        sudo rm -f /var/lib/dusky_snapshot_time
-    fi
 
     local tmp_service tmp_timer
     tmp_service="$(mktemp)"
@@ -680,6 +675,7 @@ deploy_custom_timer() {
     ACTIVE_TEMP_FILES+=("$tmp_service" "$tmp_timer")
 
     # Construct the Service Unit
+    # CRITICAL ADDITION: The 20-hour (72000 seconds) Gatekeeper ExecCondition.
     cat << EOF > "$tmp_service"
 [Unit]
 Description=Create Automated Snapper Snapshots
@@ -699,7 +695,9 @@ RestrictRealtime=true
 Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
+ExecCondition=/usr/bin/bash -c 'if [ -f /var/lib/dusky_snapshot_time ]; then elapsed=\$\$((\$\$(date +%%s) - \$\$(stat -c %%Y /var/lib/dusky_snapshot_time))); if [ \$\$elapsed -lt 72000 ]; then exit 1; fi; fi; exit 0'
 ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated timer snapshot" --cleanup-algorithm number; done'
+ExecStartPost=/usr/bin/touch /var/lib/dusky_snapshot_time
 EOF
 
     # Construct the Timer Unit
