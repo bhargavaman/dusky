@@ -117,8 +117,8 @@ if ! command -v matugen &>/dev/null; then
 fi
 
 # Install vesktop-bin
-if pacman -Qi vesktop-bin &>/dev/null; then
-    log_success "vesktop-bin is already installed."
+if pacman -Qi vesktop-bin &>/dev/null || pacman -Qi vesktop &>/dev/null || pacman -Qi vesktop-git &>/dev/null; then
+    log_success "Vesktop is already installed."
 else
     log_info "Installing vesktop-bin via ${AUR_HELPER}..."
     "$AUR_HELPER" -S --needed --noconfirm vesktop-bin
