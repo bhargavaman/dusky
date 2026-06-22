@@ -640,7 +640,8 @@ update_matugen_toml() {
         local base="${BROWSER_DIRS[$browser_id]}"
         resolve_profiles "$base"
         for profile_path in "${RESOLVED_PROFILES[@]}"; do
-            hook_cmds+="    ln -nfs \"\$HOME/.config/matugen/generated/firefox_websites.css\" \"$profile_path/chrome/colors.css\" || :"$'\n'
+            local rel_profile_path="${profile_path/#$HOME/\$HOME}"
+            hook_cmds+="    ln -nfs \"\$HOME/.config/matugen/generated/firefox_websites.css\" \"$rel_profile_path/chrome/colors.css\" || :"$'\n'
         done
     done
 
