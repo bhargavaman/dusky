@@ -711,7 +711,7 @@ Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
 ExecCondition=/usr/bin/bash -c 'if [ -f /var/lib/dusky_snapshot_time ]; then elapsed=\$\$((\$\$(date +%%s) - \$\$(stat -c %%Y /var/lib/dusky_snapshot_time))); if [ \$\$elapsed -lt 72000 ]; then exit 1; fi; fi; exit 0'
-ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "Automated timer snapshot" --cleanup-algorithm number; done'
+ExecStart=/usr/bin/bash -c 'for cfg in \$(/usr/bin/snapper --csvout --no-headers list-configs | /usr/bin/cut -d, -f1); do /usr/bin/snapper -c "\$cfg" create --description "auto 8pm" --cleanup-algorithm number; done'
 ExecStartPost=/usr/bin/touch /var/lib/dusky_snapshot_time
 EOF
 
