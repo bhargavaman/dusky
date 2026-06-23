@@ -185,8 +185,8 @@ SCRIPT_SEARCH_DIRS = [
 UPDATE_SEQUENCE = [
     "U | backup_hyprlang_files.sh",
     "U | dusky_commands_before.sh",
-    "U | 005_hypr_custom_config_setup.sh",
-    "U | 005_hypr_custom_config_setup.sh --trackpad --autostart --force",
+    "U | 005_hypr_custom_config_setup.py",
+    "U | 005_hypr_custom_config_setup.py --trackpad --autostart --force",
     "U | 010_package_removal.sh --auto",
     "S | interactive | pacman_packages.sh",
     "U | interactive | paru_packages.sh",

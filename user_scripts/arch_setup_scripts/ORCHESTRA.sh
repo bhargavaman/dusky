@@ -53,7 +53,7 @@ INSTALL_SEQUENCE=(
 
 # ------ Setup SCRIPTS -------
 
-    "U | 005_hypr_custom_config_setup.sh --force"
+    "U | 005_hypr_custom_config_setup.py --force"
     "U | 006_animation_default.sh"
     "U | 010_package_removal.sh --auto"
     "U | 013_matugen_state_file_placment.py"

@@ -1702,7 +1702,7 @@ style = "destructive"
 button_text = "Reset All"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force"
 terminal = false
 
 [[pages.layout.items.layout]]
@@ -1721,7 +1721,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --default_apps"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --default_apps"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1734,7 +1734,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --monitors"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --monitors"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1747,7 +1747,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --appearance"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --appearance"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1760,7 +1760,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --workspace_rules"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --workspace_rules"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1773,7 +1773,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --keybinds"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --keybinds"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1786,7 +1786,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --input"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --input"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1799,7 +1799,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --trackpad"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --trackpad"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1812,7 +1812,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --window_rules"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --window_rules"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1825,7 +1825,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --autostart"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --autostart"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1838,7 +1838,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --environment_variables"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --environment_variables"
 terminal = false
 
 [[pages.layout.items.layout.items]]
@@ -1851,7 +1851,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force --plugins"
+command = "$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force --plugins"
 terminal = false
 
 [[pages.layout]]
@@ -3129,7 +3129,7 @@ style = "destructive"
 button_text = "Reset"
 [pages.layout.items.on_press]
 type = "exec"
-command = "\"$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.sh --force\""
+command = "\"$HOME/user_scripts/arch_setup_scripts/scripts/005_hypr_custom_config_setup.py --force\""
 terminal = false
 
 [[pages.layout.items]]
