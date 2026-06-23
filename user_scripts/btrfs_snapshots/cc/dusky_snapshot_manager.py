@@ -529,17 +529,23 @@ def apply_prepared_restores(plans: list[PreparedRestore]) -> None:
             plan.activated = True
             
         for plan in plans:
-            print(f"\033[1;38;5;81m[*] Permanently deleting previous system state for '{plan.spec.config}'...\033[0m")
+            is_active_mount = run_cmd(["mountpoint", "-q", "--", plan.spec.target_mnt], check=False).returncode == 0
+            
             deleted = False
-            for attempt in range(3):
-                del_res = run_cmd(["btrfs", "subvolume", "delete", str(plan.temp_delete_path)], check=False)
-                if del_res.returncode == 0:
-                    deleted = True
-                    break
-                time.sleep(1)
+            if not is_active_mount:
+                print(f"\033[1;38;5;81m[*] Permanently deleting previous system state for '{plan.spec.config}'...\033[0m")
+                for attempt in range(3):
+                    del_res = run_cmd(["btrfs", "subvolume", "delete", str(plan.temp_delete_path)], check=False)
+                    if del_res.returncode == 0:
+                        deleted = True
+                        break
+                    time.sleep(1)
+            else:
+                print(f"\033[1;38;5;81m[*] Deferring deletion of active system state for '{plan.spec.config}' to next boot...\033[0m")
 
             if not deleted:
-                print(f"\033[1;38;5;220m[!] Warning: Immediate deletion failed. Scheduling aggressive background cleanup on next boot...\033[0m", file=sys.stderr)
+                if not is_active_mount:
+                    print(f"\033[1;38;5;220m[!] Warning: Immediate deletion failed. Scheduling aggressive background cleanup on next boot...\033[0m", file=sys.stderr)
                 try:
                     uuid_res = run_cmd(["findmnt", "-n", "-e", "-o", "UUID", "-M", plan.spec.target_mnt], check=False)
                     uuid = uuid_res.stdout.strip()
@@ -556,7 +562,16 @@ def apply_prepared_restores(plans: list[PreparedRestore]) -> None:
 
                     subvol_name = plan.temp_delete_path.name
                     service_name = f"dusky-cleanup-{subvol_name}.service"
-                    service_path = Path("/etc/systemd/system") / service_name
+                    
+                    root_plan = next((p for p in plans if p.spec.target_mnt == "/"), None)
+                    if root_plan:
+                        systemd_dir = root_plan.target_path / "etc" / "systemd" / "system"
+                    else:
+                        systemd_dir = Path("/etc/systemd/system")
+                        
+                    service_path = systemd_dir / service_name
+                    service_path.parent.mkdir(parents=True, exist_ok=True)
+                    
                     service_content = f"""[Unit]
 Description=Dusky Btrfs Cleanup ({subvol_name})
 After=local-fs.target
@@ -571,8 +586,18 @@ ExecStartPost=/usr/bin/rm -f /etc/systemd/system/{service_name}
 WantedBy=multi-user.target
 """
                     service_path.write_text(service_content)
-                    run_cmd(["systemctl", "daemon-reload"])
-                    run_cmd(["systemctl", "enable", service_name])
+                    
+                    if root_plan:
+                        wants_dir = systemd_dir / "multi-user.target.wants"
+                        wants_dir.mkdir(parents=True, exist_ok=True)
+                        symlink_path = wants_dir / service_name
+                        if symlink_path.exists() or symlink_path.is_symlink():
+                            symlink_path.unlink()
+                        symlink_path.symlink_to(f"/etc/systemd/system/{service_name}")
+                    else:
+                        run_cmd(["systemctl", "daemon-reload"])
+                        run_cmd(["systemctl", "enable", service_name])
+                        
                     print(f"\033[1;38;5;114m[+] Scheduled one-shot systemd service '{service_name}' to eradicate subvolume on next boot.\033[0m")
                 except Exception as e:
                     print(f"\033[1;38;5;196m[!] Failed to schedule boot cleanup: {e}\n[!] Manual deletion required.\033[0m", file=sys.stderr)
