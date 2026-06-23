@@ -393,7 +393,22 @@ _init_isolated_db() {
     fi
 
     log_step "Syncing package databases into sandbox..."
-    _pacman_isolated -Sy || die "Failed to sync package databases into isolated sandbox."
+    local -i sync_retries=5
+    local -i sync_attempt=1
+    local -i sync_success=0
+
+    while (( sync_attempt <= sync_retries )); do
+        if _pacman_isolated -Sy; then
+            sync_success=1
+            break
+        else
+            log_warn "Sync interrupted (attempt ${sync_attempt}/${sync_retries}). Retrying in 3 seconds..."
+            sleep 3
+            (( sync_attempt++ )) || true
+        fi
+    done
+
+    (( sync_success == 1 )) || die "Failed to sync package databases into isolated sandbox."
 
     log_ok "Isolated sandbox ready."
 }
@@ -504,8 +519,29 @@ _download_official_deps() {
     local -i attempt
     for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
         if _pacman_isolated -Sw "${cache_args[@]}" -- "${official_deps[@]}"; then
-            log_ok "Runtime deps downloaded/verified for '${pkg}'."
-            return 0
+            local corrupt=0
+            local downloaded_pkg
+            for downloaded_pkg in "${OFFLINE_REPO_DIR}"/*.pkg.tar.*; do
+                [[ -f "$downloaded_pkg" ]] || continue
+                [[ "$downloaded_pkg" == *.sig || "$downloaded_pkg" == *.part ]] && continue
+
+                if [[ "$downloaded_pkg" == *.zst ]]; then
+                    zstd -t -q "$downloaded_pkg" </dev/null &>/dev/null || { sudo rm -f -- "$downloaded_pkg" "${downloaded_pkg}.sig"; corrupt=1; log_delete "Corrupt ZST removed: ${downloaded_pkg##*/}"; }
+                elif [[ "$downloaded_pkg" == *.xz ]]; then
+                    xz -t -q "$downloaded_pkg" </dev/null &>/dev/null || { sudo rm -f -- "$downloaded_pkg" "${downloaded_pkg}.sig"; corrupt=1; log_delete "Corrupt XZ removed: ${downloaded_pkg##*/}"; }
+                else
+                    bsdtar -tqf "$downloaded_pkg" </dev/null &>/dev/null || { sudo rm -f -- "$downloaded_pkg" "${downloaded_pkg}.sig"; corrupt=1; log_delete "Corrupt archive removed: ${downloaded_pkg##*/}"; }
+                fi
+            done
+
+            if (( corrupt == 1 )); then
+                log_warn "Corrupt packages were found and removed. Resuming download..."
+            else
+                log_ok "Runtime deps downloaded/verified for '${pkg}'."
+                return 0
+            fi
+        else
+            log_warn "Download interrupted or stalled (attempt ${attempt}/${MAX_ATTEMPTS})."
         fi
         sleep "${TIMEOUT_SEC}"
     done
@@ -706,10 +742,25 @@ Server = file://${OFFLINE_REPO_DIR}
 EOF
     fi
 
-    _pacman_isolated -Sy || {
+    local -i sync_retries=5
+    local -i sync_attempt=1
+    local -i sync_success=0
+
+    while (( sync_attempt <= sync_retries )); do
+        if _pacman_isolated -Sy; then
+            sync_success=1
+            break
+        else
+            log_warn "Sync interrupted (attempt ${sync_attempt}/${sync_retries}). Retrying in 3 seconds..."
+            sleep 3
+            (( sync_attempt++ )) || true
+        fi
+    done
+
+    if (( sync_success == 0 )); then
         log_warn "Failed to sync sandbox databases. Skipping orphan prune."
         return 1
-    }
+    fi
 
     local -a valid_targets=()
     local pkg
