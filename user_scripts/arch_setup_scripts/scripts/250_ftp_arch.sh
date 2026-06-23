@@ -122,8 +122,8 @@ xferlog_file=/var/log/vsftpd.log
 log_ftp_protocol=YES
 
 # --- Connection Handling ---
-listen=NO
-listen_ipv6=YES
+listen=YES
+listen_ipv6=NO
 pam_service_name=vsftpd
 
 # --- Passive Mode (Firewall Friendly) ---
