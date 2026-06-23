@@ -100,6 +100,15 @@ SCHEMA = {
             extended_help="**Dracut LUKS Definition**\n\nMaps a LUKS UUID to a mapped device name (e.g., `be1ac50d-...=cryptroot`)."
         ),
         ConfigItem(
+            label="LUKS Options",
+            key="rd.luks.options",
+            scope="DEFAULT",
+            type_="string",
+            default="unset",
+            group="Encryption",
+            extended_help="**Dracut LUKS Options**\n\nComma-separated list of options for LUKS (e.g., `discard` to enable TRIM)."
+        ),
+        ConfigItem(
             label="FSCK Mode",
             key="fsck.mode",
             scope="DEFAULT",
@@ -202,6 +211,46 @@ SCHEMA = {
             default=False,
             group="Kernel",
             extended_help="**Threaded Interrupts**\n\nForces hardware interrupt handlers to run inside kernel threads instead of hard IRQ context. This can significantly improve real-time responsiveness and audio latency at the cost of a slight increase in overall CPU overhead."
+        ),
+        ConfigItem(
+            label="Init on Alloc",
+            key="init_on_alloc",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "0", "1"],
+            default="unset",
+            group="Memory",
+            extended_help="**Zero Memory on Allocation**\n\n- `0`: Disables zeroing of memory upon allocation, improving performance and reducing overhead.\n- `1`: Enables zeroing of memory for security."
+        ),
+        ConfigItem(
+            label="Init on Free",
+            key="init_on_free",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "0", "1"],
+            default="unset",
+            group="Memory",
+            extended_help="**Zero Memory on Free**\n\n- `0`: Disables zeroing of memory upon free, improving performance.\n- `1`: Enables zeroing of memory for security."
+        ),
+        ConfigItem(
+            label="SLUB Debug",
+            key="slub_debug",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "0", "1"],
+            default="unset",
+            group="Kernel",
+            extended_help="**SLUB Allocator Debugging**\n\n- `0`: Explicitly disables all SLUB debugging. This saves kernel memory footprint and CPU overhead.\n- `1`: Enables SLUB debugging."
+        ),
+        ConfigItem(
+            label="Disable IPv6",
+            key="ipv6.disable",
+            scope="DEFAULT",
+            type_="cycle",
+            options=["unset", "0", "1"],
+            default="unset",
+            group="Network",
+            extended_help="**IPv6 Support**\n\n- `1`: Disables the entire IPv6 stack, which saves kernel heap memory and reduces the attack surface if IPv6 is not needed.\n- `0`: Leaves IPv6 enabled."
         ),
     ],
 
