@@ -101,7 +101,7 @@ def optimize_loader(loader_conf: Path) -> bool:
         console.print(f"[bold blue][INFO][/bold blue] Timeout is already 0 in loader.conf.")
     return False
 
-def optimize_entry(entry_file: Path, do_quiet: bool, do_zswap: bool, do_aspm: bool) -> bool:
+def optimize_entry(entry_file: Path, do_quiet: bool, do_zswap: bool, do_aspm: bool, do_ipv6: bool, do_mem_opt: bool) -> bool:
     """Safely tokenizes options, enforcing selected parameters."""
     content = entry_file.read_text(encoding='utf-8')
     lines = content.splitlines()
@@ -141,6 +141,12 @@ def optimize_entry(entry_file: Path, do_quiet: bool, do_zswap: bool, do_aspm: bo
                 enforce_param("zswap.enabled", "zswap.enabled=0")
             if do_aspm:
                 enforce_param("pcie_aspm", "pcie_aspm=force")
+            if do_ipv6:
+                enforce_param("ipv6.disable", "ipv6.disable=1")
+            if do_mem_opt:
+                enforce_param("slub_debug", "slub_debug=0")
+                enforce_param("init_on_alloc", "init_on_alloc=0")
+                enforce_param("init_on_free", "init_on_free=0")
 
             out_lines.append(f"{leading_space}options{spacing}{''.join(tokens)}")
         else:
@@ -187,6 +193,8 @@ def main():
         do_quiet = True
         do_zswap = True
         do_aspm = False # Strictly prevented in auto mode
+        do_ipv6 = True
+        do_mem_opt = True
     # Interactive logic
     else:
         do_timeout = Confirm.ask("[bold cyan][?][/bold cyan] Speed up boot? (Disable menu: [yellow]timeout 0[/yellow])")
@@ -194,13 +202,17 @@ def main():
         do_quiet = False
         do_zswap = False
         do_aspm = False
+        do_ipv6 = False
+        do_mem_opt = False
 
         if target_entries:
             do_quiet = Confirm.ask("[bold cyan][?][/bold cyan] Ensure graphical boot? (Inject [yellow]quiet[/yellow])")
             do_zswap = Confirm.ask("[bold cyan][?][/bold cyan] Disable Kernel Zswap to favor Zram? (Inject [yellow]zswap.enabled=0[/yellow])")
             do_aspm  = Confirm.ask("[bold magenta][!][/bold magenta] Force PCIe ASPM for battery? (Inject [yellow]pcie_aspm=force[/yellow])")
+            do_ipv6 = Confirm.ask("[bold cyan][?][/bold cyan] Disable IPv6 to save kernel memory? (Inject [yellow]ipv6.disable=1[/yellow])", default=True)
+            do_mem_opt = Confirm.ask("[bold cyan][?][/bold cyan] Apply core kernel memory optimizations? (Inject [yellow]slub_debug=0 init_on_alloc=0 init_on_free=0[/yellow])", default=True)
 
-    if not any([do_timeout, do_quiet, do_zswap, do_aspm]):
+    if not any([do_timeout, do_quiet, do_zswap, do_aspm, do_ipv6, do_mem_opt]):
         console.print("\n[bold blue][INFO][/bold blue] No changes requested. Exiting.")
         sys.exit(0)
 
@@ -209,9 +221,9 @@ def main():
     if do_timeout:
         optimize_loader(loader_conf)
 
-    if any([do_quiet, do_zswap, do_aspm]):
+    if any([do_quiet, do_zswap, do_aspm, do_ipv6, do_mem_opt]):
         for entry in target_entries:
-            optimize_entry(entry, do_quiet, do_zswap, do_aspm)
+            optimize_entry(entry, do_quiet, do_zswap, do_aspm, do_ipv6, do_mem_opt)
 
     console.print(f"\n[bold green]   Optimization complete. Changes active on next reboot.[/bold green]")
 

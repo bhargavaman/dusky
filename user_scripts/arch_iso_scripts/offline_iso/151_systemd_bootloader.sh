@@ -97,7 +97,7 @@ HOOKS_STR=$(env -i bash -c '
 ')
 
 # Base arguments inherited from original configurations
-CMDLINE_BASE="rw loglevel=3 zswap.enabled=0 rootfstype=${ROOT_FSTYPE}"
+CMDLINE_BASE="rw loglevel=3 zswap.enabled=0 rootfstype=${ROOT_FSTYPE} ipv6.disable=1 slub_debug=0 init_on_alloc=0 init_on_free=0"
 
 # BTRFS lacks a boot-time fsck. Skip it to prevent harmless but annoying warnings.
 if [[ "$ROOT_FSTYPE" == "btrfs" ]]; then
