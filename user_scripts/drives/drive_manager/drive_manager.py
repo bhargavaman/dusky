@@ -263,7 +263,7 @@ def get_crypt_mapper_name(outer_uuid: str) -> str | None:
             pass
     return None
 
-def get_keyring_password_with_timeout(service: str, name: str, timeout: int = 10) -> str | None:
+def get_keyring_password_with_timeout(service: str, name: str, timeout: int = 60) -> str | None:
     """Attempts keyring lookup with a daemon thread timeout to prevent hanging on exit."""
     result = [None]
     
@@ -282,6 +282,29 @@ def get_keyring_password_with_timeout(service: str, name: str, timeout: int = 10
         return None
 
     return result[0]
+
+def set_keyring_password_with_timeout(service: str, name: str, password: str, timeout: int = 60) -> bool:
+    """Saves password to keyring with a daemon thread timeout to prevent hanging on locked keyring."""
+    success_flag = [False]
+
+    def store():
+        try:
+            keyring.set_password(service, name, password)
+            success_flag[0] = True
+        except keyring.errors.KeyringLocked:
+            err("Keyring is locked. Password not saved to keyring.")
+        except Exception as e:
+            err(f"Unexpected keyring error: {e}")
+
+    t = threading.Thread(target=store, daemon=True)
+    t.start()
+    t.join(timeout)
+
+    if t.is_alive():
+        err("Keyring is locked or unreachable. Password not saved to keyring.")
+        return False
+
+    return success_flag[0]
 
 def run_sudo_cmd(cmd: list[str], stdin_data: str | None = None) -> bool:
     """Helper to run a sudo command securely. Dynamically applies capture_output to prevent hanging on sudo prompts."""
@@ -638,7 +661,7 @@ def do_unlock(drive: Drive) -> bool:
                 log("Could not auto-detect encryption type. Relying on cryptsetup defaults.")
 
             base_cmd = ["sudo", "cryptsetup", "open", "--allow-discards"] + crypto_type_args + [outer_dev_path, mapper_name]
-            pwd = get_keyring_password_with_timeout(KEYRING_SERVICE, drive.name, timeout=10)
+            pwd = get_keyring_password_with_timeout(KEYRING_SERVICE, drive.name, timeout=60)
             
             if pwd:
                 log("Password found in secure keyring. Supplying to cryptsetup...")
@@ -690,8 +713,8 @@ def do_unlock(drive: Drive) -> bool:
                     
                     if run_sudo_cmd(cmd, stdin_data=pwd_attempt):
                         clear_temp_attempts(drive.name)
-                        keyring.set_password(KEYRING_SERVICE, drive.name, pwd_attempt)
-                        success("Password saved to keyring for future use.")
+                        if set_keyring_password_with_timeout(KEYRING_SERVICE, drive.name, pwd_attempt):
+                            success("Password saved to keyring for future use.")
                         break
                     else:
                         err("Decryption failed. Please try again.")
@@ -893,10 +916,12 @@ def set_keyring_password(drives: dict[str, Drive], target: str) -> bool:
         err("Passwords do not match.")
         return False
 
-    keyring.set_password(KEYRING_SERVICE, target, pwd)
-    clear_temp_attempts(target)
-    success(f"Password stored securely in the system keyring for '{target}'.")
-    return True
+    if set_keyring_password_with_timeout(KEYRING_SERVICE, target, pwd):
+        success(f"Password stored securely in the system keyring for '{target}'.")
+        clear_temp_attempts(target)
+        return True
+        
+    return False
 
 # ------------------------------------------------------------------------------
 #  MAIN ENTRY
