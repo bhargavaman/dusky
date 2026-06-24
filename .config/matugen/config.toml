@@ -70,6 +70,7 @@ post_hook   = '''
 [templates.hyprland]
 input_path  = '~/.config/matugen/templates/hyprland-colors.lua'
 output_path = '~/.config/matugen/generated/hyprland-colors.lua'
+post_hook   = 'hyprctl reload config-only || :'
 
 [templates.hyprlock]
 input_path  = '~/.config/matugen/templates/hyprlock-colors.conf'
@@ -339,6 +340,5 @@ post_hook   = '''
 input_path  = '/dev/null'
 output_path = '/dev/null'
 post_hook   = '''
-  hyprctl reload config-only || :
   notify-send -a "matugen-theme" -i applications-graphics-symbolic "Theme Updated" "Theme applied successfully" || :
 '''
