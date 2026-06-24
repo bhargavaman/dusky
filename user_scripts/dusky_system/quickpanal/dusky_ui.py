@@ -497,7 +497,7 @@ scrolledwindow undershoot.bottom {
 button { transition: background-color 200ms ease, opacity 200ms ease, box-shadow 200ms ease; }
 
 .header-time { font-size: 38px; font-weight: 800; letter-spacing: -2px; color: @theme_fg_color; }
-.header-date { font-size: 12px; font-weight: 600; color: alpha(@theme_fg_color, 0.7); }
+.header-date { font-size: 12px; font-weight: 600; color: @theme_selected_bg_color; }
 
 box.weather-pill { padding: 4px 4px; }
 .weather-text { font-size: 12px; font-weight: 700; color: alpha(@theme_fg_color, 0.9); }
