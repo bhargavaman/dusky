@@ -104,6 +104,8 @@ CORE_SYSTEM_DEFS = {
     )
 }
 
+import concurrent.futures
+
 # --- HIGH SPEED DISCOVERY ROUTINE ---
 def _fetch_all_unit_files(scope: str) -> tuple[set, set, set]:
     """Returns (installed_services, enabled_services, installed_timers) in a single pass."""
@@ -144,16 +146,24 @@ def _fetch_active_services(scope: str) -> set:
     except Exception:
         return set()
 
-# 1. Fetch Master Lists (Single Pass per scope)
-installed_user_srv, enabled_user, timers_user = _fetch_all_unit_files("user")
-installed_sys_srv, enabled_sys, timers_sys = _fetch_all_unit_files("system")
+# 1. Fully Parallelized Subprocess Execution
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    f_user_all = executor.submit(_fetch_all_unit_files, "user")
+    f_sys_all = executor.submit(_fetch_all_unit_files, "system")
+    f_user_act = executor.submit(_fetch_active_services, "user")
+    f_sys_act = executor.submit(_fetch_active_services, "system")
+    
+    installed_user_srv, enabled_user, timers_user = f_user_all.result()
+    installed_sys_srv, enabled_sys, timers_sys = f_sys_all.result()
+    active_user_raw = f_user_act.result()
+    active_sys_raw = f_sys_act.result()
 
 installed_user = installed_user_srv | timers_user
 installed_sys = installed_sys_srv | timers_sys
 
-# 2. Fetch Active states (Intersecting with installed prevents weird transient UI artifacts)
-active_user = _fetch_active_services("user").intersection(installed_user_srv)
-active_sys = _fetch_active_services("system").intersection(installed_sys_srv)
+# 2. Compile Active States (Filtered against installed logic)
+active_user = active_user_raw.intersection(installed_user_srv)
+active_sys = active_sys_raw.intersection(installed_sys_srv)
 
 # Tracking sets to avoid putting core/timer services into the "All" tabs
 used_user = set()
