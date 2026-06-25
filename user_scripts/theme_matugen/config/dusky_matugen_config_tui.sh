@@ -425,11 +425,11 @@ write_value_to_file() {
                 s3 = strip_comment_prefix(c3)
 
                 if (is_comment(c1) && is_comment(c2) && is_comment(c3) &&
-                    s1 ~ /^-{3,}$/ &&
+                    s1 ~ /^[=-]{3,}$/ &&
                     s2 !~ /^[[:space:]]*$/ &&
                     s2 !~ /^[[:space:]]*\[/ &&
                     s2 !~ /=/ &&
-                    s3 ~ /^-{3,}$/) {
+                    s3 ~ /^[=-]{3,}$/) {
 
                     j = i + 4
                     while (j <= line_count && is_blank(lines[j])) {
