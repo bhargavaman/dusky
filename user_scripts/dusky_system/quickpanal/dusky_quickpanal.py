@@ -92,7 +92,7 @@ on_right = "~/user_scripts/hyprlock/lock.sh"
 
 [[toggles]]
 id = "blur"
-icon = "edit-opacity-symbolic"
+icon = "preferences-desktop-appearance-symbolic"
 label = "Visuals"
 tooltip = "Visuals\\nLMB: Toggle Blur/Shadow"
 on_left = "~/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh toggle"
@@ -464,7 +464,7 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         tg = self.dynamic_toggles.get("blur")
         if not tg: return
         if is_active: tg.update_state(icon="applications-graphics-symbolic", css_class="active", tooltip="Visuals: Blur & Shadow ON\nLMB: Toggle")
-        else: tg.update_state(icon="edit-opacity-symbolic", css_class="normal", tooltip="Visuals: Performance Mode\nLMB: Toggle")
+        else: tg.update_state(icon="preferences-desktop-appearance-symbolic", css_class="normal", tooltip="Visuals: Performance Mode\nLMB: Toggle")
 
     @staticmethod
     def _is_bt_rfkill_blocked() -> bool:

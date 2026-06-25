@@ -28,7 +28,7 @@ on_right = "~/user_scripts/hyprlock/lock.sh"
 
 [[toggles]]
 id = "blur"
-icon = "edit-opacity-symbolic"
+icon = "preferences-desktop-appearance-symbolic"
 label = "Visuals"
 tooltip = "Visuals\nLMB: Toggle Blur/Shadow"
 on_left = "~/user_scripts/hypr/hypr_blur_opacity_shadow_toggle.sh toggle"
