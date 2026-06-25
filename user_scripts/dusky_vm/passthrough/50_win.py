@@ -517,7 +517,7 @@ def main():
             print_warn(f"VM '{vm_name}' is currently {state}. Connection might fail.")
             
         print_info(f"Launching Looking Glass Client (escape key: {active_key})...")
-        subprocess.run(["looking-glass-client", "-m", active_key])
+        subprocess.run(["looking-glass-client", "-f", "/dev/shm/looking-glass", "-m", active_key])
 
     elif action in ("launch", "play"):
         if not shutil.which("looking-glass-client"):
@@ -546,10 +546,10 @@ def main():
             # time to complete its handshakes after SPICE wakes up
             time.sleep(1.0)
             print_success(f"Graphics server online. Launching Looking Glass Client (escape key: {active_key})...")
-            subprocess.run(["looking-glass-client", "-m", active_key])
+            subprocess.run(["looking-glass-client", "-f", "/dev/shm/looking-glass", "-m", active_key])
         else:
             print_err(f"Timed out waiting for graphics server. Launching fallback (escape key: {active_key})...")
-            subprocess.run(["looking-glass-client", "-m", active_key])
+            subprocess.run(["looking-glass-client", "-f", "/dev/shm/looking-glass", "-m", active_key])
 
     elif action in ("rdp", "connect"):
         rdp_script = Path(__file__).parent / "55_rdp.py"

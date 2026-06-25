@@ -373,7 +373,7 @@ def inject_kvmfr_into_xml(xml_str: str, byte_size: int) -> str:
     qemu_cmd = root.find(f"{{{qemu_ns}}}commandline")
     target_args = [
         ("-device", "{'driver':'ivshmem-plain','id':'shmem0','memdev':'looking-glass'}"),
-        ("-object", f"{{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/kvmfr0','size':{byte_size},'share':true}}")
+        ("-object", f"{{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/shm/looking-glass','size':{byte_size},'share':true}}")
     ]
     
     if qemu_cmd is None:
@@ -514,7 +514,7 @@ def main() -> None:
     <qemu:arg value="-device"/>
     <qemu:arg value="{{'driver':'ivshmem-plain','id':'shmem0','memdev':'looking-glass'}}"/>
     <qemu:arg value="-object"/>
-    <qemu:arg value="{{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/kvmfr0','size':{byte_size},'share':true}}"/>
+    <qemu:arg value="{{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/shm/looking-glass','size':{byte_size},'share':true}}"/>
   </qemu:commandline>"""
 
         console.print("\n[bold green]=== PHASE 5 COMPLETE ===[/bold green]")

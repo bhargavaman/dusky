@@ -151,7 +151,7 @@ def inject_kvmfr_payload(xml_str: str, kvmfr_mib: int) -> str:
     ET.SubElement(qemu_cmd, f"{{{qemu_ns}}}arg", value="-device")
     ET.SubElement(qemu_cmd, f"{{{qemu_ns}}}arg", value="{'driver':'ivshmem-plain','id':'shmem0','memdev':'looking-glass'}")
     ET.SubElement(qemu_cmd, f"{{{qemu_ns}}}arg", value="-object")
-    ET.SubElement(qemu_cmd, f"{{{qemu_ns}}}arg", value=f"{{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/kvmfr0','size':{kvmfr_bytes},'share':true}}")
+    ET.SubElement(qemu_cmd, f"{{{qemu_ns}}}arg", value=f"{{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/shm/looking-glass','size':{kvmfr_bytes},'share':true}}")
     
     root.append(qemu_cmd)
     console.print(f"[bold green]  ✓ KVMFR payload ({kvmfr_mib} MiB) injected successfully.[/bold green]")
