@@ -45,9 +45,9 @@ if (-not $pythonInstalled) {
         Exit 1
     }
     
-    Write-Host "[*] Running Python installation silently... (this will take a moment)" -ForegroundColor Cyan
+    Write-Host "[*] Running Python installation with progress bar... (this will take a moment)" -ForegroundColor Cyan
     # Install for all users and add python.exe to PATH
-    $installArgs = "/quiet InstallAllUsers=1 PrependPath=1 TargetDir=`"C:\Program Files\Python313`""
+    $installArgs = "/passive InstallAllUsers=1 PrependPath=1 TargetDir=`"C:\Program Files\Python313`""
     $process = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru
     
     if ($process.ExitCode -eq 0) {
