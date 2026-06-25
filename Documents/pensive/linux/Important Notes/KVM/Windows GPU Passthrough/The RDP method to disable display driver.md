@@ -43,10 +43,10 @@ This is the most critical step. We must disable the Emulated GPU ("Microsoft Bas
     
 2. Run this command from your Arch terminal:
     
-### Replace 192.168.122.29 with YOUR VM IP
-### Replace 'dusk' with YOUR Windows Username
+### Replace 192.168.122.9 with YOUR VM IP
+### Replace 'dusky' with YOUR Windows Username
 ```bash
-xfreerdp3 /v:192.168.122.29 /u:dusk /cert:ignore /dynamic-resolution
+xfreerdp3 /v:192.168.122.9 /u:dusky /cert:ignore /dynamic-resolution
 ```
 
 >[!tip] A new window will open with your vm's screen. 
