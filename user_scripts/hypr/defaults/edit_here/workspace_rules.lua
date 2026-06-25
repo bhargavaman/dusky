@@ -292,6 +292,8 @@ hl.config({
 
     -- §10f Binds — workspace navigation behaviour
     binds = {
+        -- allow pinned windows to go fullscreen
+        allow_pin_fullscreen              = true,
         -- toggle back on re-dispatch
         workspace_back_and_forth          = false,
         -- wrap around at ends
