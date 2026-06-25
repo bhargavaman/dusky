@@ -102,7 +102,7 @@ def load_state() -> dict:
     state = {
         "vm": "",
         "key": "KEY_RIGHTCTRL",
-        "rdp_user": "dusk",
+        "rdp_user": "",
         "rdp_ip": ""
     }
     if state_file.exists():
@@ -327,14 +327,45 @@ def resolve_vm_ip(vm_name: str) -> str:
 
 def resolve_rdp_user(specified_user: str = None) -> str:
     state = load_state()
-    cached_user = state.get("rdp_user", "dusk")
+    cached_user = state.get("rdp_user", "")
     
+    # If the cached user is the old hardcoded default "dusk", clear it to force prompt/redetection
+    if cached_user == "dusk":
+        cached_user = ""
+        
     if specified_user:
         state["rdp_user"] = specified_user
         save_state(state)
         return specified_user
         
-    print_info(f"Using RDP username: [bold cyan]{cached_user}[/bold cyan]")
+    if not cached_user:
+        # Determine fallback based on active host user
+        host_user = "Administrator"
+        try:
+            import pwd
+            uid = os.getuid()
+            if os.geteuid() == 0:
+                sudo_uid = os.environ.get("SUDO_UID")
+                if sudo_uid:
+                    uid = int(sudo_uid)
+            host_user = pwd.getpwuid(uid).pw_name
+        except Exception:
+            pass
+            
+        if host_user == "root":
+            sudo_user = os.environ.get("SUDO_USER")
+            if sudo_user:
+                host_user = sudo_user
+                
+        try:
+            cached_user = Prompt.ask("[bold cyan]Enter Windows RDP username[/bold cyan]", default=host_user).strip()
+            state["rdp_user"] = cached_user
+            save_state(state)
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(1)
+    else:
+        print_info(f"Using RDP username: [bold cyan]{cached_user}[/bold cyan]")
+        
     return cached_user
 
 
@@ -478,14 +509,14 @@ def print_rdp_troubleshooting(ip_addr: str):
 
 
 def print_help():
-    print(f"""{C_BOLD}Windows KVM RDP Rescue Bridge{C_RESET}
+    console.print(f"""[bold]Windows KVM RDP Rescue Bridge[/bold]
 
 Usage:
   {sys.argv[0]} [options]
 
 Options:
   --vm <name>       Override target VM
-  -u, --user <name> Specify Windows RDP username (default: cached/dusk)
+  -u, --user <name> Specify Windows RDP username (default: cached/host user)
   -p, --pass <word> Specify Windows RDP password
   --help, -h        Show this help manual
 """)
