@@ -137,7 +137,16 @@ def get_runtime_dir() -> Path:
         except FileExistsError:
             pass
 
-    st = path.stat()
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        err(f"Security hazard: Directory {path} disappeared during creation.")
+        sys.exit(1)
+
+    if path.is_symlink():
+        err(f"Security hazard: Directory {path} is a symlink. Possible hijack attempt.")
+        sys.exit(1)
+
     if st.st_uid != uid or (st.st_mode & 0o077) != 0:
         err(f"Security hazard: Directory {path} is improperly permissioned or hijacked.")
         sys.exit(1)
@@ -333,25 +342,37 @@ def is_process_alive(pid: str) -> bool:
 
 def resolve_busy_processes(mountpoint: Path) -> bool:
     """Finds processes keeping the drive busy parsing lsof directly (sudo bypasses hidepid natively)."""
-    res = subprocess.run(["sudo", "lsof", "+f", "--", str(mountpoint)], capture_output=True, text=True)
+    res = subprocess.run(["sudo", "lsof", "-F", "pcu", "+f", "--", str(mountpoint)], capture_output=True, text=True)
     if res.returncode != 0 or not res.stdout.strip():
         return False
 
-    lines = res.stdout.strip().split("\n")
-    if len(lines) <= 1:
-        return False
-
     processes = []
-    for line in lines[1:]:
-        parts = line.split()
-        if len(parts) >= 3:
-            pid = parts[1]
-            if not any(p["pid"] == pid for p in processes):
-                processes.append({
-                    "cmd": parts[0],
-                    "pid": pid,
-                    "user": parts[2]
-                })
+    current_p = {}
+    for line in res.stdout.strip().split("\n"):
+        if not line:
+            continue
+        prefix = line[0]
+        val = line[1:]
+        if prefix == 'p':
+            if current_p and 'pid' in current_p:
+                processes.append(current_p)
+            current_p = {'pid': val, 'cmd': 'Unknown', 'user': 'Unknown'}
+        elif prefix == 'c' and current_p:
+            current_p['cmd'] = val
+        elif prefix == 'u' and current_p:
+            current_p['user'] = val
+
+    if current_p and 'pid' in current_p:
+        processes.append(current_p)
+
+    unique_processes = []
+    seen_pids = set()
+    for p in processes:
+        if p['pid'] not in seen_pids:
+            seen_pids.add(p['pid'])
+            unique_processes.append(p)
+
+    processes = unique_processes
 
     if not processes:
         return False
@@ -709,6 +730,15 @@ def do_unlock(drive: Drive) -> bool:
                     if not pwd_attempt:
                         continue
                         
+                    # Fix: Use rstrip('\r\n') instead of strip() to preserve intentional spaces in passphrases
+                    pwd_attempt = pwd_attempt.rstrip('\r\n')
+                        
+                    try:
+                        subprocess.run(["sudo", "-n", "-v"], check=True, capture_output=True)
+                    except subprocess.CalledProcessError:
+                        log("Sudo credential expired during prompt. Refreshing...")
+                        prime_sudo()
+                        
                     cmd = base_cmd + ["--tries", "1", "--key-file", "-"]
                     
                     if run_sudo_cmd(cmd, stdin_data=pwd_attempt):
@@ -782,7 +812,7 @@ def do_unlock(drive: Drive) -> bool:
                 start_new_session=True
             )
         return True
-    elif drive.fstype and "ntfs3" in drive.fstype.lower():
+    elif "ntfs3" in fstype_to_check:
         log("Mount with ntfs3 failed. Retrying with ntfs type...")
         mount_args = ["--mkdir", "-t", "ntfs"]
         if options:
@@ -841,6 +871,10 @@ def do_lock(drive: Drive) -> bool:
         
         if physical_present:
             mapper_name = get_crypt_mapper_name(drive.outer_uuid)
+            if not mapper_name:
+                deterministic_name = f"luks-{drive.outer_uuid}"
+                if Path(f"/dev/mapper/{deterministic_name}").exists():
+                    mapper_name = deterministic_name
         else:
             deterministic_name = f"luks-{drive.outer_uuid}"
             if Path(f"/dev/mapper/{deterministic_name}").exists():
