@@ -80,7 +80,7 @@ id = "wifi"
 icon = "network-wireless-symbolic"
 label = "Wi-Fi"
 tooltip = "Wi-Fi\\nLMB: Network Manager"
-on_left = "kitty --class tui_dusky_network.py ~/user_scripts/network_manager/tui_dusky_network.py"
+on_left = "foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/network_manager/tui_dusky_network.py"
 
 [[toggles]]
 id = "idle"
