@@ -308,12 +308,44 @@ def get_all_vms() -> list[Tuple[str, str]]:
         return []
 
 def inject_kvmfr_into_xml(xml_str: str, byte_size: int) -> str:
-    """Safely and programmatically injects Looking Glass KVMFR configuration into VM XML."""
+    """Safely and programmatically injects Looking Glass KVMFR configuration and optimizes CPU topology into VM XML."""
     qemu_ns = "http://libvirt.org/schemas/domain/qemu/1.0"
     ET.register_namespace('qemu', qemu_ns)
     root = ET.fromstring(xml_str)
     
-    # 1. Nullify memballoon to guarantee zero DMA latency
+    # 1. Optimize CPU topology to resolve hyperthreading warning & socket limits
+    vcpu_elem = root.find('vcpu')
+    vcpu_count = 1
+    if vcpu_elem is not None and vcpu_elem.text:
+        try:
+            vcpu_count = int(vcpu_elem.text.strip())
+        except ValueError:
+            pass
+            
+    if vcpu_count % 2 == 0:
+        sockets = 1
+        cores = vcpu_count // 2
+        threads = 2
+    else:
+        sockets = 1
+        cores = vcpu_count
+        threads = 1
+        
+    cpu_elem = root.find('cpu')
+    if cpu_elem is None:
+        cpu_elem = ET.SubElement(root, 'cpu', mode='host-passthrough', check='none', migratable='on')
+        
+    topology = cpu_elem.find('topology')
+    if topology is None:
+        topology = ET.SubElement(cpu_elem, 'topology')
+        
+    topology.set('sockets', str(sockets))
+    topology.set('dies', '1')
+    topology.set('cores', str(cores))
+    topology.set('threads', str(threads))
+    console.print(f"[bold green]  ✓ CPU Topology optimized: {sockets} socket(s), {cores} core(s), {threads} thread(s) (matches {vcpu_count} vCPUs).[/bold green]")
+    
+    # 2. Nullify memballoon to guarantee zero DMA latency
     devices = root.find('devices')
     if devices is not None:
         balloon = devices.find('memballoon')
@@ -324,7 +356,7 @@ def inject_kvmfr_into_xml(xml_str: str, byte_size: int) -> str:
             balloon = ET.SubElement(devices, 'memballoon', model='none')
             console.print("[bold green]  ✓ Latency-inducing memballoon nullified (created none).[/bold green]")
 
-    # 2. Add or update <qemu:commandline>
+    # 3. Add or update <qemu:commandline>
     qemu_cmd = root.find(f"{{{qemu_ns}}}commandline")
     target_args = [
         ("-device", "{'driver':'ivshmem-plain','id':'shmem0','memdev':'looking-glass'}"),
@@ -377,7 +409,7 @@ def configure_vm_xml(vm_name: str, byte_size: int) -> bool:
     console.print(f"\n[bold blue]==>[/bold blue] [bold]Configuring VM '{vm_name}' XML...[/bold]")
     try:
         res = subprocess.run(
-            ["virsh", "-c", "qemu:///system", "dumpxml", vm_name],
+            ["virsh", "-c", "qemu:///system", "dumpxml", "--inactive", vm_name],
             capture_output=True, text=True, check=True
         )
         xml_old = res.stdout

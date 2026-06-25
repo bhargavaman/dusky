@@ -100,25 +100,32 @@ def print_err(msg: str):
     print(f"{C_RED}[ERROR]{C_RESET} {msg}")
 
 
-def load_cached_vm() -> str:
-    """Loads the cached VM name from the state file."""
+def load_state() -> dict:
+    """Loads the state dictionary from the state file."""
     state_file, _, _ = get_state_file_info()
+    state = {"vm": "", "key": "KEY_F6"}  # Default escape key is KEY_F6
     if state_file.exists():
         try:
-            name = state_file.read_text(encoding="utf-8").strip()
-            if name:
-                return name
+            content = state_file.read_text(encoding="utf-8").strip()
+            if content:
+                if content.startswith("{") and content.endswith("}"):
+                    data = json.loads(content)
+                    if isinstance(data, dict):
+                        state.update(data)
+                else:
+                    # Backward compatibility for old raw-text VM name
+                    state["vm"] = content
         except Exception:
             pass
-    return ""
+    return state
 
 
-def save_cached_vm(vm_name: str):
-    """Saves the VM name to the state file."""
+def save_state(state: dict):
+    """Saves the state dictionary to the state file."""
     try:
         state_file, uid, gid = get_state_file_info()
         safe_mkdir_and_chown(state_file.parent, uid, gid)
-        state_file.write_text(vm_name, encoding="utf-8")
+        state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
         if os.geteuid() == 0:
             try:
                 os.chown(state_file, uid, gid)
@@ -128,14 +135,62 @@ def save_cached_vm(vm_name: str):
         print_warn(f"Failed to write state file: {e}")
 
 
+def load_cached_vm() -> str:
+    """Loads the cached VM name from the state file."""
+    state = load_state()
+    return state.get("vm", "")
+
+
+def save_cached_vm(vm_name: str):
+    """Saves the VM name to the state file."""
+    state = load_state()
+    state["vm"] = vm_name
+    save_state(state)
+
+
+def load_cached_key() -> str:
+    """Loads the cached escape key from the state file."""
+    state = load_state()
+    return state.get("key", "KEY_F6")
+
+
+def save_cached_key(key: str):
+    """Saves the escape key to the state file."""
+    state = load_state()
+    state["key"] = key
+    save_state(state)
+
+
 def clear_cached_vm():
-    """Deletes the state file to clear the cached VM."""
+    """Clears the cached VM but preserves other settings like key."""
     try:
-        state_file, _, _ = get_state_file_info()
-        if state_file.exists():
-            state_file.unlink()
+        state = load_state()
+        state["vm"] = ""
+        save_state(state)
     except Exception as e:
-        print_warn(f"Failed to clear state file: {e}")
+        print_warn(f"Failed to clear VM state: {e}")
+
+
+def normalize_key(key: str) -> str:
+    """Normalizes key names (e.g. f6 -> KEY_F6, rightctrl -> KEY_RIGHTCTRL)."""
+    k = key.strip().upper()
+    if not k.startswith("KEY_"):
+        # Special common aliases
+        if k in ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"):
+            k = f"KEY_{k}"
+        elif k in ("RIGHTCTRL", "RCTRL", "RIGHT_CTRL"):
+            k = "KEY_RIGHTCTRL"
+        elif k in ("LEFTCTRL", "LCTRL", "LEFT_CTRL"):
+            k = "KEY_LEFTCTRL"
+        elif k in ("RIGHTALT", "RALT", "RIGHT_ALT"):
+            k = "KEY_RIGHTALT"
+        elif k in ("LEFTALT", "LALT", "LEFT_ALT"):
+            k = "KEY_LEFTALT"
+        elif k in ("SCROLLLOCK", "SCROLL_LOCK"):
+            k = "KEY_SCROLLLOCK"
+        else:
+            k = f"KEY_{k}"
+    return k
 
 
 def get_all_vms() -> list[tuple[str, str]]:
