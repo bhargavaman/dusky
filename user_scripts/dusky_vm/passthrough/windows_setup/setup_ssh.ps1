@@ -18,16 +18,23 @@ Write-Host "   Dusky Windows SSH Auto-Setup Utility   " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # 2. Check and Install OpenSSH Server Capability
-Write-Host "`n[1/5] Checking OpenSSH Server installation status..." -ForegroundColor Yellow
+Write-Host "`n[1/6] Checking OpenSSH Server installation status..." -ForegroundColor Yellow
 $sshService = Get-WindowsCapability -Online -Name OpenSSH.Server*
 
 if ($sshService.State -ne "Installed") {
-    Write-Host "OpenSSH Server is not installed. Installing capability (requires internet)..." -ForegroundColor Cyan
+    Write-Host "OpenSSH Server is not installed. Installing via DISM (shows progress)..." -ForegroundColor Cyan
     try {
-        Add-WindowsCapability -Online -Name $sshService.Name -ErrorAction Stop
+        $dismResult = & dism /online /add-capability /capabilityname:OpenSSH.Server~~~~0.0.1.0 /quiet 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "DISM quiet install failed (code $LASTEXITCODE), retrying without /quiet..." -ForegroundColor Yellow
+            $dismResult = & dism /online /add-capability /capabilityname:OpenSSH.Server~~~~0.0.1.0 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "DISM returned exit code $LASTEXITCODE"
+            }
+        }
         Write-Host "[OK] OpenSSH Server installed successfully." -ForegroundColor Green
     } catch {
-        Write-Error "Failed to install OpenSSH Server capability: $_"
+        Write-Error "Failed to install OpenSSH Server: $_"
         Exit 1
     }
 } else {
@@ -35,7 +42,7 @@ if ($sshService.State -ne "Installed") {
 }
 
 # 3. Configure and Start SSHD Service
-Write-Host "`n[2/5] Configuring SSH service startup..." -ForegroundColor Yellow
+Write-Host "`n[2/6] Configuring SSH service startup..." -ForegroundColor Yellow
 try {
     # Set SSH service to Automatic
     Set-Service -Name sshd -StartupType Automatic -ErrorAction Stop
@@ -50,7 +57,7 @@ try {
 }
 
 # 4. Enforce Firewall Rule
-Write-Host "`n[3/5] Checking firewall rules for port 22..." -ForegroundColor Yellow
+Write-Host "`n[3/6] Checking firewall rules for port 22..." -ForegroundColor Yellow
 $ruleName = "OpenSSH-Server-In-TCP"
 $rule = Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
 
@@ -71,31 +78,75 @@ if ($rule) {
     }
 }
 
-# 5. Optimize Configuration (Permit Empty Passwords & Set Default Shell)
-Write-Host "`n[4/5] Tuning SSH configurations..." -ForegroundColor Yellow
+# 5. Set Password for Current User
+Write-Host "`n[4/6] Setting password for user '$env:USERNAME'..." -ForegroundColor Yellow
+$securePassword = Read-Host "Enter a password for user '$env:USERNAME' (used for SSH login)" -AsSecureString
+$confirmPassword = Read-Host "Confirm password" -AsSecureString
+
+# Convert secure strings to plain text for comparison
+$BSTR1 = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+$BSTR2 = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($confirmPassword)
+$plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR1)
+$plainConfirm = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR2)
+[System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR1)
+[System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR2)
+
+if ($plainPassword -ne $plainConfirm) {
+    Write-Error "Passwords do not match. Exiting."
+    Exit 1
+}
+
+if ($plainPassword.Length -eq 0) {
+    Write-Error "Password cannot be empty. Exiting."
+    Exit 1
+}
+
+try {
+    Set-LocalUser -Name $env:USERNAME -Password $securePassword -ErrorAction Stop
+    Write-Host "[OK] Password set for user '$env:USERNAME'." -ForegroundColor Green
+} catch {
+    Write-Error "Failed to set password: $_"
+    Exit 1
+}
+
+# 6. Configure sshd_config
+Write-Host "`n[5/6] Tuning SSH configurations..." -ForegroundColor Yellow
 $sshdConfigPath = "C:\ProgramData\ssh\sshd_config"
 
 if (Test-Path $sshdConfigPath) {
-    Write-Host "Configuring blank password allowance (PermitEmptyPasswords yes)..." -ForegroundColor Cyan
+    Write-Host "Ensuring PasswordAuthentication and PubkeyAuthentication are enabled..." -ForegroundColor Cyan
     $configContent = Get-Content $sshdConfigPath
-    
-    # Replace PermitEmptyPasswords configurations to allow blank/empty password access
+
+    # Ensure PermitEmptyPasswords is no (safe default)
     if ($configContent -match "^#?PermitEmptyPasswords\s+") {
-        $configContent = $configContent -replace "^#?PermitEmptyPasswords\s+\w+", "PermitEmptyPasswords yes"
+        $configContent = $configContent -replace "^#?PermitEmptyPasswords\s+\w+", "PermitEmptyPasswords no"
     } else {
-        $configContent += "`nPermitEmptyPasswords yes"
+        $configContent += "`nPermitEmptyPasswords no"
     }
-    
+
+    # Ensure PasswordAuthentication is yes
+    if ($configContent -match "^#?PasswordAuthentication\s+") {
+        $configContent = $configContent -replace "^#?PasswordAuthentication\s+\w+", "PasswordAuthentication yes"
+    } else {
+        $configContent += "`nPasswordAuthentication yes"
+    }
+
+    # Ensure PubkeyAuthentication is yes
+    if ($configContent -match "^#?PubkeyAuthentication\s+") {
+        $configContent = $configContent -replace "^#?PubkeyAuthentication\s+\w+", "PubkeyAuthentication yes"
+    } else {
+        $configContent += "`nPubkeyAuthentication yes"
+    }
+
     # Save the updated configuration
     $configContent | Set-Content $sshdConfigPath -Force
-    Write-Host "[OK] sshd_config successfully tuned for VM remote diagnostics." -ForegroundColor Green
+    Write-Host "[OK] sshd_config tuned for secure password and key-based auth." -ForegroundColor Green
 } else {
     Write-Warning "sshd_config not found at $sshdConfigPath. Skipping configuration tuning."
 }
 
 Write-Host "Setting PowerShell as the default SSH shell..." -ForegroundColor Cyan
 try {
-    # Set Default Shell to PowerShell
     $sshKeyPath = "HKLM:\SOFTWARE\OpenSSH"
     if (-not (Test-Path $sshKeyPath)) {
         New-Item -Path "HKLM:\SOFTWARE" -Name "OpenSSH" -Force | Out-Null
@@ -106,8 +157,35 @@ try {
     Write-Warning "Failed to set default SSH shell: $_"
 }
 
-# 6. Restart SSHD to Apply Settings
-Write-Host "`n[5/5] Restarting SSH service to apply configurations..." -ForegroundColor Yellow
+# 7. Deploy authorized_keys for admin users
+Write-Host "`n[6/6] Setting up authorized_keys for SSH public key authentication..." -ForegroundColor Yellow
+$authKeysPath = "C:\ProgramData\ssh\administrators_authorized_keys"
+$pubKey = Read-Host "Paste your host machine's SSH public key (e.g. from ~/.ssh/id_rsa.pub) or leave blank to skip"
+
+if ($pubKey.Trim().Length -gt 0) {
+    try {
+        # Ensure the ssh directory exists
+        $sshDir = "C:\ProgramData\ssh"
+        if (-not (Test-Path $sshDir)) {
+            New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+        }
+
+        # Write the public key
+        $pubKey.Trim() | Set-Content $authKeysPath -Force
+
+        # Set proper ACLs: only SYSTEM and Administrators get read access
+        icacls $authKeysPath /inheritance:r /grant "SYSTEM:(R)" /grant "BUILTIN\Administrators:(R)" | Out-Null
+
+        Write-Host "[OK] Public key deployed to $authKeysPath with locked-down ACLs." -ForegroundColor Green
+    } catch {
+        Write-Error "Failed to deploy authorized_keys: $_"
+    }
+} else {
+    Write-Host "[SKIP] No public key provided. You can manually add keys to $authKeysPath later." -ForegroundColor Yellow
+}
+
+# 8. Restart SSHD to Apply Settings
+Write-Host "`nRestarting SSH service to apply configurations..." -ForegroundColor Yellow
 try {
     Restart-Service sshd -ErrorAction Stop
     Write-Host "[OK] SSH service restarted successfully." -ForegroundColor Green
@@ -116,7 +194,7 @@ try {
     Exit 1
 }
 
-# 7. Summary & Diagnostics
+# 9. Summary & Diagnostics
 $ipAddresses = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" }).IPAddress
 Write-Host "`n==========================================" -ForegroundColor Green
 Write-Host "   SSH SETUP COMPLETED SUCCESSFULLY" -ForegroundColor Green
