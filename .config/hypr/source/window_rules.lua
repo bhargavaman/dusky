@@ -1579,9 +1579,8 @@ hl.window_rule({
     float = true,
     pin = true,
 
-    -- 2. Set Size FIRST (approx 360p)
-    -- We set this first so the 'move' command knows how wide the window is.
-    size = {248, 140},
+    -- 2. Preserve native aspect ratio during resizing
+    keep_aspect_ratio = true,
 
     -- 3. Move to Bottom-Right
     -- standard syntax: (screen_width - window_width - margin)
