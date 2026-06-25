@@ -1412,12 +1412,30 @@ class DuskyTUI(App):
 
             match item.type_:
                 case "bool":
-                    is_trigger = item.options and isinstance(item.options, list) and len(item.options) > 0 and str(item.options[0]).lower() == "trigger"
+                    _opt0 = str(item.options[0]) if (item.options and isinstance(item.options, list) and len(item.options) > 0) else ""
+                    _opt0_lower = _opt0.lower()
+                    
+                    is_trigger = False
+                    _btn_label = ""
+                    
+                    if _opt0_lower.startswith("trigger:"):
+                        is_trigger = True
+                        _btn_label = f" {_opt0[8:]} "
+                    elif _opt0_lower.startswith("copy:"):
+                        is_trigger = True
+                        _btn_label = f" {_opt0[5:]} "
+                    elif _opt0_lower == "trigger":
+                        is_trigger = True
+                        _btn_label = " Apply "
+                    elif _opt0_lower == "copy":
+                        is_trigger = True
+                        _btn_label = " Copy "
+
                     if is_trigger:
                         if not exists:
-                            txt.append(" Apply ", style=f"{self.theme_colors['muted']} italic")
+                            txt.append(_btn_label, style=f"{self.theme_colors['muted']} italic")
                         else:
-                            txt.append(" Apply ", style=f"bold {self.theme_colors['bg']} on {self.theme_colors['accent']}" if item.value else f"bold {self.theme_colors['accent']}")
+                            txt.append(_btn_label, style=f"bold {self.theme_colors['bg']} on {self.theme_colors['accent']}" if item.value else f"bold {self.theme_colors['accent']}")
                     elif not exists:
                         txt.append(f" {'◉ ON' if item.value else '◯ OFF'} ", style=f"{self.theme_colors['muted']} italic")
                     elif item.value:
@@ -2225,6 +2243,15 @@ class DuskyTUI(App):
                 ekey = self._get_item_engine_info(item)
                 self.last_target_mtimes[ekey] = Path(engine.target_path).expanduser().resolve().stat().st_mtime
             except OSError: pass
+            
+            # For trigger bools, auto-revert the state so the highlight doesn't stick
+            _opt0_lower = str(item.options[0]).lower() if item.options and isinstance(item.options, list) and len(item.options) > 0 else ""
+            if item.type_ == "bool" and (_opt0_lower in ("trigger", "copy") or _opt0_lower.startswith("trigger:") or _opt0_lower.startswith("copy:")):
+                def reset_trigger():
+                    item.value = old_val
+                    self._refresh_single_ui(tab_idx, item_idx, item)
+                self.set_timer(0.15, reset_trigger)
+                
             self.notify_status(f"Updated {item.label}")
         elif msg == "AUTH_REQUIRED" or "AUTH_REQUIRED" in msg:
             async def on_pwd(pwd: str | None) -> None:
@@ -2771,7 +2798,8 @@ class DuskyTUI(App):
         if item.is_parent and (prefix_len <= click_x <= prefix_len + 9):
             instant_action = True
             
-        is_trigger_bool = item.type_ == "bool" and item.options and str(item.options[0]).lower() == "trigger"
+        _opt0_lower = str(item.options[0]).lower() if item.options and isinstance(item.options, list) and len(item.options) > 0 else ""
+        is_trigger_bool = item.type_ == "bool" and (_opt0_lower in ("trigger", "copy") or _opt0_lower.startswith("trigger:") or _opt0_lower.startswith("copy:"))
         if (item.type_ in ("preset", "action") or is_trigger_bool) and click_x >= 44:
             instant_action = True
             

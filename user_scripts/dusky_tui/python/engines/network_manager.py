@@ -106,6 +106,11 @@ class NetworkManagerEngine(BaseEngine):
         state["status_action/disconnect"] = "false"
         state["status_action/restart_nm"] = "false"
         state["status_action/rescan"] = "false"
+        state["clipboard/status_ssid"] = "false"
+        state["clipboard/status_ip"] = "false"
+        state["clipboard/status_gateway"] = "false"
+        state["clipboard/status_dns"] = "false"
+        state["clipboard/status_device"] = "false"
 
         # Include ALL current dynamic items so watch_target_file doesn't
         # reset exists_in_target=False on items it can't find in state
@@ -167,6 +172,10 @@ class NetworkManagerEngine(BaseEngine):
         # ---- Status tab actions ----
         if target_scope == "status_action":
             return self._handle_status_action(target_key)
+
+        # ---- Clipboard copy (Connection Info items) ----
+        if target_scope == "clipboard":
+            return self._handle_clipboard(target_key)
 
         return True, "OK", ""
 
@@ -317,6 +326,42 @@ class NetworkManagerEngine(BaseEngine):
             return True, "Rescan triggered.", ""
 
         return True, "OK", ""
+
+    def _handle_clipboard(self, key: str) -> tuple[bool, str, str]:
+        """Copies the value portion of a Connection Info label to clipboard."""
+        if not self.app:
+            return False, "App not ready.", ""
+
+        # Find the item and extract value from its label (text after the colon)
+        for item in self.app.schema.get(3, []):
+            if item.key == key and item.scope == "clipboard":
+                label = item.label
+                if ":" in label:
+                    value = label.split(":", 1)[1].strip()
+                else:
+                    value = label.strip()
+
+                if not value or value == "N/A" or value == "None":
+                    return False, "Nothing to copy.", ""
+
+                try:
+                    subprocess.run(
+                        ["wl-copy", value],
+                        stdin=subprocess.DEVNULL, capture_output=True, timeout=3
+                    )
+                    return True, f"Copied: {value}", ""
+                except FileNotFoundError:
+                    # Fallback to xclip if wl-copy not available
+                    try:
+                        subprocess.run(
+                            ["xclip", "-selection", "clipboard"],
+                            input=value.encode(), capture_output=True, timeout=3
+                        )
+                        return True, f"Copied: {value}", ""
+                    except FileNotFoundError:
+                        return False, "No clipboard tool found (wl-copy/xclip).", ""
+
+        return False, "Item not found.", ""
 
     # =========================================================================
     #  BACKGROUND POLLING WORKER

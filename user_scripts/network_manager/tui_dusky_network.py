@@ -151,41 +151,46 @@ SCHEMA[3].extend([
     ConfigItem(
         label="Connected WiFi: None",
         key="status_ssid",
-        scope="status",
-        type_="action",
-        default=":",
+        scope="clipboard",
+        type_="bool",
+        default=False,
+        options=["copy"],
         group="Connection Info"
     ),
     ConfigItem(
         label="IP Address:     N/A",
         key="status_ip",
-        scope="status",
-        type_="action",
-        default=":",
+        scope="clipboard",
+        type_="bool",
+        default=False,
+        options=["copy"],
         group="Connection Info"
     ),
     ConfigItem(
         label="Gateway:        N/A",
         key="status_gateway",
-        scope="status",
-        type_="action",
-        default=":",
+        scope="clipboard",
+        type_="bool",
+        default=False,
+        options=["copy"],
         group="Connection Info"
     ),
     ConfigItem(
         label="DNS Server:     N/A",
         key="status_dns",
-        scope="status",
-        type_="action",
-        default=":",
+        scope="clipboard",
+        type_="bool",
+        default=False,
+        options=["copy"],
         group="Connection Info"
     ),
     ConfigItem(
         label="WiFi Device:    N/A",
         key="status_device",
-        scope="status",
-        type_="action",
-        default=":",
+        scope="clipboard",
+        type_="bool",
+        default=False,
+        options=["copy"],
         group="Connection Info"
     ),
     ConfigItem(
