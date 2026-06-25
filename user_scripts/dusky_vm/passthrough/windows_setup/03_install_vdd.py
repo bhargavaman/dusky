@@ -20,6 +20,13 @@ def elevate_privileges():
         )
         sys.exit(0)
 
+def safe_input(prompt="", default=""):
+    try:
+        return input(prompt)
+    except EOFError:
+        print("  - Standard input not available. Using default.")
+        return default
+
 def main():
     elevate_privileges()
     
@@ -44,13 +51,16 @@ def main():
     driver_path = ""
     if detected_path:
         print(f"\n[+] Auto-detected VDD files at: {detected_path}")
-        choice = input("Use this path? (Y/n): ").strip().lower()
+        choice = safe_input("Use this path? (Y/n): ", "y").strip().lower()
         if choice != 'n':
             driver_path = detected_path
             
     while not driver_path:
         print(f"\n[-] Please enter the folder path containing 'MttVDD.inf' and 'mttvdd.cat':")
-        input_path = input("Path: ").strip()
+        input_path = safe_input("Path: ", "").strip()
+        if not input_path:
+            print("[FATAL] Standard input not available and path not provided. Exiting.")
+            sys.exit(1)
         # Clean quotes if user dragged and dropped
         input_path = input_path.replace('"', '').replace("'", "")
         
@@ -65,7 +75,7 @@ def main():
     
     if not os.path.exists(cat_file) or not os.path.exists(dll_file):
         print(f"[FATAL] Missing mttvdd.cat or MttVDD.dll in: {driver_path}")
-        input("\nPress Enter to exit...")
+        safe_input("\nPress Enter to exit...", "")
         sys.exit(1)
         
     # 2. Stage files locally
@@ -107,12 +117,12 @@ def main():
             capture_output=True, text=True, check=True
         )
         if "Success" in res.stdout:
-            print("  ✓ Driver certificate successfully trusted.")
+            print("  [OK] Driver certificate successfully trusted.")
         else:
-            print("  ⚠ Could not trust certificate. Driver install might fail.")
+            print("  [WARNING] Could not trust certificate. Driver install might fail.")
     except Exception as e:
-        print(f"  ✖ Failed to import certificate: {e}")
-        input("\nPress Enter to exit...")
+        print(f"  [ERROR] Failed to import certificate: {e}")
+        safe_input("\nPress Enter to exit...", "")
         sys.exit(1)
         
     # 4. Register and Install Driver via pnputil
@@ -122,11 +132,11 @@ def main():
             ["pnputil", "/add-driver", inf_file, "/install"],
             capture_output=True, text=True, check=True
         )
-        print("  ✓ Driver registered and installed successfully.")
+        print("  [OK] Driver registered and installed successfully.")
         print(res.stdout.strip())
     except Exception as e:
-        print(f"  ✖ Failed to register driver: {e}")
-        input("\nPress Enter to exit...")
+        print(f"  [ERROR] Failed to register driver: {e}")
+        safe_input("\nPress Enter to exit...", "")
         sys.exit(1)
         
     # 5. Restart Looking Glass Service
@@ -150,7 +160,7 @@ def main():
             capture_output=True, text=True, check=True
         )
         if "Restarted" in res.stdout:
-            print("  ✓ Looking Glass host service restarted successfully.")
+            print("  [OK] Looking Glass host service restarted successfully.")
         else:
             print("  - Looking Glass host service is not installed on this system.")
     except Exception:
@@ -187,7 +197,7 @@ def main():
         print(f"Error querying status: {e}")
         
     print("=" * 50)
-    input("\nPress Enter to exit...")
+    safe_input("\nPress Enter to exit...", "")
 
 if __name__ == "__main__":
     main()

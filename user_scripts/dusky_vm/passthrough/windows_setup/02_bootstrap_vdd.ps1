@@ -17,10 +17,18 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "      Python 3 & VDD Setup Bootstrapper           " -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
-# 2. Check for Python 3
-$pythonCheck = Get-Command python -ErrorAction SilentlyContinue
+# 2. Check for Python 3 (run it to verify it's not a fake Microsoft Store app alias)
+$pythonInstalled = $false
+try {
+    $out = & python --version 2>&1
+    if ($LASTEXITCODE -eq 0 -and $out -like "*Python*") {
+        $pythonInstalled = $true
+    }
+} catch {
+    $pythonInstalled = $false
+}
 
-if (-not $pythonCheck) {
+if (-not $pythonInstalled) {
     Write-Host "`n[!] Python 3 not found on this system." -ForegroundColor Yellow
     Write-Host "[*] Downloading the latest Python 3.13 installer from python.org..." -ForegroundColor Cyan
     
