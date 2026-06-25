@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ASUS TUF KVM RDP Rescue Bridge
+Dusky Windows KVM RDP Rescue Bridge
 Author: Antigravity Pair Programmer
 Scope: Automatic IP resolution and FreeRDP v3 connection logic.
 Philosophy: Zero-config RDP connection utilizing libvirt MAC-to-DHCP lease maps.
@@ -15,29 +15,32 @@ import subprocess
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-# ANSI Terminal Colors
-C_BLUE = "\033[34m"
-C_GREEN = "\033[32m"
-C_YELLOW = "\033[33m"
-C_RED = "\033[31m"
-C_BOLD = "\033[1m"
-C_RESET = "\033[0m"
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+except ImportError:
+    print("\n[FATAL] 'python-rich' is missing. Please run: sudo pacman -S python-rich")
+    sys.exit(1)
+
+# Force terminal characteristics for orchestrator tee compatibility 
+console = Console(force_terminal=True, force_interactive=True)
 
 
 def print_info(msg: str):
-    print(f"{C_BLUE}[RDP]{C_RESET} {msg}")
+    console.print(f"[bold blue][RDP][/bold blue] {msg}")
 
 
 def print_success(msg: str):
-    print(f"{C_GREEN}[SUCCESS]{C_RESET} {msg}")
+    console.print(f"[bold green][SUCCESS][/bold green] {msg}")
 
 
 def print_warn(msg: str):
-    print(f"{C_YELLOW}[WARN]{C_RESET} {msg}")
+    console.print(f"[bold yellow][WARN][/bold yellow] {msg}")
 
 
 def print_err(msg: str):
-    print(f"{C_RED}[ERROR]{C_RESET} {msg}")
+    console.print(f"[bold red][ERROR][/bold red] {msg}")
 
 
 def get_caller_identity():
@@ -193,25 +196,25 @@ def resolve_vm(specified_vm: str = None) -> str:
         save_state(state)
         return vm_name
 
-    print(f"\n{C_BOLD}Select a Virtual Machine to connect via RDP:{C_RESET}")
+    console.print(f"\n[bold cyan]Select a Virtual Machine to connect via RDP:[/bold cyan]")
     for idx, (name, vm_state) in enumerate(vms):
-        print(f"  [{idx + 1}] {name} ({vm_state})")
-    print(f"  [{len(vms) + 1}] Cancel")
+        console.print(f"  [[bold green]{idx + 1}[/bold green]] {name} [dim]({vm_state})[/dim]")
+    
+    cancel_opt = str(len(vms) + 1)
+    console.print(f"  [[bold green]{cancel_opt}[/bold green]] Cancel")
 
-    while True:
-        try:
-            choice = input(f"Choice (1-{len(vms) + 1}): ").strip()
-            val = int(choice)
-            if val == len(vms) + 1:
-                sys.exit(0)
-            if 1 <= val <= len(vms):
-                vm_name = vms[val - 1][0]
-                state["vm"] = vm_name
-                save_state(state)
-                return vm_name
-        except (ValueError, KeyboardInterrupt, EOFError):
-            if isinstance(sys.exc_info()[0], KeyboardInterrupt):
-                sys.exit(1)
+    choices = [str(i) for i in range(1, len(vms) + 2)]
+    try:
+        choice = Prompt.ask("\nChoice", choices=choices, default="1")
+        val = int(choice)
+        if val == len(vms) + 1:
+            sys.exit(0)
+        vm_name = vms[val - 1][0]
+        state["vm"] = vm_name
+        save_state(state)
+        return vm_name
+    except (KeyboardInterrupt, EOFError):
+        sys.exit(1)
 
 
 def get_vm_mac_addresses(vm_name: str) -> list[str]:
@@ -299,27 +302,23 @@ def resolve_vm_ip(vm_name: str) -> str:
     cached_ip = state.get("rdp_ip", "")
     
     if ip:
-        print_success(f"Successfully resolved VM IP: {C_BOLD}{ip}{C_RESET}")
+        print_success(f"Successfully resolved VM IP: [bold cyan]{ip}[/bold cyan]")
         state["rdp_ip"] = ip
         save_state(state)
         return ip
         
     if cached_ip:
-        print_warn(f"Could not automatically resolve IP. Falling back to cached IP: {C_BOLD}{cached_ip}{C_RESET}")
+        print_warn(f"Could not automatically resolve IP. Falling back to cached IP: [bold cyan]{cached_ip}[/bold cyan]")
         try:
-            choice = input("Press Enter to use cached IP, or type a new IP address: ").strip()
-            if choice:
-                ip = choice
-            else:
-                ip = cached_ip
+            choice = Prompt.ask("Enter IP address to use", default=cached_ip).strip()
+            ip = choice
         except (KeyboardInterrupt, EOFError):
             sys.exit(1)
     else:
-        while not ip:
-            try:
-                ip = input("Could not automatically resolve IP. Enter Windows VM IP address: ").strip()
-            except (KeyboardInterrupt, EOFError):
-                sys.exit(1)
+        try:
+            ip = Prompt.ask("Could not automatically resolve IP. Enter Windows VM IP").strip()
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(1)
                 
     state["rdp_ip"] = ip
     save_state(state)
@@ -335,7 +334,7 @@ def resolve_rdp_user(specified_user: str = None) -> str:
         save_state(state)
         return specified_user
         
-    print_info(f"Using RDP username: {C_BOLD}{cached_user}{C_RESET}")
+    print_info(f"Using RDP username: [bold cyan]{cached_user}[/bold cyan]")
     return cached_user
 
 
@@ -358,6 +357,35 @@ def run_virsh_cmd(cmd_args: list) -> bool:
             return True
         except subprocess.CalledProcessError:
             return False
+
+
+def print_rdp_troubleshooting(ip_addr: str):
+    trouble_text = (
+        f"The RDP connection to [bold cyan]{ip_addr}[/bold cyan] failed.\n\n"
+        "[bold yellow]Please check the following configurations inside your Windows VM:[/bold yellow]\n\n"
+        "  [bold green]1. Enable Remote Desktop[/bold green]\n"
+        "     Settings > System > Remote Desktop > Toggle ON.\n\n"
+        "  [bold green]2. Set Network Profile to Private[/bold green]\n"
+        "     Settings > Network & Internet > Properties > Select 'Private'.\n"
+        "     (Windows Firewall blocks incoming RDP on 'Public' profiles).\n\n"
+        "  [bold green]3. Check Custom ISO Restrictions[/bold green]\n"
+        "     If you are using a custom Win10 ISO with RDP stripped out, this method\n"
+        "     will not work. (Try a standard Win11 VM instead).\n\n"
+        "  [bold green]4. Blank Passwords Limit[/bold green]\n"
+        "     If you have no password, open [bold cyan]secpol.msc[/bold cyan] and navigate to:\n"
+        "     Local Policies > Security Options > Disable:\n"
+        "     'Accounts: Limit local account use of blank passwords to console logon only'.\n\n"
+        "  [bold green]5. Firewall Access[/bold green]\n"
+        "     Ensure Windows Defender Firewall allows 'Remote Desktop' (TCP port 3389)."
+    )
+    console.print("\n")
+    console.print(Panel(
+        trouble_text,
+        title="[bold red]RDP CONNECTION TROUBLESHOOTING[/bold red]",
+        title_align="center",
+        border_style="red"
+    ))
+    console.print("\n")
 
 
 def print_help():
@@ -418,7 +446,7 @@ def main():
     
     vm_state = get_vm_state(vm_name)
     if vm_state != "running":
-        print_warn(f"VM '{vm_name}' is currently {vm_state}.")
+        print_warn(f"VM '{vm_name}' is currently [bold red]{vm_state}[/bold red].")
         try:
             action_verb = "start"
             if vm_state == "paused":
@@ -426,8 +454,8 @@ def main():
             elif vm_state == "pmsuspended":
                 action_verb = "dompmwakeup"
                 
-            choice = input(f"Do you want to {action_verb} the VM? [y/N]: ").strip().lower()
-            if choice in ("y", "yes"):
+            choice = Prompt.ask(f"Do you want to {action_verb} the VM?", choices=["y", "n"], default="y").strip().lower()
+            if choice == "y":
                 success = False
                 if vm_state == "paused":
                     print_info(f"Resuming paused VM '{vm_name}'...")
@@ -465,9 +493,11 @@ def main():
     if password:
         cmd.append(f"/p:{password}")
 
-    print_info(f"Connecting to {C_BOLD}{username}@{ip_addr}{C_RESET} via FreeRDP v3...")
+    print_info(f"Connecting to [bold cyan]{username}@{ip_addr}[/bold cyan] via FreeRDP v3...")
     try:
-        subprocess.run(cmd)
+        res = subprocess.run(cmd)
+        if res.returncode != 0:
+            print_rdp_troubleshooting(ip_addr)
     except KeyboardInterrupt:
         print_info("\nRDP session terminated by operator.")
 

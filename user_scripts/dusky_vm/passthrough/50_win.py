@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ASUS TUF KVM & Looking Glass Manager
+Dusky Windows KVM & Looking Glass Manager
 Author: Antigravity Pair Programmer
 Scope: Automated VM start/stop/kill/reboot/view/launch pipelines.
 Philosophy: Zero hardcoding, dynamic VM selector, self-learning default cache, elite socket-level sync.
@@ -15,6 +15,17 @@ import shutil
 import subprocess
 from pathlib import Path
 import xml.etree.ElementTree as ET
+
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+    from rich.table import Table
+except ImportError:
+    print("\n[FATAL] 'python-rich' is missing. Please run: sudo pacman -S python-rich")
+    sys.exit(1)
+
+console = Console(force_terminal=True, force_interactive=True)
 
 def get_caller_identity():
     """
@@ -75,29 +86,29 @@ def safe_mkdir_and_chown(path: Path, uid: int, gid: int):
                 print_warn(f"Failed to chown directory {p}: {e}")
 
 
-# ANSI Terminal Colors
-C_BLUE = "\033[34m"
-C_GREEN = "\033[32m"
-C_YELLOW = "\033[33m"
-C_RED = "\033[31m"
-C_BOLD = "\033[1m"
-C_RESET = "\033[0m"
+# ANSI Terminal Colors (Mapped to Rich Tags for Drop-in Compatibility)
+C_BLUE = ""
+C_GREEN = ""
+C_YELLOW = ""
+C_RED = ""
+C_BOLD = "[bold]"
+C_RESET = "[/bold]"
 
 
 def print_info(msg: str):
-    print(f"{C_BLUE}[WIN]{C_RESET} {msg}")
+    console.print(f"[bold blue][WIN][/bold blue] {msg}")
 
 
 def print_success(msg: str):
-    print(f"{C_GREEN}[SUCCESS]{C_RESET} {msg}")
+    console.print(f"[bold green][SUCCESS][/bold green] {msg}")
 
 
 def print_warn(msg: str):
-    print(f"{C_YELLOW}[WARN]{C_RESET} {msg}")
+    console.print(f"[bold yellow][WARN][/bold yellow] {msg}")
 
 
 def print_err(msg: str):
-    print(f"{C_RED}[ERROR]{C_RESET} {msg}")
+    console.print(f"[bold red][ERROR][/bold red] {msg}")
 
 
 def load_state() -> dict:
@@ -286,28 +297,29 @@ def resolve_vm(specified_vm: str = None) -> str:
         return vm_name
 
     # 4. Handle multiple VMs (Prompt user)
-    print(f"\n{C_BOLD}Select a Virtual Machine to manage:{C_RESET}")
+    console.print(f"\n[bold cyan]Select a Virtual Machine to manage:[/bold cyan]")
     for idx, (name, state) in enumerate(vms):
-        print(f"  [{idx + 1}] {name} ({state})")
-    print(f"  [{len(vms) + 1}] Cancel")
+        console.print(f"  [[bold green]{idx + 1}[/bold green]] {name} [dim]({state})[/dim]")
+    
+    cancel_opt = str(len(vms) + 1)
+    console.print(f"  [[bold green]{cancel_opt}[/bold green]] Cancel")
 
+    choices = [str(i) for i in range(1, len(vms) + 2)]
     while True:
         try:
-            choice = input(f"Choice (1-{len(vms) + 1}): ").strip()
+            choice = Prompt.ask("\nChoice", choices=choices, default="1").strip()
             val = int(choice)
             if val == len(vms) + 1:
                 print_info("Operation cancelled.")
                 sys.exit(0)
-            if 1 <= val <= len(vms):
-                vm_name = vms[val - 1][0]
-                save_cached_vm(vm_name)
-                print_info(f"Preferred VM set to: {C_BOLD}{vm_name}{C_RESET}")
-                return vm_name
+            vm_name = vms[val - 1][0]
+            save_cached_vm(vm_name)
+            print_info(f"Preferred VM set to: [bold]{vm_name}[/bold]")
+            return vm_name
         except (ValueError, KeyboardInterrupt, EOFError):
             if isinstance(sys.exc_info()[0], KeyboardInterrupt):
                 print("\n")
                 sys.exit(1)
-        print(f"Please enter a valid choice between 1 and {len(vms) + 1}")
 
 
 def get_spice_port(vm_name: str) -> int:
@@ -350,29 +362,47 @@ def get_vm_state(vm_name: str) -> str:
 
 
 def print_help():
-    print(f"""{C_BOLD}Windows KVM & Looking Glass Manager{C_RESET}
-
-Usage:
-  {sys.argv[0]} <action> [options]
-
-Actions:
-  {C_GREEN}start{C_RESET}        Start the virtual machine
-  {C_GREEN}stop{C_RESET}         Send a graceful shutdown signal (alias: shutdown)
-  {C_GREEN}kill{C_RESET}         Forcefully power off/destroy the VM (alias: destroy)
-  {C_GREEN}reboot{C_RESET}       Reboot the VM
-  {C_GREEN}status{C_RESET}       Display current running state
-  {C_GREEN}list{C_RESET}         List all defined virtual machines (alias: --list, -l)
-  {C_GREEN}view{C_RESET}         Launch looking-glass-client (alias: show, lg)
-  {C_GREEN}launch{C_RESET}       Start VM and automatically wait to launch Looking Glass (alias: play)
-  {C_GREEN}rdp{C_RESET}          Connect to the VM via FreeRDP rescue bridge (alias: connect)
-  {C_GREEN}edit{C_RESET}         Edit the VM XML topology configuration
-  {C_GREEN}select{C_RESET}       Change the default preferred VM
-
-Options:
-  --vm <name>    Override the default VM and run the action on <name>
-  --key, -k <key> Override and cache the Looking Glass escape key (e.g. F6, rightctrl)
-  --help, -h     Show this help manual
-""")
+    title_panel = Panel(
+        "[bold cyan]Dusky Windows KVM & Looking Glass Manager[/bold cyan]",
+        border_style="cyan",
+        expand=False
+    )
+    console.print(title_panel)
+    console.print("\n[bold]Usage:[/bold]")
+    console.print(f"  {sys.argv[0]} <action> \\[options]\n")
+    
+    # Actions Table
+    actions_table = Table(title="[bold green]Available Actions[/bold green]", title_justify="left", show_header=True, header_style="bold green")
+    actions_table.add_column("Action", style="cyan", width=12)
+    actions_table.add_column("Aliases / Shortcuts", style="dim", width=20)
+    actions_table.add_column("Description")
+    
+    actions_table.add_row("start", "-", "Start the virtual machine")
+    actions_table.add_row("stop", "shutdown", "Send a graceful shutdown signal")
+    actions_table.add_row("kill", "destroy", "Forcefully power off/destroy the VM")
+    actions_table.add_row("reboot", "-", "Reboot the VM")
+    actions_table.add_row("status", "-", "Display current running state")
+    actions_table.add_row("list", "-l, --list", "List all defined virtual machines")
+    actions_table.add_row("view", "show, lg", "Launch looking-glass-client")
+    actions_table.add_row("launch", "play", "Start VM and wait to launch Looking Glass")
+    actions_table.add_row("rdp", "connect", "Connect to the VM via FreeRDP rescue bridge")
+    actions_table.add_row("edit", "-", "Edit the VM XML topology configuration")
+    actions_table.add_row("select", "-", "Change the default preferred VM")
+    
+    console.print(actions_table)
+    console.print()
+    
+    # Options Table
+    options_table = Table(title="[bold yellow]Options[/bold yellow]", title_justify="left", show_header=True, header_style="bold yellow")
+    options_table.add_column("Option", style="cyan", width=20)
+    options_table.add_column("Description")
+    
+    options_table.add_row("--vm <name>", "Override the default VM and run the action on <name>")
+    options_table.add_row("--key, -k <key>", "Override and cache the Looking Glass escape key (e.g. F6, rightctrl)")
+    options_table.add_row("--help, -h", "Show this help manual")
+    
+    console.print(options_table)
+    console.print()
 
 
 def main():
@@ -409,10 +439,10 @@ def main():
         if not vms:
             print_info("No virtual machines found in libvirt.")
         else:
-            print(f"\n{C_BOLD}Defined Virtual Machines:{C_RESET}")
+            console.print(f"\n[bold]Defined Virtual Machines:[/bold]")
             for idx, (name, state) in enumerate(vms):
-                color = C_GREEN if state == "running" else C_RED
-                print(f"  - {C_BOLD}{name}{C_RESET} ({color}{state}{C_RESET})")
+                color = "green" if state == "running" else "red"
+                console.print(f"  - [bold]{name}[/bold] ([{color}]{state}[/{color}])")
         sys.exit(0)
 
     vm_name = resolve_vm(specified_vm)
