@@ -98,10 +98,16 @@ CORE_SYSTEM_DEFS = {
         "ZRAM 1H Cold Pages Compressor",
         "Auto compresses cold pages in both zram0 and zram1 with zstd level 12 every hour to reclaim memory"
     ),
+    "dusky_boot_mem_reclaim.timer": (
+        "1Min Boot Memory Reclaimer",
+        "Oneshot boot reclaimer timer. Triggers exactly 1 minute after boot to compress and swap cold initialization memory to ZRAM swap, reducing the startup memory footprint."
+    ),
+
     "ufw.service": (
         "Firewall (UFW)",
         "Uncomplicated Firewall. A user-friendly front-end for iptables to manage network access rules."
     )
+
 }
 
 import concurrent.futures

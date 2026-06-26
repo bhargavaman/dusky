@@ -106,7 +106,7 @@ def perform_reclaim() -> None:
 def deploy_systemd_units() -> None:
     info("Deploying boot-time memory reclaim systemd units...")
     
-    service_path = Path("/etc/systemd/system/boot-memory-reclaim.service")
+    service_path = Path("/etc/systemd/system/dusky_boot_mem_reclaim.service")
     service_content = f"""[Unit]
 Description=Boot-time Cold Memory Reclaimer
 After=local-fs.target
@@ -118,7 +118,7 @@ ExecStart={sys.executable} {os.path.abspath(__file__)} --run
     write_file_atomic(service_path, service_content)
     ok(f"Service unit written to {service_path}")
     
-    timer_path = Path("/etc/systemd/system/boot-memory-reclaim.timer")
+    timer_path = Path("/etc/systemd/system/dusky_boot_mem_reclaim.timer")
     timer_content = """[Unit]
 Description=Trigger Boot-time Cold Memory Reclaimer 1 minute after boot
 
@@ -134,10 +134,11 @@ WantedBy=timers.target
     info("Reloading systemd daemon...")
     subprocess.run(["systemctl", "daemon-reload"], check=True)
     
-    info("Enabling and starting boot-memory-reclaim.timer...")
-    subprocess.run(["systemctl", "enable", "--now", "boot-memory-reclaim.timer"], check=True)
+    info("Enabling and starting dusky_boot_mem_reclaim.timer...")
+    subprocess.run(["systemctl", "enable", "--now", "dusky_boot_mem_reclaim.timer"], check=True)
     
     ok("Boot-time reclaimer timer is active. Cold memory will be purged 1 minute after boot.")
+
 
 def main() -> None:
     if sys.version_info < (3, 14):
