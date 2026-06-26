@@ -185,7 +185,7 @@ def main() -> None:
     # 2. Ask Data size to test
     size_mb = IntPrompt.ask(
         "Enter test data payload size (in Megabytes)",
-        default=100
+        default=50
     )
     if size_mb <= 0:
         console.print("[bold red]FATAL: Size must be a positive integer.[/bold red]")
