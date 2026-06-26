@@ -433,7 +433,6 @@ class NotificationsPanel(Gtk.Box):
 
         now_str = datetime.datetime.now().strftime("%H:%M")
         changed = False
-        active_ids = {str(n.id) for n in notifs}
         
         for n in notifs:
             str_id = str(n.id)
@@ -441,8 +440,10 @@ class NotificationsPanel(Gtk.Box):
                 self.notif_times[str_id] = now_str
                 changed = True
                 
-        keys_to_remove = [k for k in self.notif_times.keys() if k not in active_ids]
-        if keys_to_remove:
+        # Limit cache size to 1000 to prevent indefinite growth while avoiding transient deletion bugs
+        if len(self.notif_times) > 1000:
+            excess = len(self.notif_times) - 1000
+            keys_to_remove = list(self.notif_times.keys())[:excess]
             for k in keys_to_remove:
                 del self.notif_times[k]
             changed = True
