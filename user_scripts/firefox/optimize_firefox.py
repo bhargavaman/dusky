@@ -179,6 +179,8 @@ def get_optimization_prefs(ram_gb: float, cache_mode: CacheMode) -> dict[str, st
     capacity_kb = 1048576  # 1 GB default
     shared_ipc = 8
     isolated_ipc = 32
+    # Keep ext_ipc as 1 at all times. Setting this preference to > 1 is unsupported
+    # and breaks WebExtensions (causing them to fail loading / run in about:addons).
     ext_ipc = 1
     unload_low_mem = "true"
 
@@ -187,14 +189,12 @@ def get_optimization_prefs(ram_gb: float, cache_mode: CacheMode) -> dict[str, st
         capacity_kb = 4194304  # 4 GB
         shared_ipc = 32
         isolated_ipc = 99
-        ext_ipc = 4
         unload_low_mem = "false"
     elif ram_gb >= 16.0:
         logger.info(f"System has {ram_gb:.1f} GB RAM. Enabling High-performance profile.")
         capacity_kb = 2097152  # 2 GB
         shared_ipc = 16
         isolated_ipc = 64
-        ext_ipc = 2
         unload_low_mem = "false"
     else:
         logger.info(f"System has {ram_gb:.1f} GB RAM (< 16 GB). Scaling to Moderate-performance profile.")

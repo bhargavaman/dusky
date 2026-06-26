@@ -224,10 +224,42 @@ resolve_browser_profile() {
     fi
     
     if [[ -z "$profile_path" ]]; then
-        profile_path=$(find "$base_dir" -maxdepth 1 -type d -name "*.default-release" | head -n 1)
-        [[ -z "$profile_path" ]] && profile_path=$(find "$base_dir" -maxdepth 1 -type d -name "*.default" | head -n 1)
-        [[ -z "$profile_path" ]] && profile_path=$(find "$base_dir" -maxdepth 1 -type d -name "*.Default*" | head -n 1)
-        [[ -z "$profile_path" ]] && profile_path=$(find "$base_dir" -maxdepth 2 -type f -name "prefs.js" -exec dirname {} \; | head -n 1)
+        # 1. Try reading the default profile path from profiles.ini
+        local ini="$base_dir/profiles.ini"
+        if [[ -f "$ini" ]]; then
+            local def_path=""
+            def_path=$(grep -A1 '^\[Install' "$ini" 2>/dev/null | grep -i '^Default' | cut -d= -f2 | xargs)
+            if [[ -z "$def_path" ]]; then
+                local current_path=""
+                while IFS='=' read -r key val; do
+                    key="${key##*( )}"; key="${key%%*( )}"
+                    val="${val##*( )}"; val="${val%%*( )}"
+                    if [[ "$key" == "Path" ]]; then
+                        current_path="$val"
+                    elif [[ "$key" == "Default" && "$val" == "1" && -n "$current_path" ]]; then
+                        def_path="$current_path"
+                        break
+                    fi
+                done < "$ini"
+            fi
+            if [[ -n "$def_path" ]]; then
+                [[ "$def_path" == /* ]] && profile_path="$def_path" || profile_path="$base_dir/$def_path"
+            fi
+        fi
+    fi
+
+    # 2. Fallback to find if profiles.ini lookup failed or target doesn't exist
+    if [[ -z "$profile_path" || ! -d "$profile_path" ]]; then
+        profile_path=""
+        local pattern
+        for pattern in "*.default-release" "*.default" "*.Default*"; do
+            while read -r d; do
+                if [[ -n "$d" && -d "$d" ]]; then
+                    profile_path="$d"
+                    break 2
+                fi
+            done < <(find "$base_dir" -maxdepth 1 -name "$pattern" 2>/dev/null)
+        done
     fi
 
     if [[ -z "$profile_path" ]]; then
@@ -267,7 +299,7 @@ ensure_matugen_integration() {
         for pattern in "*.default-release" "*.default" "*.Default*"; do
             while read -r d; do
                 [[ -n "$d" && -d "$d" ]] && p_paths+=("$d")
-            done < <(find "$base_dir" -maxdepth 1 -type d -name "$pattern" 2>/dev/null)
+            done < <(find "$base_dir" -maxdepth 1 -name "$pattern" 2>/dev/null)
         done
         
         local -a unique_paths=()

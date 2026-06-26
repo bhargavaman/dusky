@@ -3177,7 +3177,7 @@ icon = "web-browser-symbolic"
 button_text = "Fix"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class 400_firefox_matugen_pywalfox.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/400_firefox_matugen_pywalfox.sh\""
+command = "kitty --class 400_firefox_matugen_pywalfox.sh --hold sh -c \"$HOME/user_scripts/firefox/400_firefox_matugen_pywalfox.sh\""
 terminal = false
 
 [[pages.layout.items]]

@@ -176,30 +176,30 @@ resolve_profiles() {
 
     local ini="$base_dir/profiles.ini"
     if [[ -f "$ini" ]]; then
-        local default_rel=""
         while IFS='=' read -r key val; do
             # Safely trim trailing and leading spaces via extglob
             key="${key##*( )}"; key="${key%%*( )}"
             val="${val##*( )}"; val="${val%%*( )}"
             
-            if [[ "$key" == "Default" && -n "$val" ]]; then
-                [[ "$val" == /* ]] && default_rel="$val" || default_rel="$base_dir/$val"
-                if [[ -d "$default_rel" && -z "${seen[$default_rel]:-}" ]]; then
-                    RESOLVED_PROFILES+=("$default_rel")
-                    seen["$default_rel"]=1
+            if [[ "$key" == "Path" && -n "$val" ]]; then
+                local p_dir
+                [[ "$val" == /* ]] && p_dir="$val" || p_dir="$base_dir/$val"
+                if [[ -d "$p_dir" && -z "${seen[$p_dir]:-}" ]]; then
+                    RESOLVED_PROFILES+=("$p_dir")
+                    seen["$p_dir"]=1
                 fi
             fi
-        done < <(grep -A1 '^\[Install' "$ini" 2>/dev/null | grep -i '^Default' || true)
+        done < "$ini"
     fi
 
     # Modern Bash array mapping for null-delimited 'find' output 
     local -a dirs
     local pattern
     for pattern in "*.default-release" "*.default" "*.Default*"; do
-        readarray -d '' dirs < <(find "$base_dir" -maxdepth 1 -type d -name "$pattern" -print0 2>/dev/null | sort -z)
+        readarray -d '' dirs < <(find "$base_dir" -maxdepth 1 -name "$pattern" -print0 2>/dev/null | sort -z)
         for dir in "${dirs[@]}"; do
             [[ -z "$dir" ]] && continue
-            if [[ -z "${seen[$dir]:-}" ]]; then
+            if [[ -d "$dir" && -z "${seen[$dir]:-}" ]]; then
                 RESOLVED_PROFILES+=("$dir")
                 seen["$dir"]=1
             fi
@@ -208,6 +208,7 @@ resolve_profiles() {
 
     # Fallback checking prefs.js to catch exceptionally named profiles
     local -a pref_files
+    # Find files matching prefs.js, resolving links by checking for presence of prefs.js
     readarray -d '' pref_files < <(find "$base_dir" -mindepth 2 -maxdepth 2 -type f -name "prefs.js" -print0 2>/dev/null | sort -z)
     for prefs_file in "${pref_files[@]}"; do
         [[ -z "$prefs_file" ]] && continue
