@@ -336,9 +336,9 @@ post_hook   = '''
   # bash $HOME/scripts/some_other_theme_script.sh
 '''
 
-[templates.conclude_notify]
-input_path  = '/dev/null'
-output_path = '/dev/null'
+[templates.theme_notify]
+input_path  = '~/.config/matugen/templates/theme-notify.sh'
+output_path = '~/.config/matugen/generated/theme-notify.sh'
 post_hook   = '''
-  notify-send -a "matugen-theme" -i applications-graphics-symbolic "Theme Updated" "Theme applied successfully" || :
+  bash ~/.config/matugen/generated/theme-notify.sh || :
 '''
