@@ -248,8 +248,53 @@ ensure_matugen_integration() {
     local tmp_cfg
     tmp_cfg=$(mktemp)
 
-    local rel_profile="${FF_PROFILE/#$HOME/\$HOME}"
-    export HOOK_CMD="    ln -nfs \"\$HOME/.config/matugen/generated/firefox_websites.css\" \"${rel_profile}/chrome/colors.css\""
+    local hook_cmds=""
+    for b_name in "${BROWSER_PRIORITY[@]}"; do
+        local base_dir="${BROWSER_PATHS[$b_name]:-}"
+        [[ -z "$base_dir" || ! -d "$base_dir" ]] && continue
+        
+        local -a p_paths=()
+        if [[ -f "$base_dir/profiles.ini" ]]; then
+            while IFS='=' read -r key val; do
+                key="${key##*( )}"; key="${key%%*( )}"
+                val="${val##*( )}"; val="${val%%*( )}"
+                if [[ "$key" == "Path" && -n "$val" ]]; then
+                    [[ "$val" == /* ]] && p_paths+=("$val") || p_paths+=("$base_dir/$val")
+                fi
+            done < "$base_dir/profiles.ini"
+        fi
+        
+        for pattern in "*.default-release" "*.default" "*.Default*"; do
+            while read -r d; do
+                [[ -n "$d" && -d "$d" ]] && p_paths+=("$d")
+            done < <(find "$base_dir" -maxdepth 1 -type d -name "$pattern" 2>/dev/null)
+        done
+        
+        local -a unique_paths=()
+        local -A seen=()
+        for p in "${p_paths[@]}"; do
+            local resolved
+            resolved=$(readlink -f "$p" 2>/dev/null || echo "$p")
+            [[ -z "${seen[$resolved]:-}" && -d "$p" ]] && {
+                unique_paths+=("$p")
+                seen["$resolved"]=1
+            }
+        done
+        
+        for p in "${unique_paths[@]}"; do
+            local rel_p="${p/#$HOME/\$HOME}"
+            hook_cmds+="    ln -nfs \"\$HOME/.config/matugen/generated/firefox_websites.css\" \"${rel_p}/chrome/colors.css\" || :"$'\n'
+        done
+    done
+    
+    hook_cmds="${hook_cmds%$'\n'}"
+    
+    if [[ -z "$hook_cmds" ]]; then
+        local rel_profile="${FF_PROFILE/#$HOME/\$HOME}"
+        hook_cmds="    ln -nfs \"\$HOME/.config/matugen/generated/firefox_websites.css\" \"${rel_profile}/chrome/colors.css\""
+    fi
+
+    export HOOK_CMD="$hook_cmds"
 
     LC_ALL=C awk '
     BEGIN {
@@ -305,7 +350,10 @@ ensure_matugen_integration() {
             print lines[i]
             if (i == out_idx) {
                 print prefix "post_hook = " triple_sq
-                print prefix ENVIRON["HOOK_CMD"]
+                num_lines = split(ENVIRON["HOOK_CMD"], hook_lines, "\n")
+                for (k=1; k<=num_lines; k++) {
+                    print prefix hook_lines[k]
+                }
                 print prefix triple_sq
             }
         }
