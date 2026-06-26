@@ -283,11 +283,13 @@ hl.config({
     -- §10e Misc — special workspace & focus behaviour
     misc = {
         -- clean up empty scratchpads
-        close_special_on_empty    = true,
+        close_special_on_empty     = true,
         -- steal focus on activation
-        focus_on_activate         = true,
+        focus_on_activate          = true,
         -- 0 = stay behind | 1 = take over | 2 = swap fs
-        on_focus_under_fullscreen = 2,
+        on_focus_under_fullscreen  = 2,
+        -- Force new windows to spawn on the current workspace
+        initial_workspace_tracking = 1,
     },
 
     -- §10f Binds — workspace navigation behaviour
