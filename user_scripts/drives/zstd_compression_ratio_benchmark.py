@@ -172,12 +172,15 @@ def main() -> None:
         "[bold magenta]======================================================================[/bold magenta]"
     )
     
-    # 1. Ask Max Compression Level to test
-    max_level = IntPrompt.ask(
-        "\nEnter maximum ZSTD compression level to test (Standard: 1-19, Ultra: 20-22)",
-        default=19,
-        choices=[str(i) for i in range(1, 23)]
-    )
+    # 1. Ask Max Compression Level to test (Validate 1-22 without printing massive choices)
+    while True:
+        max_level = IntPrompt.ask(
+            "\nEnter maximum ZSTD compression level to test (Standard: 1-19, Ultra: 20-22) (1-22)",
+            default=10
+        )
+        if 1 <= max_level <= 22:
+            break
+        console.print("[bold red]Please enter a level between 1 and 22.[/bold red]")
     
     # 2. Ask Data size to test
     size_mb = IntPrompt.ask(
@@ -290,8 +293,8 @@ def main() -> None:
         
     console.print(table)
     
-    # 4. Ask to save report
-    if Confirm.ask("\nWould you like to save this report to a file?", default=True):
+    # 4. Ask to save report (default to False / 'n')
+    if Confirm.ask("\nWould you like to save this report to a file?", default=False):
         report_path_str = Prompt.ask(
             "Enter path to save report",
             default=str(Path.home() / "zstd_benchmark_report.md")
