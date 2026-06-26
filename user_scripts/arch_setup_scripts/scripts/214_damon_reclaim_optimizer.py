@@ -25,8 +25,8 @@ LOW_RAM_CONFIG = {
     "sample_interval": 500000,    # 500ms: How often the monitor checks what memory is used (wakes up 2 times/sec)
     "aggr_interval": 5000000,     # 5s: How often the monitor aggregates statistics to find cold memory
     "min_age": 60000000,          # 60s (1 min): Minimum time memory must sit untouched to be considered "cold"
-    "wmarks_high": 900,           # 90%: Sleep the monitor if free RAM is above this percentage (900 parts per thousand)
-    "wmarks_mid": 800,            # 80%: Activate the monitor if free RAM drops below this percentage (800 parts per thousand)
+    "wmarks_high": 500,           # 50%: Sleep the monitor if free RAM is above this percentage (500 parts per thousand)
+    "wmarks_mid": 400,            # 40%: Activate the monitor if free RAM drops below this percentage (400 parts per thousand)
     "wmarks_low": 200,            # 20%: Pause the monitor if free RAM drops below this (to protect latency, 200 parts per thousand)
 }
 
