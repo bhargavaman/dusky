@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # =============================================================================
 # Elite Arch Linux Boot-Time Memory Reclaimer
-# Target: Arch Linux Cutting-Edge (Kernel 5.19+, Python 3.14+, systemd 260+)
+# Target: Arch Linux Cutting-Edge (Kernel 7.1+, Python 3.14+, systemd 260+)
 # Scope: Platinum Grade. Forcefully pushes cold boot-initialization RAM to ZRAM.
 # =============================================================================
 
