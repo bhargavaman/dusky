@@ -54,11 +54,32 @@ mkdir -p "$STATE_DIR"
 exec 200>"$LOCK_FILE"
 if ! flock -n 200; then exit 0; fi
 
+# Get actual profile from TLP runtime state or fallback to local state file
+get_actual_profile() {
+    local pwr_file="/run/tlp/last_pwr"
+    if [[ -f "$pwr_file" ]]; then
+        local pp_code ps_code
+        if read -r pp_code ps_code < "$pwr_file" 2>/dev/null; then
+            case "$pp_code" in
+                0) echo "performance"; return 0 ;;
+                1) echo "balanced"; return 0 ;;
+                2) echo "power-saver"; return 0 ;;
+            esac
+        fi
+    fi
+    # Fallback to local state file
+    if [[ -f "$STATE_FILE" ]]; then
+        cat "$STATE_FILE"
+    else
+        echo "balanced"
+    fi
+}
+
 # Initialize state file if missing
 if [[ ! -f "$STATE_FILE" ]]; then
     echo "balanced" > "$STATE_FILE"
 fi
-CURRENT_STATE=$(<"$STATE_FILE")
+CURRENT_STATE=$(get_actual_profile)
 
 # -- Core Functions --
 send_notification() {

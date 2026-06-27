@@ -544,6 +544,19 @@ class QuickPanalWindow(Gtk.ApplicationWindow):
         if getattr(self, "_power_pending_profile", None) is not None: return
 
         try:
+            # Probe actual profile from TLP runtime state
+            pwr_file = Path("/run/tlp/last_pwr")
+            if pwr_file.exists():
+                parts = pwr_file.read_text(encoding="utf-8").strip().split()
+                if parts:
+                    pp_code = parts[0]
+                    mapping = {"0": "performance", "1": "balanced", "2": "power-saver"}
+                    state = mapping.get(pp_code)
+                    if state:
+                        GLib.idle_add(self._apply_power_profile, state)
+                        return
+
+            # Fallback to local state file
             path = Path(HOME) / ".config" / "dusky" / "settings" / "tlp_state"
             if path.exists():
                 state = path.read_text(encoding="utf-8").strip().lower()

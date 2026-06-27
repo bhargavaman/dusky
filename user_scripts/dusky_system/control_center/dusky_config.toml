@@ -103,7 +103,7 @@ type = "selection"
 [pages.layout.items.properties]
 title = "Active Profile"
 description = "Select performance mode"
-key = "tlp_state"
+value_command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh status"
 icon = "power-profile-balanced-symbolic"
 interval = 2
 options = ["Balanced", "Performance", "Power Saver"]
@@ -893,7 +893,7 @@ type = "selection"
 [pages.layout.items.properties]
 title = "Active Profile"
 description = "Select performance mode"
-key = "tlp_state"
+value_command = "~/user_scripts/battery/tlp/tlp_mode_toggle.sh status"
 icon = "power-profile-balanced-symbolic"
 interval = 2
 options = ["Balanced", "Performance", "Power Saver"]
