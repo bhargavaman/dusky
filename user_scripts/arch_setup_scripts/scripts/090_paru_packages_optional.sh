@@ -49,6 +49,7 @@ Internet    | networkmanager-openvpn| NetworkManager VPN plugin for OpenVPN (wit
 Internet    | network-manager-applet| NetworkManager applet, GUI, System Tray
 Internet    | vesktop               | Custom Discord client (Vencord + Electron)
 Internet    | beeper-v4-bin         | Universal chat app (Matrix bridge)
+Internet    | webapp-manager        | Run websites as if they were apps
 Productivity| pinta                 | Simple drawing/editing tool (Paint.NET clone)
 Productivity| gimp                  | Photoshop alternative for Linux
 Productivity| libreoffice-still     | Microsoft Office alternative (Stable)
