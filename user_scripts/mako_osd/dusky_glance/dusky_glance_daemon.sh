@@ -69,14 +69,15 @@ send_osd() {
 }
 
 format_time() {
-    local total_sec=$1
+    local -n _out_ref=$1
+    local total_sec=$2
     local h=$((total_sec / 3600))
     local m=$(( (total_sec % 3600) / 60 ))
     local s=$((total_sec % 60))
     if (( h > 0 )); then
-        printf "%02d:%02d:%02d\n" "$h" "$m" "$s"
+        printf -v _out_ref "%02d:%02d:%02d" "$h" "$m" "$s"
     else
-        printf "%02d:%02d\n" "$m" "$s"
+        printf -v _out_ref "%02d:%02d" "$m" "$s"
     fi
 }
 
@@ -112,7 +113,8 @@ case "$MODE" in
     --stopwatch)
         while true; do
             elapsed=$((SECONDS - START_SEC))
-            send_osd "$(format_time "$elapsed")"
+            format_time time_str "$elapsed"
+            send_osd "$time_str"
             sleep 1
         done
         ;;
@@ -137,7 +139,8 @@ case "$MODE" in
                 done
                 exit 0
             fi
-            send_osd "$(format_time "$left")"
+            format_time time_str "$left"
+            send_osd "$time_str"
             sleep 1
         done
         ;;
@@ -181,7 +184,8 @@ case "$MODE" in
             
             prefix=""
             [[ "$PHASE" == "BREAK" ]] && prefix="B "
-            send_osd "${prefix}$(format_time "$left")"
+            format_time time_str "$left"
+            send_osd "${prefix}${time_str}"
             sleep 1
         done
         ;;
@@ -213,6 +217,9 @@ case "$MODE" in
                     MemTotal:) mem_tot=$val ;;
                     MemAvailable:) mem_avail=$val ;;
                 esac
+                if (( mem_tot > 0 && mem_avail > 0 )); then
+                    break
+                fi
             done < /proc/meminfo
             
             ram_mb=$(( (mem_tot - mem_avail) / 1024 ))
@@ -360,14 +367,14 @@ case "$MODE" in
                         read -r energy_now < "$bat_dir/energy_now" 2>/dev/null || energy_now=0
                         if (( pwr > 0 )); then
                             total_mins=$(( (energy_now * 60) / pwr ))
-                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     elif [[ "$stat" == "Charging" && "$has_energy_full" == true ]]; then
                         read -r energy_now < "$bat_dir/energy_now" 2>/dev/null || energy_now=0
                         read -r energy_full < "$bat_dir/energy_full" 2>/dev/null || energy_full=0
                         if (( pwr > 0 && energy_full > energy_now )); then
                             total_mins=$(( ((energy_full - energy_now) * 60) / pwr ))
-                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     fi
                     
@@ -382,14 +389,14 @@ case "$MODE" in
                         read -r charge_now < "$bat_dir/charge_now" 2>/dev/null || charge_now=0
                         if (( curr > 0 )); then
                             total_mins=$(( (charge_now * 60) / curr ))
-                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     elif [[ "$stat" == "Charging" && "$has_charge_full" == true ]]; then
                         read -r charge_now < "$bat_dir/charge_now" 2>/dev/null || charge_now=0
                         read -r charge_full < "$bat_dir/charge_full" 2>/dev/null || charge_full=0
                         if (( curr > 0 && charge_full > charge_now )); then
                             total_mins=$(( ((charge_full - charge_now) * 60) / curr ))
-                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str=$'\n'"$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     fi
                 fi
@@ -590,8 +597,12 @@ case "$MODE" in
         fi
         
         if ws_info=$(hyprctl activeworkspace 2>/dev/null); then
-            ws_id=$(awk '/workspace ID/ {print $3}' <<< "$ws_info")
-            send_osd "WS: ${ws_id:-?}"
+            if [[ "$ws_info" =~ "workspace ID "([0-9\-]+) ]]; then
+                ws_id="${BASH_REMATCH[1]}"
+            else
+                ws_id="?"
+            fi
+            send_osd "WS: $ws_id"
         else
             send_osd "WS: ?"
         fi
@@ -611,8 +622,12 @@ case "$MODE" in
         else
             while true; do
                 if ws_info=$(hyprctl activeworkspace 2>/dev/null); then
-                    ws_id=$(awk '/workspace ID/ {print $3}' <<< "$ws_info")
-                    send_osd "WS: ${ws_id:-?}"
+                    if [[ "$ws_info" =~ "workspace ID "([0-9\-]+) ]]; then
+                        ws_id="${BASH_REMATCH[1]}"
+                    else
+                        ws_id="?"
+                    fi
+                    send_osd "WS: $ws_id"
                 fi
                 sleep 1
             done
