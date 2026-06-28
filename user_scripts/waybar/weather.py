@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import datetime
 import http.client
 import json
 import math
@@ -115,6 +116,8 @@ class StateRecord:
     effective_unit: str | None = None
     country_code: str = ""
     city: str = ""
+    lat: float | None = None
+    lon: float | None = None
 
 
 def is_finite_number(value: object) -> bool:
@@ -340,6 +343,9 @@ def load_state() -> StateRecord | None:
         if effective_unit not in {"metric", "imperial"}:
             effective_unit = None
 
+        cached_lat = raw.get("lat")
+        cached_lon = raw.get("lon")
+
         return StateRecord(
             payload=payload,
             saved_at=float(saved_at),
@@ -347,6 +353,8 @@ def load_state() -> StateRecord | None:
             effective_unit=effective_unit,
             country_code=normalize_country_code(raw.get("country_code")),
             city=normalize_city(raw.get("city")),
+            lat=float(cached_lat) if is_finite_number(cached_lat) else None,
+            lon=float(cached_lon) if is_finite_number(cached_lon) else None,
         )
 
     # Legacy plain payload support.
@@ -366,6 +374,8 @@ def write_state(record: StateRecord) -> None:
         "effective_unit": record.effective_unit,
         "country_code": record.country_code,
         "city": record.city,
+        "lat": record.lat,
+        "lon": record.lon,
     }
 
     data = json_dumps(wrapped)
@@ -421,31 +431,44 @@ def fetch_json(url: str, params: dict[str, object] | None = None, timeout: float
     return data if isinstance(data, dict) else None
 
 
-def extract_ipwho_location(data: JsonDict | None) -> tuple[float | None, float | None, str, str]:
+# IP location result: (lat, lon, country_code, city, utc_offset_str, isp)
+type IpLocationResult = tuple[float | None, float | None, str, str, str, str]
+
+
+def extract_ipwho_location(data: JsonDict | None) -> IpLocationResult:
     if not data or data.get("success") is not True:
-        return None, None, "", ""
+        return None, None, "", "", "", ""
 
     lat = data.get("latitude")
     lon = data.get("longitude")
     if not is_finite_number(lat) or not is_finite_number(lon):
-        return None, None, "", ""
+        return None, None, "", "", "", ""
 
-    return float(lat), float(lon), normalize_country_code(data.get("country_code")), normalize_city(data.get("city"))
+    tz = data.get("timezone", {})
+    utc_offset = tz.get("utc", "") if isinstance(tz, dict) else ""
+
+    conn = data.get("connection", {})
+    isp = conn.get("isp", "") if isinstance(conn, dict) else ""
+
+    return float(lat), float(lon), normalize_country_code(data.get("country_code")), normalize_city(data.get("city")), str(utc_offset), str(isp)
 
 
-def extract_ipapi_location(data: JsonDict | None) -> tuple[float | None, float | None, str, str]:
+def extract_ipapi_location(data: JsonDict | None) -> IpLocationResult:
     if not data or data.get("error"):
-        return None, None, "", ""
+        return None, None, "", "", "", ""
 
     lat = data.get("latitude")
     lon = data.get("longitude")
     if not is_finite_number(lat) or not is_finite_number(lon):
-        return None, None, "", ""
+        return None, None, "", "", "", ""
 
-    return float(lat), float(lon), normalize_country_code(data.get("country_code")), normalize_city(data.get("city"))
+    utc_offset = data.get("utc_offset", "")
+    isp = data.get("org", "")
+
+    return float(lat), float(lon), normalize_country_code(data.get("country_code")), normalize_city(data.get("city")), str(utc_offset), str(isp)
 
 
-def get_ip_location() -> tuple[float | None, float | None, str, str]:
+def get_ip_location() -> IpLocationResult:
     services = (
         ("https://ipwho.is/", extract_ipwho_location),
         ("https://ipapi.co/json/", extract_ipapi_location),
@@ -456,7 +479,115 @@ def get_ip_location() -> tuple[float | None, float | None, str, str]:
         if location[0] is not None and location[1] is not None:
             return location
 
-    return None, None, "", ""
+    return None, None, "", "", "", ""
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km between two lat/lon points."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+def get_system_utc_offset_str() -> str:
+    """Return system UTC offset as a string like '+05:30' or '-08:00'."""
+    offset = datetime.datetime.now(datetime.timezone.utc).astimezone().utcoffset()
+    if offset is None:
+        return ""
+    total_seconds = int(offset.total_seconds())
+    sign = "+" if total_seconds >= 0 else "-"
+    total_seconds = abs(total_seconds)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes = remainder // 60
+    return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+def parse_utc_offset_seconds(offset_str: str) -> int | None:
+    """Parse a UTC offset string like '+05:30' or '+0530' into seconds."""
+    if not offset_str:
+        return None
+    s = offset_str.strip()
+    if not s:
+        return None
+    sign = 1
+    if s[0] in "+-":
+        sign = -1 if s[0] == "-" else 1
+        s = s[1:]
+    # Remove colon: "05:30" -> "0530"
+    s = s.replace(":", "")
+    if len(s) < 3 or not s.isdigit():
+        return None
+    hours = int(s[:-2])
+    minutes = int(s[-2:])
+    return sign * (hours * 3600 + minutes * 60)
+
+
+# Known datacenter / cloud / VPN provider keywords.
+# These ISPs host VPN exit nodes, CDN edges, or cloud instances — not residential users.
+_DATACENTER_KEYWORDS: frozenset[str] = frozenset({
+    "cloudflare", "amazon", "aws", "google cloud", "microsoft", "azure",
+    "digitalocean", "linode", "akamai", "ovh", "hetzner", "vultr", "oracle",
+    "fastly", "mullvad", "nordvpn", "protonvpn", "proton ag", "expressvpn",
+    "surfshark", "cyberghost", "private internet", "ipvanish", "windscribe",
+    "hide.me", "tunnelbear", "hotspot shield", "zenmate", "kaspersky",
+    "warp", "1.1.1.1",
+})
+
+
+def is_datacenter_isp(isp: str) -> bool:
+    """Check if the ISP name matches a known datacenter / VPN provider."""
+    if not isp:
+        return False
+    isp_lower = isp.lower()
+    return any(keyword in isp_lower for keyword in _DATACENTER_KEYWORDS)
+
+
+def is_vpn_likely(
+    ip_lat: float,
+    ip_lon: float,
+    ip_utc_offset: str,
+    ip_isp: str,
+    cached_state: StateRecord | None,
+) -> bool:
+    """Detect probable VPN/proxy using three layers:
+
+    Layer 1: Timezone mismatch — IP-reported UTC offset vs system UTC offset.
+             Catches cross-timezone VPNs (e.g. US exit node while in India).
+    Layer 2: Datacenter ISP + distance — IP comes from a known cloud/VPN
+             provider AND location jumped >100 km from cached.
+             Catches same-timezone VPNs (e.g. Cloudflare WARP routing to Delhi).
+    Layer 3: Normal ISP + distance — IP comes from a regular residential ISP
+             but location changed. This is NOT flagged as VPN, allowing the
+             script to self-correct if a previous cache was set during VPN use.
+
+    Returns True if the IP location is likely from a VPN exit node.
+    """
+    # Layer 1: Timezone mismatch.
+    system_offset = parse_utc_offset_seconds(get_system_utc_offset_str())
+    ip_offset = parse_utc_offset_seconds(ip_utc_offset)
+
+    if system_offset is not None and ip_offset is not None:
+        if abs(system_offset - ip_offset) > 3600:
+            return True
+
+    # Layer 2: Datacenter ISP + significant location change.
+    datacenter = is_datacenter_isp(ip_isp)
+
+    if (
+        datacenter
+        and cached_state is not None
+        and cached_state.lat is not None
+        and cached_state.lon is not None
+    ):
+        distance = haversine_km(cached_state.lat, cached_state.lon, ip_lat, ip_lon)
+        if distance > 100:
+            return True
+
+    # Layer 3 (implicit): Normal ISP with distance change → NOT VPN.
+    # This allows self-correction when VPN is turned off.
+    return False
 
 
 def reverse_geocode(lat: float, lon: float) -> tuple[str, str]:
@@ -624,10 +755,20 @@ def main() -> None:
         city = ""
 
         if args.lat is None:
-            ip_lat, ip_lon, country_code, city = get_ip_location()
+            ip_lat, ip_lon, country_code, city, ip_utc_offset, ip_isp = get_ip_location()
             if ip_lat is None or ip_lon is None:
                 emit_cached_or_fail(state, "Failed to determine location and no cached weather is available.")
-            lat, lon = ip_lat, ip_lon
+
+            # VPN/proxy detection: prefer cached location when VPN is likely.
+            if is_vpn_likely(ip_lat, ip_lon, ip_utc_offset, ip_isp, state):
+                if state and state.lat is not None and state.lon is not None:
+                    lat, lon = state.lat, state.lon
+                    country_code = state.country_code or country_code
+                    city = state.city or city
+                else:
+                    lat, lon = ip_lat, ip_lon
+            else:
+                lat, lon = ip_lat, ip_lon
         else:
             lat, lon = args.lat, args.lon
             if not args.celsius and not args.fahrenheit:
@@ -683,6 +824,8 @@ def main() -> None:
                 effective_unit=unit,
                 country_code=country_code,
                 city=city,
+                lat=lat,
+                lon=lon,
             )
         )
         write_time_state(current_time, current_time)
