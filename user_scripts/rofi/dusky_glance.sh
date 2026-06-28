@@ -405,10 +405,10 @@ case "$choice" in
     '  CPU Temp')       "$DAEMON_SCRIPT" --temp & disown ;;
     '󰁹  Battery')
         b_opts=(
-            "󰁹  Standard HUD"
-            "󰁹  Percent Only"
             "󰁹  Power Draw Only"
+            "󰁹  Percent Only"
             "󰁹  Time Remaining Only"
+            "󰁹  Standard HUD"
         )
         bchoice=$(printf '%s\n' "${b_opts[@]}" | "${ROFI_SUB[@]}" -p "Battery") || exit 0
         

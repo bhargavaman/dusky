@@ -120,7 +120,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
     width_map = {
         "": 170, "clock": 170, "clock-short": 170, "stopwatch": 170, "timer": 170, "pomodoro": 170,
         "cpu": 100, "ram": 120, "ram-temp": 160, "zram": 210, "temp": 110,
-        "battery": 180, "battery-percent": 100, "battery-watts": 110, "battery-time": 120,
+        "battery": 180, "battery-percent": 100, "battery-watts": 120, "battery-time": 130,
         "disk": 240, "disk-read": 190, "disk-write": 190, "disk-temp": 100,
         "network": 190, "uptime": 170, "workspace": 140
     }
@@ -132,12 +132,12 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
     
     border_size_map = {
         "ram-temp": 0,
-        "network": 1
+        "network": 0
     }
 
     width_val = width_map.get(suffix, 170)
     height_val = height_map.get(suffix, 40)
-    border_size_val = border_size_map.get(suffix, 2)
+    border_size_val = border_size_map.get(suffix, 0)
 
     return [
         ConfigItem(
@@ -167,7 +167,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="layer",
             scope=scope,
             type_="cycle",
-            default="top",
+            default="overlay" if suffix == "battery" else "top",
             options=["background", "bottom", "top", "overlay"],
             parent_ref=uid,
             extended_help="**Window Layering**\n\nArranges the widget at the specified layer relative to normal windows. Using `overlay` will cause notifications to be displayed above fullscreen windows."
