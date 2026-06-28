@@ -360,14 +360,14 @@ case "$MODE" in
                         read -r energy_now < "$bat_dir/energy_now" 2>/dev/null || energy_now=0
                         if (( pwr > 0 )); then
                             total_mins=$(( (energy_now * 60) / pwr ))
-                            time_str=" $(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     elif [[ "$stat" == "Charging" && "$has_energy_full" == true ]]; then
                         read -r energy_now < "$bat_dir/energy_now" 2>/dev/null || energy_now=0
                         read -r energy_full < "$bat_dir/energy_full" 2>/dev/null || energy_full=0
                         if (( pwr > 0 && energy_full > energy_now )); then
                             total_mins=$(( ((energy_full - energy_now) * 60) / pwr ))
-                            time_str=" $(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     fi
                     
@@ -382,14 +382,14 @@ case "$MODE" in
                         read -r charge_now < "$bat_dir/charge_now" 2>/dev/null || charge_now=0
                         if (( curr > 0 )); then
                             total_mins=$(( (charge_now * 60) / curr ))
-                            time_str=" $(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     elif [[ "$stat" == "Charging" && "$has_charge_full" == true ]]; then
                         read -r charge_now < "$bat_dir/charge_now" 2>/dev/null || charge_now=0
                         read -r charge_full < "$bat_dir/charge_full" 2>/dev/null || charge_full=0
                         if (( curr > 0 && charge_full > charge_now )); then
                             total_mins=$(( ((charge_full - charge_now) * 60) / curr ))
-                            time_str=" $(( total_mins / 60 ))h$(( total_mins % 60 ))m"
+                            time_str="\n$(( total_mins / 60 ))h$(( total_mins % 60 ))m"
                         fi
                     fi
                 fi
