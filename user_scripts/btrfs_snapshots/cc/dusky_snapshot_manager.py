@@ -1321,6 +1321,7 @@ def launch_tui() -> None:
                     print(f"\n\033[1;38;5;81m[*] Action: COORDINATED RESTORE\033[0m\n[*] Target Pair : Root={r_id} | Home={h_id}")
                     if confirm_prompt("Are you absolutely sure you want to RESTORE your system to this state?"):
                         handle_restore_pair("root", r_id, "home", h_id)
+                        input("\n\033[1;38;5;114mPress Enter to exit...\033[0m")
                         break
             elif key_pressed in ("ctrl-d", "delete"):
                 print(f"\n\033[1;38;5;196m[*] Action: COORDINATED DELETE ({len(pairs_to_process)} pairs)\033[0m")
@@ -1343,6 +1344,7 @@ def launch_tui() -> None:
                     print(f"\n\033[1;38;5;81m[*] Action: RESTORE (Config: {meta['config']} | ID: {meta['id']})\033[0m")
                     if confirm_prompt("Are you absolutely sure you want to RESTORE?"):
                         handle_restore(meta["config"], str(meta["id"]), False)
+                        input("\n\033[1;38;5;114mPress Enter to exit...\033[0m")
                         break
             elif key_pressed in ("ctrl-d", "delete"):
                 print(f"\n\033[1;38;5;196m[*] Action: DELETE ({len(selected_metas)} snapshots)\033[0m")
