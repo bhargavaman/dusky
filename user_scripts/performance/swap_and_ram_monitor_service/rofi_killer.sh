@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Rofi Low-Memory Process Killer
-# Extremely efficient pure Bash menu.
+# Forensic Optimization: Atomic locking, zero-pipe bloat.
 
-LOCK_FILE="/tmp/rofi_killer.lock"
+# Secure user-bound lockfile to prevent symlink attacks and race conditions
+LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/rofi_killer.lock"
 
-# Trap to ensure lock file is cleaned up on exit
-cleanup() {
-    rm -f "$LOCK_FILE"
-}
-trap cleanup EXIT
+# Atomic mutex lock
+exec 9> "$LOCK_FILE"
+flock -n 9 || { echo "Rofi killer is already running."; exit 0; }
 
 list_processes() {
-    # Get top 20 processes sorting by memory, showing PMEM%, RSS (in KB converted to MB), Name, and PID
-    ps -eo pid,pmem,rss,comm --sort=-pmem | tail -n +2 | head -n 20 | while read -r pid pmem rss comm; do
+    # Eliminated 'tail' binary via --no-headers
+    ps --no-headers -eo pid,pmem,rss,comm --sort=-pmem | head -n 20 | while read -r pid pmem rss comm; do
         rss_mb=$(( rss / 1024 ))
+        # Fixed-width formatting strictly preserved
         printf "RAM: %-4s%% (%4s MB) | %-25s | PID: %s\n" "$pmem" "$rss_mb" "$comm" "$pid"
     done
 }
@@ -21,14 +21,13 @@ list_processes() {
 while true; do
     selection=$(list_processes | rofi -dmenu -p "CRITICAL MEMORY! Select to KILL" -i -theme-str 'window { width: 680px; }')
     
-    # If user hits Escape or closes rofi, exit
     [[ -z "$selection" ]] && break
     
-    # Extract PID in pure Bash (no awk/sed/grep)
+    # Native Bash Regex extraction
     if [[ "$selection" =~ PID:[[:space:]]*([0-9]+) ]]; then
         pid="${BASH_REMATCH[1]}"
         
-        # Kill the process
+        # Unconditional SIGKILL per specification
         if kill -9 "$pid" 2>/dev/null; then
             /usr/bin/notify-send -u normal -i dialog-information \
                 "Process Killed" \
@@ -36,7 +35,7 @@ while true; do
         else
             /usr/bin/notify-send -u normal -i dialog-error \
                 "Kill Failed" \
-                "Could not terminate PID ${pid}."
+                "Could not terminate PID ${pid}. It may be a kernel thread or already dead."
         fi
     else
         break

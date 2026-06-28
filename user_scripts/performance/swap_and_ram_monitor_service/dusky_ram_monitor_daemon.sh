@@ -1,41 +1,62 @@
 #!/usr/bin/env bash
 # Dusky RAM Monitor - Pure Bash Memory Monitoring Daemon
-# Extremely efficient: zero subshells or binaries spawned during normal polling (except sleep).
+# Forensic Optimization: Zero forks, zero subshells, hysteresis-aware.
 
 # ==============================================================================
-# CONFIGURATION SETTINGS (Edit as needed)
+# CONFIGURATION SETTINGS (Fully Commented for Future-Proofing)
 # ==============================================================================
 
-# Critical physical RAM threshold (% used).
-# Triggers warning unconditionally if RAM goes above this limit, even if ZRAM is empty.
+# Critical Physical RAM Threshold (% used)
+# Unconditionally triggers a warning if RAM usage hits this limit, even if ZRAM is empty.
+# This guards against sudden system lockups due to extreme out-of-memory (OOM) conditions.
 THRESHOLD_RAM_CRITICAL=97
 
-# High physical RAM threshold (% used).
-# Combined with THRESHOLD_ZRAM_HIGH; both must be met to trigger the warning.
+# High Physical RAM Threshold (% used)
+# Evaluated in combination with THRESHOLD_ZRAM_HIGH. Both conditions must be met to trigger.
 THRESHOLD_RAM_HIGH=90
 
-# High ZRAM Swap occupancy threshold (% used).
-# Combined with THRESHOLD_RAM_HIGH; both must be met to trigger the warning.
+# High ZRAM Swap Occupancy Threshold (% used)
+# Evaluated in combination with THRESHOLD_RAM_HIGH. Prevents system stalling from swap exhaustion.
 THRESHOLD_ZRAM_HIGH=90
 
-# Polling interval (seconds) between memory scans.
+# RAM Recovery Hysteresis Threshold (% used)
+# The cooldown timer ONLY resets if physical RAM drops safely below this percentage.
+# This strictly prevents notification spam if your RAM endlessly fluctuates between 96% and 97%.
+THRESHOLD_RAM_RECOVERY=85
+
+# Polling Interval (seconds)
+# The wait time between memory scans.
 POLL_INTERVAL=10
 
-# Cooldown interval (seconds) to prevent spamming notifications.
+# Cooldown Interval (seconds)
+# The minimum required wait time before a subsequent notification is allowed to fire.
 COOLDOWN_SECS=120
 
-# Timestamp of the last sent alert (uses built-in EPOCHSECONDS)
+# Internal state tracking (Do not modify)
 last_alert_time=0
 
+# ==============================================================================
+# ENVIRONMENT PREPARATION
+# ==============================================================================
+
+# Load Bash's internal C-compiled sleep to prevent forking /usr/bin/sleep
+if [[ -f /usr/lib/bash/sleep ]]; then
+    enable -f /usr/lib/bash/sleep sleep 2>/dev/null
+fi
+
+# ==============================================================================
+# MAIN POLLING LOOP
+# ==============================================================================
+
 while true; do
-    # 1. Parse RAM stats from /proc/meminfo in pure Bash
     MemTotal=0
     MemAvailable=0
     
+    # 1. Parse RAM stats (Short-circuits at line 3 to save cycles)
     while read -r key val _; do
         case "$key" in
-            MemTotal:) MemTotal=$val ;;
-            MemAvailable:) MemAvailable=$val ;;
+            MemTotal:)     MemTotal=$val ;;
+            MemAvailable:) MemAvailable=$val; break ;; 
         esac
     done < /proc/meminfo
     
@@ -45,7 +66,7 @@ while true; do
         RamUsedPct=0
     fi
     
-    # 2. Parse ZRAM stats directly from sysfs in pure Bash (no processes spawned)
+    # 2. Parse ZRAM stats (Direct SysFS reads, no pipes)
     ZramTotal=0
     ZramUsed=0
     
@@ -60,20 +81,21 @@ while true; do
         ZramUsedPct=0
     fi
     
-    # 3. Check if thresholds are exceeded (RAM >= 97% OR [RAM >= 90% AND ZRAM >= 90%])
+    # 3. Threshold Checks & Hysteresis Timer
     if (( RamUsedPct >= THRESHOLD_RAM_CRITICAL || (RamUsedPct >= THRESHOLD_RAM_HIGH && ZramUsedPct >= THRESHOLD_ZRAM_HIGH) )); then
         if (( last_alert_time == 0 || (EPOCHSECONDS - last_alert_time) >= COOLDOWN_SECS )); then
-            # Threshold crossed! Send critical notification.
+            
             /usr/bin/notify-send -a "dusky-high-ram-alert" -u critical \
                 "CRITICAL MEMORY LOW" \
                 "RAM: ${RamUsedPct}% | ZRAM: ${ZramUsedPct}%"
+            
             last_alert_time=$EPOCHSECONDS
         fi
-    else
-        # Reset alert timer when memory recovers below thresholds
+    elif (( RamUsedPct <= THRESHOLD_RAM_RECOVERY )); then
+        # Hysteresis reset: only clear timer when memory has legitimately recovered
         last_alert_time=0
     fi
     
-    # Sleep safely
+    # Pure Bash sleep (if loaded), falling back to binary gracefully
     sleep "$POLL_INTERVAL"
 done
