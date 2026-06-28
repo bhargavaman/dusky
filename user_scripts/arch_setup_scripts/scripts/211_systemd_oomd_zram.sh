@@ -147,6 +147,11 @@ ManagedOOMPreference=avoid
 # do NOT mark the entire unit as failed and tear down the compositor.
 # Instead, let the compositor continue running.
 OOMPolicy=continue
+
+# Tell the kernel OOM killer to almost never target the compositor process.
+# Range: -1000 (immune) to +1000 (first to die). Default is 200 for user services.
+# -900 makes the compositor one of the last processes the kernel would ever consider killing.
+OOMScoreAdjust=-900
 EOF
 
 # --- 4. Dry Run Check ---
