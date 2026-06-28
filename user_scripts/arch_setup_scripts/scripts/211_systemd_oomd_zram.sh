@@ -26,6 +26,10 @@ readonly USER_SLICE_CONF="${USER_SLICE_DIR}/99-oomd-avoid.conf"
 readonly UWSM_SLICE_DIR="/etc/systemd/user/app-graphical-session.slice.d"
 readonly UWSM_SLICE_CONF="${UWSM_SLICE_DIR}/99-oomd-avoid.conf"
 
+# Hyprland service shield (protect compositor from systemd-oomd)
+readonly HYPRLAND_SVC_DIR="/etc/systemd/user/wayland-wm@hyprland.desktop.service.d"
+readonly HYPRLAND_SVC_CONF="${HYPRLAND_SVC_DIR}/99-oomd-avoid.conf"
+
 # --- Formatting ---
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
     C_RESET=$'\033[0m'
@@ -94,7 +98,8 @@ tmp_oomd="$(umask 077 && mktemp)"
 tmp_user_svc="$(umask 077 && mktemp)"
 tmp_session_slice="$(umask 077 && mktemp)"
 tmp_uwsm_slice="$(umask 077 && mktemp)"
-trap 'rm -f "$tmp_oomd" "$tmp_user_svc" "$tmp_session_slice" "$tmp_uwsm_slice"' EXIT
+tmp_hyprland_svc="$(umask 077 && mktemp)"
+trap 'rm -f "$tmp_oomd" "$tmp_user_svc" "$tmp_session_slice" "$tmp_uwsm_slice" "$tmp_hyprland_svc"' EXIT
 
 # A. Global OOMD Limits (The Recalibrated Hair-Trigger)
 cat > "$tmp_oomd" <<EOF
@@ -131,6 +136,19 @@ EOF
 # Clone the shield for modern UWSM graphical sessions
 cp "$tmp_session_slice" "$tmp_uwsm_slice"
 
+# Hyprland service shield
+cat > "$tmp_hyprland_svc" <<EOF
+# Managed by ${SCRIPT_NAME}
+[Service]
+# Shield the compositor from systemd-oomd by instructing it to avoid killing this service.
+ManagedOOMPreference=avoid
+
+# When the kernel OOM killer terminates a child process (e.g., firefox, kitty),
+# do NOT mark the entire unit as failed and tear down the compositor.
+# Instead, let the compositor continue running.
+OOMPolicy=continue
+EOF
+
 # --- 4. Dry Run Check ---
 if (( DRY_RUN == 1 )); then
     log_info "DRY RUN EXECUTED. Would generate the following configurations:"
@@ -142,6 +160,8 @@ if (( DRY_RUN == 1 )); then
     cat "$tmp_session_slice"
     echo -e "\n${C_BOLD}[ ${UWSM_SLICE_CONF} (Modern UWSM) ]${C_RESET}"
     cat "$tmp_uwsm_slice"
+    echo -e "\n${C_BOLD}[ ${HYPRLAND_SVC_CONF} (Hyprland Shield) ]${C_RESET}"
+    cat "$tmp_hyprland_svc"
     exit 0
 fi
 
@@ -166,6 +186,7 @@ install_file "$tmp_oomd" "$OOMD_CONF"
 install_file "$tmp_user_svc" "$USER_SVC_CONF"
 install_file "$tmp_session_slice" "$USER_SLICE_CONF"
 install_file "$tmp_uwsm_slice" "$UWSM_SLICE_CONF"
+install_file "$tmp_hyprland_svc" "$HYPRLAND_SVC_CONF"
 
 if (( CHANGED == 0 )); then
     log_success "No changes required. Existing systemd-oomd configuration is already optimal."
