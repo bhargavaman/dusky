@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Elite Arch Linux systemd-oomd & UWSM Optimizer
-# Target: Arch Linux Cutting-Edge (systemd 255+, Bash 5.3+)
+# Target: Arch Linux Cutting-Edge (systemd 261+, Bash 5.3+, Kernel 7.1+)
 # Scope: Platinum Grade. Arms oomd with surgical kill policies, shields Hyprland.
 # Priority: Recalibrated for aggressive ZRAM. 10s kill-switch prevents system hangs.
-# Updates: Added Search & Destroy for competing OOM daemons to prevent policy sabotage.
+# Updates: Restored critical documentation, fixed UWSM template pathing, and
+#          stripped illegal unprivileged kernel adjustments.
 # =============================================================================
 
 set -euo pipefail
@@ -26,8 +27,10 @@ readonly USER_SLICE_CONF="${USER_SLICE_DIR}/99-oomd-avoid.conf"
 readonly UWSM_SLICE_DIR="/etc/systemd/user/app-graphical-session.slice.d"
 readonly UWSM_SLICE_CONF="${UWSM_SLICE_DIR}/99-oomd-avoid.conf"
 
-# Hyprland service shield (protect compositor from systemd-oomd)
-readonly HYPRLAND_SVC_DIR="/etc/systemd/user/wayland-wm@hyprland.desktop.service.d"
+# CORRECTED: UWSM Template Service Shield
+# Systemd requires drop-ins for templates to target the base name (@.service), 
+# not the instantiated name (@hyprland.desktop.service).
+readonly HYPRLAND_SVC_DIR="/etc/systemd/user/wayland-wm@.service.d"
 readonly HYPRLAND_SVC_CONF="${HYPRLAND_SVC_DIR}/99-oomd-avoid.conf"
 
 # --- Formatting ---
@@ -136,7 +139,7 @@ EOF
 # Clone the shield for modern UWSM graphical sessions
 cp "$tmp_session_slice" "$tmp_uwsm_slice"
 
-# Hyprland service shield
+# D. Hyprland service shield (The Core)
 cat > "$tmp_hyprland_svc" <<EOF
 # Managed by ${SCRIPT_NAME}
 [Service]
@@ -148,10 +151,11 @@ ManagedOOMPreference=avoid
 # Instead, let the compositor continue running.
 OOMPolicy=continue
 
-# Tell the kernel OOM killer to almost never target the compositor process.
-# Range: -1000 (immune) to +1000 (first to die). Default is 200 for user services.
-# -900 makes the compositor one of the last processes the kernel would ever consider killing.
-OOMScoreAdjust=-900
+# NOTE ON OOMScoreAdjust:
+# Setting OOMScoreAdjust=-900 has been stripped from this configuration. 
+# The Linux kernel strictly prohibits unprivileged users (UID 1000) from requesting 
+# negative OOM scores. It will silently fail and default to 200. We rely entirely on
+# the systemd native 'ManagedOOMPreference=avoid' above.
 EOF
 
 # --- 4. Dry Run Check ---
@@ -201,6 +205,7 @@ else
     
     log_info "Reloading active user managers to ingest session shields..."
     declare -a uids=()
+    # Read active user service UIDs natively using Bash mapfile/read
     while read -r line; do
         if [[ "$line" =~ user@([0-9]+)\.service ]]; then
             uids+=("${BASH_REMATCH[1]}")
@@ -211,8 +216,9 @@ else
         user="$(id -un "$uid" 2>/dev/null || true)"
         [[ -z "$user" ]] && continue
         
+        # Attempt seamless machinectl reload first (modern systemd), fallback to runuser
         if systemctl --user --machine="${user}@.host" daemon-reload >/dev/null 2>&1; then
-            log_success "Reloaded user manager for ${user}."
+            log_success "Reloaded user manager for ${user} (via machinectl)."
         elif command -v runuser >/dev/null 2>&1 && [[ -S "/run/user/${uid}/bus" ]]; then
             if runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" systemctl --user daemon-reload >/dev/null 2>&1; then
                 log_success "Reloaded user manager for ${user} (via runuser)."
