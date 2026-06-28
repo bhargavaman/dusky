@@ -22,6 +22,7 @@ DAMON_PARAMS_DIR = Path("/sys/module/damon_reclaim/parameters")
 RAM_DEMARCATION_GB = 30.0
 
 # --- Profile 1: Low-RAM Configuration (< 30GB) ---
+# Clean production defaults for low-RAM systems.
 LOW_RAM_CONFIG = {
     "sample_interval": 500000,    # 500ms: How often the monitor checks what memory is used (wakes up 2 times/sec)
     "aggr_interval": 5000000,     # 5s: How often the monitor aggregates statistics to find cold memory
@@ -29,9 +30,12 @@ LOW_RAM_CONFIG = {
     "wmarks_high": 500,           # 50%: Sleep the monitor if free RAM is above this percentage (500 parts per thousand)
     "wmarks_mid": 400,            # 40%: Activate the monitor if free RAM drops below this percentage (400 parts per thousand)
     "wmarks_low": 200,            # 20%: Pause the monitor if free RAM drops below this (to protect latency, 200 parts per thousand)
+    "quota_ms": 10,               # 10ms: Limit CPU overhead to a maximum of 10ms per second
+    "quota_sz": 134217728,        # 128MB: Limit pageout throughput to 128 MB per second
 }
 
 # --- Profile 2: High-RAM Configuration (>= 30GB) ---
+# Used for the host system (62 GB RAM) - Default production settings.
 HIGH_RAM_CONFIG = {
     "sample_interval": 2000000,   # 2s: How often the monitor checks what memory is used (wakes up once every 2 seconds)
     "aggr_interval": 10000000,    # 10s: How often the monitor aggregates statistics to find cold memory
@@ -39,6 +43,8 @@ HIGH_RAM_CONFIG = {
     "wmarks_high": 300,           # 30%: Sleep the monitor if free RAM is above this percentage (300 parts per thousand)
     "wmarks_mid": 200,            # 20%: Activate the monitor if free RAM drops below this percentage (200 parts per thousand)
     "wmarks_low": 100,            # 10%: Pause the monitor if free RAM drops below this (to protect latency, 100 parts per thousand)
+    "quota_ms": 10,               # 10ms: Limit CPU overhead to a maximum of 10ms per second
+    "quota_sz": 134217728,        # 128MB: Limit pageout throughput to 128 MB per second
 }
 
 
@@ -135,6 +141,8 @@ def main(argv: list[str]) -> int:
     wmarks_high = cfg["wmarks_high"]
     wmarks_mid = cfg["wmarks_mid"]
     wmarks_low = cfg["wmarks_low"]
+    quota_ms = cfg.get("quota_ms", 10)
+    quota_sz = cfg.get("quota_sz", 134217728)
 
     info(f"Selected Profile: {C.BOLD}{label}{C.RST} — {C.DIM}{blurb}{C.RST}")
 
@@ -153,6 +161,10 @@ w /sys/module/damon_reclaim/parameters/min_age - - - - {min_age}
 w /sys/module/damon_reclaim/parameters/wmarks_high - - - - {wmarks_high}
 w /sys/module/damon_reclaim/parameters/wmarks_mid - - - - {wmarks_mid}
 w /sys/module/damon_reclaim/parameters/wmarks_low - - - - {wmarks_low}
+
+# Quotas
+w /sys/module/damon_reclaim/parameters/quota_ms - - - - {quota_ms}
+w /sys/module/damon_reclaim/parameters/quota_sz - - - - {quota_sz}
 
 # Start the daemon
 w /sys/module/damon_reclaim/parameters/enabled - - - - Y
@@ -182,6 +194,8 @@ w /sys/module/damon_reclaim/parameters/enabled - - - - Y
         (DAMON_PARAMS_DIR / "wmarks_high").write_text(str(wmarks_high))
         (DAMON_PARAMS_DIR / "wmarks_mid").write_text(str(wmarks_mid))
         (DAMON_PARAMS_DIR / "wmarks_low").write_text(str(wmarks_low))
+        (DAMON_PARAMS_DIR / "quota_ms").write_text(str(quota_ms))
+        (DAMON_PARAMS_DIR / "quota_sz").write_text(str(quota_sz))
         (DAMON_PARAMS_DIR / "enabled").write_text("Y")
         ok("Live parameters written successfully")
     except Exception as e:
