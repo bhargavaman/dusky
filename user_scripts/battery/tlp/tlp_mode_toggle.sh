@@ -21,7 +21,7 @@ readonly -a PROFILES=('power-saver' 'balanced' 'performance')
 declare -rA ICON_NERDFONT=(
     [performance]=$'\U000f04c5'    # 󰓅
     [balanced]=$'\U000f007e'       # 󰖳
-    [power-saver]=$'\U000f0327'    # 󰌧
+    [power-saver]=$'\U000f032a'    # 󰌪
     [unknown]='?'
 )
 
@@ -92,7 +92,7 @@ send_notification() {
             --urgency="low" \
             --hint=string:x-canonical-private-synchronous:power-profile \
             "TLP ${pretty}" \
-            "${font_icon}  ${pretty} Mode" &
+            "${font_icon}  ${pretty}" &
         disown
     fi
 }
