@@ -86,14 +86,13 @@ send_notification() {
     local profile="$1"
     if command -v notify-send >/dev/null 2>&1; then
         local pretty="${LABEL[$profile]:-$profile}"
-        local icon="${ICON_NOTIFY[$profile]:-${ICON_NOTIFY[unknown]}}"
+        local font_icon="${ICON_NERDFONT[$profile]:-}"
         notify-send \
-            --app-name="TLP Manager" \
+            --app-name="dusky-tlp" \
             --urgency="low" \
-            --icon="$icon" \
             --hint=string:x-canonical-private-synchronous:power-profile \
-            "Power Profile" \
-            "Active: ${pretty}" &
+            "TLP ${pretty}" \
+            "${font_icon}  ${pretty} Mode" &
         disown
     fi
 }
