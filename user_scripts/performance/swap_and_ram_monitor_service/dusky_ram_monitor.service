@@ -1,0 +1,11 @@
+[Unit]
+Description=Dusky RAM Monitor Daemon
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/user_scripts/performance/swap_and_ram_monitor_service/dusky_ram_monitor_daemon.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

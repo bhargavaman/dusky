@@ -57,6 +57,10 @@ CORE_USER_DEFS = {
     "hyprpolkitagent.service": (
         "(Polkit) Root Password Prompt",
         "The authentication agent for Hyprland. This is what prompts you for a password when an app requests root access (like pkexec)."
+    ),
+    "dusky_ram_monitor.service": (
+        "Dusky RAM Monitor Daemon",
+        "Background monitor that alerts you if physical RAM usage exceeds 95% or ZRAM swap occupancy exceeds 90%. Clicking the alert opens an interactive Rofi menu to select and terminate memory-heavy processes before a system crash."
     )
 }
 
