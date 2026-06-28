@@ -9,6 +9,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import subprocess
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,8 @@ WEATHER_CODES: dict[int, tuple[str, str]] = {
 
 IMPERIAL_COUNTRIES = {"US", "LR", "MM"}
 STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather"
+TIME_STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather_time"
+IS_BACKGROUND = False
 
 HTTP_HEADERS = {
     "User-Agent": "waybar-weather/2.0 (Arch Linux; Python 3.14)",
@@ -196,6 +199,12 @@ def emit_payload(payload: JsonDict) -> None:
 
 
 def fail_gracefully(message: str, tooltip: str = "") -> None:
+    if IS_BACKGROUND:
+        current_time = time.time()
+        _, last_success = load_time_state(None)
+        write_time_state(current_time, last_success)
+        sys.exit(0)
+
     emit_payload({
         "text": "󰖐 Err",
         "alt": "Error",
@@ -233,11 +242,70 @@ def make_offline_payload(payload: JsonDict) -> JsonDict:
 
 
 def emit_cached_or_fail(state: StateRecord | None, error_tooltip: str) -> None:
+    if IS_BACKGROUND:
+        current_time = time.time()
+        _, last_success = load_time_state(state)
+        write_time_state(current_time, last_success)
+        sys.exit(0)
+
     if state is not None:
         emit_payload(make_offline_payload(state.payload))
         raise SystemExit(0)
 
     fail_gracefully("Network Offline", error_tooltip)
+
+
+def load_time_state(state: StateRecord | None) -> tuple[float, float]:
+    try:
+        raw_text = TIME_STATE_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw_text)
+        return float(data.get("last_attempt", 0.0)), float(data.get("last_success", 0.0))
+    except Exception:
+        if state is not None:
+            return state.saved_at, state.saved_at
+        return 0.0, 0.0
+
+
+def write_time_state(last_attempt: float, last_success: float) -> None:
+    data = {
+        "last_attempt": last_attempt,
+        "last_success": last_success,
+    }
+    temp_path: Path | None = None
+    try:
+        TIME_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=TIME_STATE_FILE.parent,
+            delete=False,
+            prefix=f".{TIME_STATE_FILE.name}.",
+            suffix=".tmp",
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(json_dumps(data))
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        temp_path.replace(TIME_STATE_FILE)
+    except OSError:
+        with suppress(OSError):
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+
+
+def spawn_background_fetch(args: argparse.Namespace) -> None:
+    script_path = os.path.abspath(__file__)
+    args_to_pass = [arg for arg in sys.argv[1:] if arg != "--background-fetch"]
+    try:
+        subprocess.Popen(
+            [sys.executable, script_path, "--background-fetch"] + args_to_pass,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        pass
 
 
 def is_state_fresh(state: StateRecord, ttl_seconds: int) -> bool:
@@ -512,6 +580,7 @@ def build_weather_payload(
 
 
 def main() -> None:
+    global IS_BACKGROUND
     parser = argparse.ArgumentParser(description="Waybar weather module")
     parser.add_argument("--lat", type=parse_latitude, help="Latitude override")
     parser.add_argument("--lon", type=parse_longitude, help="Longitude override")
@@ -519,8 +588,13 @@ def main() -> None:
         "-i",
         "--interval",
         type=parse_interval,
-        default=3600,
+        default=1800,
         help="Update interval in seconds",
+    )
+    parser.add_argument(
+        "--background-fetch",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
 
     unit_group = parser.add_mutually_exclusive_group()
@@ -532,84 +606,114 @@ def main() -> None:
     if (args.lat is None) != (args.lon is None):
         parser.error("Arguments --lat and --lon must be provided together.")
 
+    if args.background_fetch:
+        IS_BACKGROUND = True
+
     request_key = RequestKey.from_args(args)
     state = load_state()
     matching_state = state if state and state.request_key == request_key else None
 
-    # Fast-path cache hit only when the cached request matches the current request.
-    if matching_state and is_state_fresh(matching_state, args.interval):
-        emit_payload(matching_state.payload)
-        return
+    current_time = time.time()
+    last_attempt, last_success = load_time_state(matching_state)
 
-    lat: float
-    lon: float
-    country_code = ""
-    city = ""
+    if args.background_fetch:
+        # Worker mode: do the actual network requests
+        lat: float
+        lon: float
+        country_code = ""
+        city = ""
 
-    if args.lat is None:
-        ip_lat, ip_lon, country_code, city = get_ip_location()
-        if ip_lat is None or ip_lon is None:
-            emit_cached_or_fail(state, "Failed to determine location and no cached weather is available.")
-        lat, lon = ip_lat, ip_lon
-    else:
-        lat, lon = args.lat, args.lon
-        if not args.celsius and not args.fahrenheit:
-            country_code, city = reverse_geocode(lat, lon)
-            if not country_code and matching_state:
-                country_code = matching_state.country_code
-                city = city or matching_state.city
-        elif matching_state:
-            city = matching_state.city
+        if args.lat is None:
+            ip_lat, ip_lon, country_code, city = get_ip_location()
+            if ip_lat is None or ip_lon is None:
+                emit_cached_or_fail(state, "Failed to determine location and no cached weather is available.")
+            lat, lon = ip_lat, ip_lon
+        else:
+            lat, lon = args.lat, args.lon
+            if not args.celsius and not args.fahrenheit:
+                country_code, city = reverse_geocode(lat, lon)
+                if not country_code and matching_state:
+                    country_code = matching_state.country_code
+                    city = city or matching_state.city
+            elif matching_state:
+                city = matching_state.city
 
-    unit = resolve_unit(args, country_code, matching_state)
-    temp_unit = "fahrenheit" if unit == "imperial" else "celsius"
+        unit = resolve_unit(args, country_code, matching_state)
+        temp_unit = "fahrenheit" if unit == "imperial" else "celsius"
 
-    weather_data = fetch_json(
-        "https://api.open-meteo.com/v1/forecast",
-        params={
-            "latitude": lat,
-            "longitude": lon,
-            "current": "temperature_2m,weather_code",
-            "temperature_unit": temp_unit,
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-            "timezone": "auto",
-            "forecast_days": 1,
-        },
-        timeout=10.0,
-    )
+        weather_data = fetch_json(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "current": "temperature_2m,weather_code",
+                "temperature_unit": temp_unit,
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "timezone": "auto",
+                "forecast_days": 1,
+            },
+            timeout=10.0,
+        )
 
-    if not weather_data or weather_data.get("error"):
-        reason = weather_data.get("reason") if isinstance(weather_data, dict) else None
-        error_tooltip = str(reason) if reason else "Failed to fetch weather and no cached weather is available."
-        emit_cached_or_fail(state, error_tooltip)
+        if not weather_data or weather_data.get("error"):
+            reason = weather_data.get("reason") if isinstance(weather_data, dict) else None
+            error_tooltip = str(reason) if reason else "Failed to fetch weather and no cached weather is available."
+            emit_cached_or_fail(state, error_tooltip)
 
-    try:
-        temp, weather_code, temp_max, temp_min, precip_prob = parse_weather_data(weather_data)
-    except (TypeError, ValueError, IndexError, AttributeError):
-        emit_cached_or_fail(state, "Malformed response from the weather service.")
+        try:
+            temp, weather_code, temp_max, temp_min, precip_prob = parse_weather_data(weather_data)
+        except (TypeError, ValueError, IndexError, AttributeError):
+            emit_cached_or_fail(state, "Malformed response from the weather service.")
 
-    payload = build_weather_payload(
-        temp=temp,
-        weather_code=weather_code,
-        temp_max=temp_max,
-        temp_min=temp_min,
-        precip_prob=precip_prob,
-        unit=unit,
-        city=city,
-    )
-
-    write_state(
-        StateRecord(
-            payload=payload,
-            saved_at=time.time(),
-            request_key=request_key,
-            effective_unit=unit,
-            country_code=country_code,
+        payload = build_weather_payload(
+            temp=temp,
+            weather_code=weather_code,
+            temp_max=temp_max,
+            temp_min=temp_min,
+            precip_prob=precip_prob,
+            unit=unit,
             city=city,
         )
-    )
 
-    emit_payload(payload)
+        write_state(
+            StateRecord(
+                payload=payload,
+                saved_at=current_time,
+                request_key=request_key,
+                effective_unit=unit,
+                country_code=country_code,
+                city=city,
+            )
+        )
+        write_time_state(current_time, current_time)
+        return
+
+    else:
+        # Query mode: print cache and potentially spawn background worker
+        is_fresh = matching_state and (current_time - last_success < args.interval)
+
+        if is_fresh:
+            emit_payload(matching_state.payload)
+            return
+
+        # Cache is stale or missing/unmatched
+        # Trigger background fetch if we haven't attempted recently or if config changed
+        config_changed = (state is not None) and (matching_state is None)
+        if config_changed or (current_time - last_attempt > args.interval):
+            # Optimistically write last_attempt before spawning to block multiple spawns
+            write_time_state(current_time, last_success)
+            spawn_background_fetch(args)
+
+        if matching_state:
+            # Emit offline/stale payload
+            emit_payload(make_offline_payload(matching_state.payload))
+        else:
+            emit_payload({
+                "text": "󰖐 Loading...",
+                "alt": "Loading",
+                "tooltip": "Fetching weather in background...",
+                "class": "weather",
+            })
 
 
 if __name__ == "__main__":
