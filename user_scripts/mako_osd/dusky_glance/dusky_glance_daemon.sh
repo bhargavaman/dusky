@@ -319,7 +319,7 @@ case "$MODE" in
         done
         ;;
 
-    --battery)
+    --battery|--battery-percent|--battery-watts|--battery-time)
         bat_dir=""
         for d in /sys/class/power_supply/*; do
             if [[ -f "$d/type" ]]; then
@@ -401,7 +401,19 @@ case "$MODE" in
                     fi
                 fi
                 
-                printf -v out_str "%s%% %d.%dW%s" "$cap" "$watts_int" "$watts_frac" "$time_str"
+                if [[ "$MODE" == "--battery-percent" ]]; then
+                    out_str="${cap}%"
+                elif [[ "$MODE" == "--battery-watts" ]]; then
+                    out_str="${watts_int}.${watts_frac}W"
+                elif [[ "$MODE" == "--battery-time" ]]; then
+                    if [[ -n "$time_str" ]]; then
+                        out_str="${time_str#$'\n'}"
+                    else
+                        out_str="N/A"
+                    fi
+                else
+                    printf -v out_str "%s%% %d.%dW%s" "$cap" "$watts_int" "$watts_frac" "$time_str"
+                fi
                 send_osd "$out_str"
             else
                 send_osd "Bat: N/A"

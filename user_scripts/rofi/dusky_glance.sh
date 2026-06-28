@@ -403,7 +403,25 @@ case "$choice" in
         fi
         ;;
     '  CPU Temp')       "$DAEMON_SCRIPT" --temp & disown ;;
-    '󰁹  Battery')       "$DAEMON_SCRIPT" --battery & disown ;;
+    '󰁹  Battery')
+        b_opts=(
+            "󰁹  Standard HUD"
+            "󰁹  Percent Only"
+            "󰁹  Power Draw Only"
+            "󰁹  Time Remaining Only"
+        )
+        bchoice=$(printf '%s\n' "${b_opts[@]}" | "${ROFI_SUB[@]}" -p "Battery") || exit 0
+        
+        if [[ "$bchoice" == *"Standard HUD"* ]]; then
+            "$DAEMON_SCRIPT" --battery & disown
+        elif [[ "$bchoice" == *"Percent Only"* ]]; then
+            "$DAEMON_SCRIPT" --battery-percent & disown
+        elif [[ "$bchoice" == *"Power Draw Only"* ]]; then
+            "$DAEMON_SCRIPT" --battery-watts & disown
+        elif [[ "$bchoice" == *"Time Remaining Only"* ]]; then
+            "$DAEMON_SCRIPT" --battery-time & disown
+        fi
+        ;;
     '󰈀  Network Speed')  "$DAEMON_SCRIPT" --network & disown ;;
     '󰔚  System Uptime')  "$DAEMON_SCRIPT" --uptime & disown ;;
     '󰽽  Workspace')      "$DAEMON_SCRIPT" --workspace & disown ;;
