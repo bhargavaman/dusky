@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Elite Arch Linux systemd-oomd & UWSM Optimizer
-# Target: Arch Linux Cutting-Edge (systemd 261+, Bash 5.3+, Kernel 7.1+)
-# Scope: Arms oomd with early PSI detection, shields Hyprland compositor.
-# Priority: Low PSI threshold (30%) and short window (2s) trigger oomd action
-#           before swap exhaustion, allowing app scopes to be killed instead of
-#           the compositor.
+# Elite Arch Linux OOM Prevention & Compositor Shielding Configurator
+# Target: Arch Linux Cutting-Edge (Kernel 7.1+, Bash 5.3+, systemd 260+)
+# Scope: Platinum Grade. High-Performance Userspace OOM Reclaim.
 # =============================================================================
 
 set -euo pipefail
@@ -14,20 +11,7 @@ readonly SCRIPT_NAME="${0##*/}"
 readonly SELF_PATH="$(realpath -e -- "${BASH_SOURCE[0]}")"
 
 # --- Target Configurations ---
-readonly OOMD_DIR="/etc/systemd/oomd.conf.d"
-readonly OOMD_CONF="${OOMD_DIR}/99-zram-tuning.conf"
-
-readonly USER_SVC_DIR="/etc/systemd/system/user@.service.d"
-readonly USER_SVC_CONF="${USER_SVC_DIR}/99-oomd-kill-policy.conf"
-
-readonly UWSM_SLICE_DIR="/etc/systemd/user/app-graphical-session.slice.d"
-readonly UWSM_SLICE_CONF="${UWSM_SLICE_DIR}/99-oomd-avoid.conf"
-
-# CORRECTED: UWSM Template Service Shield
-# Systemd requires drop-ins for templates to target the base name (@.service), 
-# not the instantiated name (@hyprland.desktop.service).
-readonly HYPRLAND_SVC_DIR="/etc/systemd/user/wayland-wm@.service.d"
-readonly HYPRLAND_SVC_CONF="${HYPRLAND_SVC_DIR}/99-oomd-avoid.conf"
+readonly EARLYOOM_CONF="/etc/default/earlyoom"
 
 # --- Formatting ---
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
@@ -51,7 +35,7 @@ print_help() {
     cat <<EOF
 ${C_BOLD}Usage:${C_RESET} ${SCRIPT_NAME} [OPTIONS]
 
-  --dry-run, -n        Print the generated systemd drop-ins and exit
+  --dry-run, -n        Print the generated configuration and exit without applying
   --help, -h           Show this help menu
 EOF
 }
@@ -76,129 +60,55 @@ if [[ $EUID -ne 0 && $DRY_RUN -eq 0 ]]; then
     exec sudo -- /usr/bin/bash "$SELF_PATH" "$@"
 fi
 
-log_info "Initializing Platinum systemd-oomd & UWSM Optimizer..."
+log_info "Initializing Platinum userspace OOM shield optimizer..."
 
-# --- 2.5 Search & Destroy: Competing OOM Daemons ---
-# Legacy daemons that read % free RAM will panic on ZRAM and destroy the session.
-if (( DRY_RUN == 0 )); then
-    log_info "Scanning for competing legacy OOM daemons..."
-    for rogue_daemon in earlyoom nohang; do
-        if systemctl is-enabled "$rogue_daemon" &>/dev/null || systemctl is-active "$rogue_daemon" &>/dev/null; then
-            log_warn "Sabotage risk detected: '${rogue_daemon}' is active or enabled."
-            systemctl disable --now "$rogue_daemon" >/dev/null 2>&1 || true
-            systemctl mask "$rogue_daemon" >/dev/null 2>&1 || true
-            log_success "Neutralized ${rogue_daemon}. systemd-oomd now has absolute authority."
+# =============================================================================
+# --- 3. CLEANUP GHOST CONFIGURATIONS ---
+# =============================================================================
+log_info "Scanning for legacy/ghost OOM configurations..."
+
+legacy_configs=(
+    "/etc/systemd/oomd.conf.d/99-zram-tuning.conf"
+    "/etc/systemd/system/user@.service.d/99-oomd-kill-policy.conf"
+    "/etc/systemd/system/user-.slice.d/99-oomd.conf"
+    "/etc/systemd/user/session.slice.d/99-oomd-avoid.conf"
+    "/etc/systemd/user/scope.d/99-oom-adjust.conf"
+    "/etc/systemd/user/wayland-wm@.service.d/99-oomd-avoid.conf"
+    "/usr/local/bin/hyprland-oom-shield.sh"
+    "/etc/systemd/system/hyprland-oom-shield.service"
+)
+
+declare -i CLEANED_ANY=0
+for conf in "${legacy_configs[@]}"; do
+    if [[ -f "$conf" ]]; then
+        # Safety check to avoid deleting a custom user-created script
+        if [[ "$conf" == "/usr/local/bin/hyprland-oom-shield.sh" ]]; then
+            if ! grep -q "hyprland-oom-shield" "$conf" 2>/dev/null; then
+                log_warn "Detected custom user script at ${conf}. Skipping removal to preserve changes."
+                continue
+            fi
         fi
-    done
-fi
 
-# --- 3. Temp File Generation ---
-tmp_oomd="$(umask 077 && mktemp)"
-tmp_user_svc="$(umask 077 && mktemp)"
-tmp_uwsm_slice="$(umask 077 && mktemp)"
-tmp_hyprland_svc="$(umask 077 && mktemp)"
-trap 'rm -f "$tmp_oomd" "$tmp_user_svc" "$tmp_uwsm_slice" "$tmp_hyprland_svc"' EXIT
-
-# A. Global OOMD Limits (PSI-Only Detection)
-cat > "$tmp_oomd" <<EOF
-# Managed by ${SCRIPT_NAME}
-[OOM]
-# SwapUsedLimit is intentionally omitted. When a single cgroup (e.g. the
-# compositor's) contains most of the system's memory+swap, SwapUsedLimit
-# kills that cgroup regardless of ManagedOOMPreference=avoid. PSI-based
-# killing evaluates system-wide pressure and is more selective.
-
-# PSI: Low threshold (30%) and short window (2s) trigger oomd action
-# before swap is exhausted, giving it time to kill app scopes instead
-# of the compositor. NOTE: this only works if apps have their own
-# cgroups (via uwsm-app) — memory hogs inside the compositor's cgroup
-# will still get the compositor killed.
-DefaultMemoryPressureLimit=30%
-DefaultMemoryPressureDurationSec=2s
-EOF
-
-# B. User Service Policy (The Fangs)
-cat > "$tmp_user_svc" <<EOF
-# Managed by ${SCRIPT_NAME}
-[Service]
-# Grants systemd-oomd the authority to monitor and kill runaway apps in the user session.
-ManagedOOMMemoryPressure=kill
-ManagedOOMSwap=kill
-MemoryAccounting=yes
-EOF
-
-# C. UWSM Graphical Session Shield
-cat > "$tmp_uwsm_slice" <<EOF
-# Managed by ${SCRIPT_NAME}
-# NOTE: session.slice drop-in was intentionally removed — it protected the
-# compositor AND all app scopes equally, preventing oomd from preferentially
-# killing app processes. Only the compositor service gets ManagedOOMPreference=avoid.
-[Slice]
-ManagedOOMPreference=avoid
-EOF
-
-# D. Hyprland service shield (The Core)
-cat > "$tmp_hyprland_svc" <<EOF
-# Managed by ${SCRIPT_NAME}
-[Service]
-# Deprioritize the compositor for systemd-oomd.
-ManagedOOMPreference=avoid
-
-# NOTE: OOMScoreAdjust=-1000 was considered but silently rejected by the
-# user systemd instance (unprivileged). ManagedOOMPreference=avoid is the
-# primary mechanism. Combined with early PSI thresholds (30%/2s), oomd
-# should act on app scopes before needing to consider the compositor.
-
-# When the kernel OOM killer terminates a child process, do NOT mark the
-# entire unit as failed and tear down the compositor.
-OOMPolicy=continue
-EOF
-
-# --- 4. Dry Run Check ---
-if (( DRY_RUN == 1 )); then
-    log_info "DRY RUN EXECUTED. Would generate the following configurations:"
-    echo -e "\n${C_BOLD}[ ${OOMD_CONF} ]${C_RESET}"
-    cat "$tmp_oomd"
-    echo -e "\n${C_BOLD}[ ${USER_SVC_CONF} ]${C_RESET}"
-    cat "$tmp_user_svc"
-    echo -e "\n${C_BOLD}[ ${UWSM_SLICE_CONF} ]${C_RESET}"
-    cat "$tmp_uwsm_slice"
-    echo -e "\n${C_BOLD}[ ${HYPRLAND_SVC_CONF} (Hyprland Shield) ]${C_RESET}"
-    cat "$tmp_hyprland_svc"
-    exit 0
-fi
-
-# --- 5. Atomic Installation ---
-declare -i CHANGED=0
-
-install_file() {
-    local src="$1" dest="$2" dir
-    dir="$(dirname "$dest")"
-    install -d -m 0755 "$dir"
-    
-    if [[ -f "$dest" ]] && cmp -s "$src" "$dest"; then
-        log_info "${dest} is already up to date."
-    else
-        install -m 0644 "$src" "$dest"
-        log_success "Updated ${dest}"
-        CHANGED=1
+        if (( DRY_RUN == 0 )); then
+            # Handle daemon stopping if active
+            if [[ "$conf" == *hyprland-oom-shield.service ]] && systemctl is-active --quiet hyprland-oom-shield.service 2>/dev/null; then
+                systemctl disable --now hyprland-oom-shield.service >/dev/null 2>&1 || true
+            fi
+            rm -f "$conf"
+            log_success "Cleaned up legacy file: ${conf}"
+        else
+            log_info "Would clean up legacy file: ${conf}"
+        fi
+        CLEANED_ANY=1
     fi
-}
+done
 
-install_file "$tmp_oomd" "$OOMD_CONF"
-install_file "$tmp_user_svc" "$USER_SVC_CONF"
-install_file "$tmp_uwsm_slice" "$UWSM_SLICE_CONF"
-install_file "$tmp_hyprland_svc" "$HYPRLAND_SVC_CONF"
-
-if (( CHANGED == 0 )); then
-    log_success "No changes required. Existing systemd-oomd configuration is already optimal."
-else
-    log_info "Reloading systemd daemon to ingest new policies..."
+if (( CLEANED_ANY == 1 && DRY_RUN == 0 )); then
+    log_info "Reloading systemd daemon to ingest cleaned policies..."
     systemctl daemon-reload || log_warn "Global daemon-reload failed. Continuing..."
     
-    log_info "Reloading active user managers to ingest session shields..."
+    log_info "Reloading active user managers to unload legacy session configuration..."
     declare -a uids=()
-    # Read active user service UIDs natively using Bash mapfile/read
     while read -r line; do
         if [[ "$line" =~ user@([0-9]+)\.service ]]; then
             uids+=("${BASH_REMATCH[1]}")
@@ -209,7 +119,7 @@ else
         user="$(id -un "$uid" 2>/dev/null || true)"
         [[ -z "$user" ]] && continue
         
-        # Attempt seamless machinectl reload first (modern systemd), fallback to runuser
+        # Attempt machinectl reload first, fallback to runuser
         if systemctl --user --machine="${user}@.host" daemon-reload >/dev/null 2>&1; then
             log_success "Reloaded user manager for ${user} (via machinectl)."
         elif command -v runuser >/dev/null 2>&1 && [[ -S "/run/user/${uid}/bus" ]]; then
@@ -218,22 +128,114 @@ else
             fi
         fi || true 
     done
-    
-    if systemctl -q is-active systemd-oomd.service >/dev/null 2>&1; then
-        log_info "Restarting active systemd-oomd to apply new thresholds..."
-        systemctl restart systemd-oomd.service || log_warn "Failed to restart active systemd-oomd."
-    fi
+elif (( CLEANED_ANY == 1 && DRY_RUN == 1 )); then
+    log_info "Would run systemctl daemon-reload and reload active user managers for deleted configurations."
 fi
 
-# --- 6. Enable and Start ---
-log_info "Enabling and starting systemd-oomd.service..."
-systemctl enable systemd-oomd.service >/dev/null 2>&1 || log_warn "Failed to enable systemd-oomd."
-systemctl start systemd-oomd.service >/dev/null 2>&1 || log_warn "Failed to start systemd-oomd."
-
-if systemctl -q is-active systemd-oomd.service >/dev/null 2>&1; then
-    log_success "systemd-oomd is fully armed, active, and shielding the Wayland session."
+# =============================================================================
+# --- 4. DISABLE SYSTEMD-OOMD ---
+# =============================================================================
+log_info "Ensuring systemd-oomd is neutralized to prevent graphical session crashes..."
+if (( DRY_RUN == 0 )); then
+    systemctl disable --now systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || true
+    systemctl mask systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || true
 else
-    log_warn "systemd-oomd is NOT active. You may need to reboot or check 'systemctl status systemd-oomd'."
+    log_info "Would disable, stop, and mask systemd-oomd.service and systemd-oomd.socket"
 fi
 
+# =============================================================================
+# --- 5. PACKAGE INSTALLATION AND VALIDATION ---
+# =============================================================================
+declare -i JUST_INSTALLED=0
+
+if ! command -v earlyoom >/dev/null 2>&1; then
+    log_info "earlyoom is not installed. Preparing installation..."
+    if (( DRY_RUN == 0 )); then
+        # Check for pacman lockfile with a generous 120-second wait limit
+        if [[ -f /var/lib/pacman/db.lck ]]; then
+            log_warn "Arch package database is locked by another process (/var/lib/pacman/db.lck)."
+            log_warn "Waiting up to 120 seconds for lock to release..."
+            for _ in {1..120}; do
+                sleep 1
+                if [[ ! -f /var/lib/pacman/db.lck ]]; then
+                    break
+                fi
+            done
+        fi
+        
+        if [[ -f /var/lib/pacman/db.lck ]]; then
+            die "pacman database lock is still active. Please close other package manager tools and rerun."
+        fi
+
+        log_info "Installing earlyoom via pacman..."
+        systemctl unmask earlyoom.service >/dev/null 2>&1 || true
+        
+        # Try safe database-native install first. If it fails (due to database mismatch), trigger fallback sync
+        if ! pacman -S --needed --noconfirm earlyoom; then
+            log_warn "Standard pacman installation failed. Attempting database synchronization..."
+            if ! pacman -Sy --needed --noconfirm earlyoom; then
+                die "Failed to install earlyoom. Please check your internet connection or run 'pacman -Syu' manually."
+            fi
+        fi
+        JUST_INSTALLED=1
+    else
+        log_info "Would install package earlyoom via pacman (with fallback database sync if needed)"
+    fi
+else
+    log_info "earlyoom package is already installed."
+fi
+
+# =============================================================================
+# --- 6. ATOMIC CONFIGURATION FILE GENERATION ---
+# =============================================================================
+tmp_earlyoom="$(umask 077 && mktemp)"
+trap 'rm -f "$tmp_earlyoom"' EXIT
+
+# Generate earlyoom configuration payload
+# -m 10: Trigger SIGTERM at 10% available memory (SIGKILL at 5%)
+# -s 10: Trigger SIGTERM at 10% free swap (SIGKILL at 5%)
+# --avoid: Protect compositor (Hyprland, Sway, KWin, Gnome), init, and audio services
+cat > "$tmp_earlyoom" <<'EOF'
+# Sourced by earlyoom.service
+EARLYOOM_ARGS="-m 10 -s 10 -r 3600 --avoid '(^|/)(init|systemd|Xorg|sshd|Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|dbus-broker|dbus-daemon|pipewire|wireplumber)$'"
+EOF
+
+# Dry run verification of config
+if (( DRY_RUN == 1 )); then
+    log_info "DRY RUN EXECUTED. Target file: ${EARLYOOM_CONF}"
+    cat "$tmp_earlyoom"
+    exit 0
+fi
+
+# Atomic Installation
+declare -i CONFIG_CHANGED=0
+
+dir="$(dirname "$EARLYOOM_CONF")"
+if [[ ! -d "$dir" ]]; then
+    install -d -m 0755 "$dir"
+fi
+
+if [[ -f "$EARLYOOM_CONF" ]] && cmp -s "$tmp_earlyoom" "$EARLYOOM_CONF"; then
+    log_info "${EARLYOOM_CONF} is already up to date."
+else
+    install -m 0644 "$tmp_earlyoom" "$EARLYOOM_CONF"
+    log_success "Updated ${EARLYOOM_CONF}"
+    CONFIG_CHANGED=1
+fi
+
+# =============================================================================
+# --- 7. IDEMPOTENT SERVICE LIFECYCLE ---
+# =============================================================================
+systemctl unmask earlyoom.service >/dev/null 2>&1 || true
+
+if (( CONFIG_CHANGED == 1 || JUST_INSTALLED == 1 )) || ! systemctl is-active --quiet earlyoom.service; then
+    log_info "Enabling and activating earlyoom service..."
+    systemctl enable earlyoom.service >/dev/null 2>&1 || log_warn "Failed to enable earlyoom."
+    systemctl restart earlyoom.service >/dev/null 2>&1 || die "Failed to start/restart earlyoom."
+    log_success "earlyoom service has been successfully activated and reloaded."
+else
+    log_info "earlyoom service is already active with the correct configuration. No restart needed."
+fi
+
+log_success "OOM prevention and compositor shielding successfully configured."
 exit 0
