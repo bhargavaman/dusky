@@ -201,7 +201,7 @@ trap 'rm -f "$tmp_earlyoom" "$tmp_shield_bin" "$tmp_shield_svc"' EXIT
 # --avoid: Protect compositor (Hyprland, Sway, KWin, Gnome), init, and audio services
 cat > "$tmp_earlyoom" <<'EOF'
 # Sourced by earlyoom.service
-EARLYOOM_ARGS="-m 10 -s 10 -r 3600 --avoid '(^|/)(init|systemd.*|Xorg|sshd|Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|dbus-broker.*|dbus-daemon|pipewire|wireplumber|gnome-keyring.*|xdg-.*|mako|waybar|uwsm|start-hyprland|startwayland|hyprland-session|wl-clip-persist|dconf-service|at-spi2-registryd|waitpid|sd-pam|polkitd)$' --prefer '(^|/)(kitty|chrome|firefox|alacritty|discord|slack|electron)$'"
+EARLYOOM_ARGS="-m 10 -s 10 -r 3600 --avoid '(^|/)(init|systemd.*|Xorg|sshd|Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|dbus-broker.*|dbus-daemon|pipewire|wireplumber|gnome-keyring.*|xdg-.*|mako|uwsm|start-hyprland|startwayland|hyprland-session|wl-clip-persist|dconf-service|at-spi.*|waitpid|sd-pam|polkitd)$' --prefer '(^|/)(kitty|chrome|firefox|alacritty|discord|slack|electron|obsidian|thunar|gnome-clocks|spotify|code|mpv|vlc|foot|dolphin|gnome-text-editor|nvim|neovim)$'"
 EOF
 
 # Generate lightweight compositor shield script
@@ -237,7 +237,6 @@ while true; do
     fi
 
     # 3. Target user applications in app.slice (set to 800)
-    # Find all user@*.service/app.slice/cgroup.procs
     while IFS= read -r -d '' proc_file; do
         if [[ -f "$proc_file" ]]; then
             while read -r pid; do
@@ -245,14 +244,14 @@ while true; do
                     current=$(cat "/proc/${pid}/oom_score_adj" 2>/dev/null || echo "0")
                     if [[ "$current" -lt 800 ]]; then
                         comm=$(cat "/proc/${pid}/comm" 2>/dev/null || echo "")
-                        if [[ ! "$comm" =~ ^(Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|uwsm|systemd|dbus-broker)$ ]]; then
+                        if [[ ! "$comm" =~ ^(Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|uwsm|systemd.*|dbus-broker.*|dbus-daemon|pipewire|wireplumber|gnome-keyring.*|xdg-.*|mako|start-hyprland|startwayland|hyprland-session|wl-clip-persist|dconf-service|at-spi.*|waitpid|sd-pam|polkitd)$ ]]; then
                             echo 800 > "/proc/${pid}/oom_score_adj" 2>/dev/null || true
                         fi
                     fi
                 fi
             done < "$proc_file"
         fi
-    done < <(find /sys/fs/cgroup -name "app.slice" -print0 2>/dev/null || true)
+    done < <(find /sys/fs/cgroup -path "*app.slice*/cgroup.procs" -print0 2>/dev/null || true)
 
     sleep 5
 done
