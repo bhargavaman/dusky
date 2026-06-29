@@ -133,7 +133,7 @@ else
     EXPECTED_DIRTY_BG_BYTES=33554432 # 32MB bg threshold. Flushes data to disk sooner to free memory.
     EXPECTED_DIRTY_WRITEBACK=100    # 1s dirty background page writeback interval
     EXPECTED_DIRTY_EXPIRE=500       # 5s dirty page expiry limit (flushes cache aggressively)
-    EXPECTED_MGLRU_TTL=1000         # Set to 1000 to prevent compositor/UI swap thrashing.
+    EXPECTED_MGLRU_TTL=100          # Set to 100 to align with CachyOS. Speeds up idle page reclamation.
 fi
 
 # Static Constants
