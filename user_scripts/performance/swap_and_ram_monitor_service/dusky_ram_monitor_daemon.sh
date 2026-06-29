@@ -44,11 +44,6 @@ handle_snooze() {
     hud_active=false
     snooze_expire_time=$(( EPOCHSECONDS + COOLDOWN_SECS ))
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] USER SNOOZED HUD FOR ${COOLDOWN_SECS}s" >&2
-    
-    # Instantly kill the active HUD box on screen
-    /usr/bin/notify-send -a "dusky-high-ram-alert" \
-        -h string:x-canonical-private-synchronous:dusky-ram-hud \
-        -t 1 " " " " 2>/dev/null || true
 }
 
 # Catch SIGUSR1 sent by Mako's on-button-right
