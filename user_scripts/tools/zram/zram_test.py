@@ -130,11 +130,12 @@ def build_sys_mem_panel() -> Panel:
     table.add_row("Total Physical RAM", format_bytes(total_ram))
     table.add_row("Used RAM (Active)", f"{format_bytes(used_ram)} ({(used_ram/total_ram)*100:.1f}%)")
     table.add_row("Available RAM (Shock Absorber)", format_bytes(mem.get("MemAvailable", 0)))
+    table.add_row("Free RAM (Strict)", format_bytes(mem.get("MemFree", 0)))
     table.add_row("Buffers / Cache", format_bytes(mem.get("Buffers", 0) + mem.get("Cached", 0)))
     table.add_section()
-    table.add_row("Total Swap Space", format_bytes(mem.get("SwapTotal", 0)))
-    table.add_row("  ↳ [bold magenta]ZRAM Swap Used[/bold magenta]", format_bytes(swp["zram_used"]))
-    table.add_row("  ↳ [bold red]Disk Swap Used[/bold red]", f"{format_bytes(swp['disk_used'])} (Spillover)")
+    table.add_row("Total Swap Space", f"[bold white]{format_bytes(mem.get('SwapTotal', 0))}[/bold white]")
+    table.add_row("  ↳ [bold magenta]ZRAM Swap Used[/bold magenta]", f"[bold magenta]{format_bytes(swp['zram_used'])} / {format_bytes(swp['zram_total'])}[/bold magenta]")
+    table.add_row("  ↳ [bold red]Disk Swap Used[/bold red]", f"[bold red]{format_bytes(swp['disk_used'])} / {format_bytes(swp['disk_total'])}[/bold red] (Spillover)")
     
     return Panel(table, title="[bold cyan]System Memory Topology", border_style="cyan")
 
@@ -177,6 +178,14 @@ def build_zram_panel() -> Panel:
     
     return Panel(table, title="[bold magenta]/dev/zram0 Diagnostics", border_style="magenta")
 
+def get_bracketed_value(path: str) -> str:
+    val = get_sysctl(path)
+    if val == "N/A":
+        return "N/A"
+    import re
+    m = re.search(r'\[([^\]]+)\]', val)
+    return m.group(1) if m else val
+
 def build_vm_panel() -> Panel:
     table = Table(expand=True, border_style="green", show_header=False)
     table.add_column("Kernel Parameter", style="bold white")
@@ -185,9 +194,17 @@ def build_vm_panel() -> Panel:
     table.add_row("vm.swappiness", get_sysctl("/proc/sys/vm/swappiness"))
     table.add_row("vm.watermark_scale_factor", get_sysctl("/proc/sys/vm/watermark_scale_factor"))
     table.add_row("vm.vfs_cache_pressure", get_sysctl("/proc/sys/vm/vfs_cache_pressure"))
-    table.add_row("vm.page-cluster", get_sysctl("/proc/sys/vm/page-cluster"))
+    table.add_row("vm.compaction_proactiveness", get_sysctl("/proc/sys/vm/compaction_proactiveness"))
     
-    # Live DAMON Reclaim Polling (Perfectly aligns panel to 5 rows)
+    # MGLRU TTL Check
+    mglru_ttl = get_sysctl("/sys/kernel/mm/lru_gen/min_ttl_ms")
+    table.add_row("mglru.min_ttl_ms", mglru_ttl if mglru_ttl != "N/A" else "N/A")
+    
+    # THP Status Checks
+    table.add_row("thp.enabled", get_bracketed_value("/sys/kernel/mm/transparent_hugepage/enabled"))
+    table.add_row("thp.defrag", get_bracketed_value("/sys/kernel/mm/transparent_hugepage/defrag"))
+    
+    # Live DAMON Reclaim Polling
     w_high = get_sysctl("/sys/module/damon_reclaim/parameters/wmarks_high")
     w_mid = get_sysctl("/sys/module/damon_reclaim/parameters/wmarks_mid")
     w_low = get_sysctl("/sys/module/damon_reclaim/parameters/wmarks_low")
@@ -289,9 +306,7 @@ class DuskyRAMAnalyzer(App):
             # Left Column
             with Vertical(classes="column"):
                 self.sys_widget = Static(build_sys_mem_panel())
-                self.top_proc_widget = Static(build_top_proc_panel())
                 yield self.sys_widget
-                yield self.top_proc_widget
                 
             # Right Column
             with Vertical(classes="column"):
@@ -315,7 +330,6 @@ class DuskyRAMAnalyzer(App):
 
     def update_dashboards(self) -> None:
         self.sys_widget.update(build_sys_mem_panel())
-        self.top_proc_widget.update(build_top_proc_panel())
         self.zram_widget.update(build_zram_panel())
         self.vm_widget.update(build_vm_panel())
         self.load_label.update(f"Artificial Load: {self.hog.total_mb} MB")
