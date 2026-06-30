@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Elite Arch Linux OOM Prevention & Compositor Shielding Configurator
-# Target: Arch Linux Cutting-Edge (Kernel 7.1+, Bash 5.3+, systemd 260+)
+# Target: Arch Linux Cutting-Edge (Kernel 7.1+, Bash 5.3+, systemd 261+)
 # Scope: Platinum Grade. High-Performance Userspace OOM Reclaim.
 # =============================================================================
 
@@ -9,11 +9,6 @@ set -euo pipefail
 
 readonly SCRIPT_NAME="${0##*/}"
 readonly SELF_PATH="$(realpath -e -- "${BASH_SOURCE[0]}")"
-
-# --- Target Configurations ---
-readonly EARLYOOM_CONF="/etc/default/earlyoom"
-readonly SHIELD_BIN="/usr/local/bin/compositor-oom-shield.sh"
-readonly SHIELD_SVC="/etc/systemd/system/compositor-oom-shield.service"
 
 # --- Formatting ---
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
@@ -34,12 +29,12 @@ log_error()   { printf '%s[ERROR]%s %s\n' "$C_RED"    "$C_RESET" "$1" >&2; }
 die()         { log_error "$1"; exit "${2:-1}"; }
 
 print_help() {
-    cat <<EOF
+    cat <<HELP
 ${C_BOLD}Usage:${C_RESET} ${SCRIPT_NAME} [OPTIONS]
 
   --dry-run, -n        Print the generated configuration and exit without applying
   --help, -h           Show this help menu
-EOF
+HELP
 }
 
 usage_error() { log_error "$1"; print_help >&2; exit 2; }
@@ -62,14 +57,17 @@ if [[ $EUID -ne 0 && $DRY_RUN -eq 0 ]]; then
     exec sudo -- /usr/bin/bash "$SELF_PATH" "$@"
 fi
 
-log_info "Initializing Platinum userspace OOM shield optimizer..."
+log_info "Initializing Platinum systemd-oomd 261 optimizer..."
 
 # =============================================================================
-# --- 3. CLEANUP GHOST CONFIGURATIONS ---
+# --- 3. PURGE LEGACY EARLYOOM & BASH SHIELD ---
 # =============================================================================
-log_info "Scanning for legacy/ghost OOM configurations..."
+log_info "Scanning and removing legacy earlyoom/bash shield configurations..."
 
 legacy_configs=(
+    "/etc/default/earlyoom"
+    "/usr/local/bin/compositor-oom-shield.sh"
+    "/etc/systemd/system/compositor-oom-shield.service"
     "/etc/systemd/oomd.conf.d/99-zram-tuning.conf"
     "/etc/systemd/system/user@.service.d/99-oomd-kill-policy.conf"
     "/etc/systemd/system/user-.slice.d/99-oomd.conf"
@@ -80,20 +78,13 @@ legacy_configs=(
     "/etc/systemd/system/hyprland-oom-shield.service"
 )
 
-declare -i CLEANED_ANY=0
 for conf in "${legacy_configs[@]}"; do
-    if [[ -f "$conf" ]]; then
-        # Safety check to avoid deleting a custom user-created script
-        if [[ "$conf" == "/usr/local/bin/hyprland-oom-shield.sh" ]]; then
-            if ! grep -q "hyprland-oom-shield" "$conf" 2>/dev/null; then
-                log_warn "Detected custom user script at ${conf}. Skipping removal to preserve changes."
-                continue
-            fi
-        fi
-
+    if [[ -f "$conf" || -L "$conf" ]]; then
         if (( DRY_RUN == 0 )); then
-            # Handle daemon stopping if active
-            if [[ "$conf" == *hyprland-oom-shield.service ]] && systemctl is-active --quiet hyprland-oom-shield.service 2>/dev/null; then
+            # Stop services if they are running
+            if [[ "$conf" == *compositor-oom-shield.service ]]; then
+                systemctl disable --now compositor-oom-shield.service >/dev/null 2>&1 || true
+            elif [[ "$conf" == *hyprland-oom-shield.service ]]; then
                 systemctl disable --now hyprland-oom-shield.service >/dev/null 2>&1 || true
             fi
             rm -f "$conf"
@@ -101,193 +92,124 @@ for conf in "${legacy_configs[@]}"; do
         else
             log_info "Would clean up legacy file: ${conf}"
         fi
-        CLEANED_ANY=1
     fi
 done
 
-if (( CLEANED_ANY == 1 && DRY_RUN == 0 )); then
-    log_info "Reloading systemd daemon to ingest cleaned policies..."
-    systemctl daemon-reload || log_warn "Global daemon-reload failed. Continuing..."
-    
-    log_info "Reloading active user managers to unload legacy session configuration..."
-    declare -a uids=()
-    while read -r line; do
-        if [[ "$line" =~ user@([0-9]+)\.service ]]; then
-            uids+=("${BASH_REMATCH[1]}")
-        fi
-    done < <(systemctl list-units --type=service --state=active --plain 'user@*.service' 2>/dev/null || true)
-
-    for uid in "${uids[@]:-}"; do
-        user="$(id -un "$uid" 2>/dev/null || true)"
-        [[ -z "$user" ]] && continue
-        
-        # Reload user manager using modern systemd machine connection API
-        if systemctl --user -M "${user}@" daemon-reload >/dev/null 2>&1; then
-            log_success "Reloaded user manager for ${user}."
-        elif command -v runuser >/dev/null 2>&1 && [[ -S "/run/user/${uid}/bus" ]]; then
-            if runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" systemctl --user daemon-reload >/dev/null 2>&1; then
-                log_success "Reloaded user manager for ${user} (via runuser fallback)."
-            fi
-        fi || true 
-    done
-elif (( CLEANED_ANY == 1 && DRY_RUN == 1 )); then
-    log_info "Would run systemctl daemon-reload and reload active user managers for deleted configurations."
-fi
-
-# =============================================================================
-# --- 4. DISABLE SYSTEMD-OOMD ---
-# =============================================================================
-log_info "Ensuring systemd-oomd is neutralized to prevent graphical session crashes..."
 if (( DRY_RUN == 0 )); then
-    systemctl disable --now systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || true
-    systemctl mask systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || true
+    # Purge earlyoom package if installed
+    if command -v earlyoom >/dev/null 2>&1; then
+        log_info "Uninstalling legacy earlyoom package..."
+        pacman -Rns --noconfirm earlyoom >/dev/null 2>&1 || log_warn "Failed to remove earlyoom package."
+    fi
 else
-    log_info "Would disable, stop, and mask systemd-oomd.service and systemd-oomd.socket"
+    log_info "Would uninstall earlyoom package if present."
 fi
 
 # =============================================================================
-# --- 5. PACKAGE INSTALLATION AND VALIDATION ---
+# --- 4. SYSTEMD-OOMD CONFIGURATION (SYSTEMD 261+) ---
 # =============================================================================
-declare -i JUST_INSTALLED=0
+log_info "Configuring native systemd-oomd rules for ZRAM and UWSM isolation..."
 
-if ! command -v earlyoom >/dev/null 2>&1; then
-    log_info "earlyoom is not installed. Preparing installation..."
-    if (( DRY_RUN == 0 )); then
-        # Check for pacman lockfile with a generous 120-second wait limit
-        if [[ -f /var/lib/pacman/db.lck ]]; then
-            log_warn "Arch package database is locked by another process (/var/lib/pacman/db.lck)."
-            log_warn "Waiting up to 120 seconds for lock to release..."
-            for _ in {1..120}; do
-                sleep 1
-                if [[ ! -f /var/lib/pacman/db.lck ]]; then
-                    break
-                fi
-            done
-        fi
-        
-        if [[ -f /var/lib/pacman/db.lck ]]; then
-            die "pacman database lock is still active. Please close other package manager tools and rerun."
-        fi
+tmp_oomrule="$(umask 077 && mktemp)"
+tmp_app_slice="$(umask 077 && mktemp)"
+tmp_session_slice="$(umask 077 && mktemp)"
+tmp_wayland_wm="$(umask 077 && mktemp)"
+trap 'rm -f "$tmp_oomrule" "$tmp_app_slice" "$tmp_session_slice" "$tmp_wayland_wm"' EXIT
 
-        log_info "Installing earlyoom via pacman..."
-        systemctl unmask earlyoom.service >/dev/null 2>&1 || true
-        
-        # Try safe database-native install first. If it fails (due to database mismatch), trigger fallback sync
-        if ! pacman -S --needed --noconfirm earlyoom; then
-            log_warn "Standard pacman installation failed. Attempting database synchronization..."
-            if ! pacman -Sy --needed --noconfirm earlyoom; then
-                die "Failed to install earlyoom. Please check your internet connection or run 'pacman -Syu' manually."
-            fi
-        fi
-        JUST_INSTALLED=1
-    else
-        log_info "Would install package earlyoom via pacman (with fallback database sync if needed)"
-    fi
-else
-    log_info "earlyoom package is already installed."
-fi
+# Generate ZRAM-aware OOM rule
+cat > "$tmp_oomrule" <<'OOMRULE'
+[Rule]
+MemoryPressureAbove=10%
+SwapUsageMax=80%
+Action=kill-by-pgscan
+LastingSec=2s
+OOMRULE
+
+# Bind to user applications via app-graphical.slice (UWSM app target)
+cat > "$tmp_app_slice" <<'APPSLICE'
+[Slice]
+OOMRules=10-zram-desktop
+APPSLICE
+
+# Protect the graphical session slice
+cat > "$tmp_session_slice" <<'SESSIONSLICE'
+[Slice]
+ManagedOOMPreference=avoid
+SESSIONSLICE
 
 # =============================================================================
-# --- 6. ATOMIC CONFIGURATION FILE GENERATION ---
+# --- 5. SYSTEM-LEVEL OOM SCORE INHERITANCE FIX ---
 # =============================================================================
-tmp_earlyoom="$(umask 077 && mktemp)"
-tmp_shield_bin="$(umask 077 && mktemp)"
-tmp_shield_svc="$(umask 077 && mktemp)"
-trap 'rm -f "$tmp_earlyoom" "$tmp_shield_bin" "$tmp_shield_svc"' EXIT
+# systemd --user cannot set a child's OOMScoreAdjust lower than its own.
+# By default, user@.service has OOMScoreAdjust=100.
+# We must set user@.service to -500 so it has privileges to spawn critical daemons at -500.
+# We simultaneously set DefaultOOMScoreAdjust=200 so normal user apps don't inherit -500.
 
-# Generate earlyoom configuration payload
-# -m 10: Trigger SIGTERM at 10% available memory (SIGKILL at 5%)
-# -s 10: Trigger SIGTERM at 10% free swap (SIGKILL at 5%)
-# --avoid: Protect compositor (Hyprland, Sway, KWin, Gnome), init, and audio services
-cat > "$tmp_earlyoom" <<'EOF'
-# Sourced by earlyoom.service
-EARLYOOM_ARGS="-m 4 -s 100,100 -r 3600 --avoid '(^|/)(init|systemd.*|Xorg|sshd|Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|dbus-broker.*|dbus-daemon|pipewire|wireplumber|gnome-keyring.*|xdg-.*|mako|uwsm|start-hyprland|startwayland|hyprland-session|wl-clip-persist|dconf-service|at-spi.*|waitpid|sd-pam|polkitd)$' --prefer '(^|/)(kitty|chrome|firefox|alacritty|discord|slack|electron|obsidian|thunar|gnome-clocks|spotify|code|mpv|vlc|foot|dolphin|gnome-text-editor|nvim|neovim)$'"
-EOF
+tmp_user_service="$(umask 077 && mktemp)"
+tmp_user_conf="$(umask 077 && mktemp)"
+trap 'rm -f "$tmp_oomrule" "$tmp_app_slice" "$tmp_session_slice" "$tmp_wayland_wm" "$tmp_user_service" "$tmp_user_conf"' EXIT
 
-# Generate lightweight compositor shield script
-cat > "$tmp_shield_bin" <<'EOF'
-#!/usr/bin/env bash
-# Managed by 211_systemd_oomd_zram.sh
-# Lightweight kernel OOM priority management daemon.
-set -euo pipefail
-
-while true; do
-    # 1. Shield the compositor
-    if pids=$(pgrep -x "Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri" 2>/dev/null); then
-        for pid in $pids; do
-            if [[ -f "/proc/${pid}/oom_score_adj" ]]; then
-                current=$(cat "/proc/${pid}/oom_score_adj" 2>/dev/null || echo "0")
-                if [[ "$current" -ne -500 ]]; then
-                    echo -500 > "/proc/${pid}/oom_score_adj" 2>/dev/null || true
-                fi
-            fi
-        done
-    fi
-
-    # 2. Protect session management, portals, & DBus (set to 0 to prevent kernel OOM choice)
-    if pids=$(pgrep -f "uwsm|xdg-desktop-portal|dbus-broker|dbus-daemon" 2>/dev/null); then
-        for pid in $pids; do
-            if [[ -f "/proc/${pid}/oom_score_adj" ]]; then
-                current=$(cat "/proc/${pid}/oom_score_adj" 2>/dev/null || echo "0")
-                if [[ "$current" -gt 0 ]]; then
-                    echo 0 > "/proc/${pid}/oom_score_adj" 2>/dev/null || true
-                fi
-            fi
-        done
-    fi
-
-    # 3. Target user applications in app.slice (set to 800)
-    while IFS= read -r -d '' proc_file; do
-        if [[ -f "$proc_file" ]]; then
-            while read -r pid; do
-                if [[ -f "/proc/${pid}/oom_score_adj" ]]; then
-                    current=$(cat "/proc/${pid}/oom_score_adj" 2>/dev/null || echo "0")
-                    if [[ "$current" -lt 800 ]]; then
-                        comm=$(cat "/proc/${pid}/comm" 2>/dev/null || echo "")
-                        if [[ ! "$comm" =~ ^(Hyprland|sway|kwin_wayland|gnome-shell|wayfire|river|niri|uwsm|systemd.*|dbus-broker.*|dbus-daemon|pipewire|wireplumber|gnome-keyring.*|xdg-.*|mako|start-hyprland|startwayland|hyprland-session|wl-clip-persist|dconf-service|at-spi.*|waitpid|sd-pam|polkitd)$ ]]; then
-                            echo 800 > "/proc/${pid}/oom_score_adj" 2>/dev/null || true
-                        fi
-                    fi
-                fi
-            done < "$proc_file"
-        fi
-    done < <(find /sys/fs/cgroup -path "*app.slice*/cgroup.procs" -print0 2>/dev/null || true)
-
-    sleep 5
-done
-EOF
-
-# Generate systemd system service for shield
-cat > "$tmp_shield_svc" <<'EOF'
-[Unit]
-Description=Lightweight Compositor Kernel OOM Shield
-After=multi-user.target
-
+cat > "$tmp_user_service" <<'USERSERVICE'
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/compositor-oom-shield.sh
-Restart=always
-RestartSec=5
+OOMScoreAdjust=-500
+USERSERVICE
 
-[Install]
-WantedBy=multi-user.target
-EOF
+cat > "$tmp_user_conf" <<'USERCONF'
+[Manager]
+DefaultOOMScoreAdjust=200
+USERCONF
 
-# Dry run verification of config
+# Failsafe: Protect critical session components from kernel OOM killer
+# and prevent systemd from killing them if a child dies
+cat > "$tmp_wayland_wm" <<'WAYLANDWM'
+[Service]
+OOMScoreAdjust=-500
+OOMPolicy=continue
+WAYLANDWM
+
+critical_services=(
+    "wayland-wm@.service"
+    "wayland-wm-app-daemon.service"
+    "wayland-wm-env@.service"
+    "wayland-session-bindpid@.service"
+    "wireplumber.service"
+    "pipewire.service"
+    "pipewire-pulse.service"
+    "xdg-desktop-portal.service"
+    "xdg-desktop-portal-gtk.service"
+    "xdg-desktop-portal-hyprland.service"
+    "dbus-broker.service"
+    "dbus.service"
+    "mako.service"
+)
+
+system_critical_services=(
+    "systemd-logind.service"
+    "NetworkManager.service"
+    "polkit.service"
+    "systemd-resolved.service"
+    "systemd-timesyncd.service"
+    "getty@.service"
+    "udisks2.service"
+    "systemd-userdbd.service"
+)
+
 if (( DRY_RUN == 1 )); then
     log_info "DRY RUN EXECUTED."
-    echo -e "\n${C_BOLD}[ ${EARLYOOM_CONF} ]${C_RESET}"
-    cat "$tmp_earlyoom"
-    echo -e "\n${C_BOLD}[ ${SHIELD_BIN} ]${C_RESET}"
-    cat "$tmp_shield_bin"
-    echo -e "\n${C_BOLD}[ ${SHIELD_SVC} ]${C_RESET}"
-    cat "$tmp_shield_svc"
+    echo -e "\n${C_BOLD}[ /etc/systemd/oomd/rules.d/10-zram-desktop.oomrule ]${C_RESET}"
+    cat "$tmp_oomrule"
+    echo -e "\n${C_BOLD}[ /etc/systemd/user/app-graphical.slice.d/10-oomd.conf ]${C_RESET}"
+    cat "$tmp_app_slice"
+    echo -e "\n${C_BOLD}[ /etc/systemd/user/session-graphical.slice.d/10-oomd-avoid.conf ]${C_RESET}"
+    cat "$tmp_session_slice"
+    
+    echo -e "\n${C_BOLD}[ Shield applied to critical services: ]${C_RESET}"
+    for svc in "${critical_services[@]}"; do
+        echo "/etc/systemd/user/${svc}.d/10-oom-shield.conf"
+    done
+    cat "$tmp_wayland_wm"
     exit 0
 fi
-
-# Atomic Installation
-declare -i CONFIG_CHANGED=0
-declare -i SHIELD_CHANGED=0
 
 install_file() {
     local src="$1" dest="$2" perm="$3"
@@ -306,39 +228,46 @@ install_file() {
     fi
 }
 
-# Install EarlyOOM
-if install_file "$tmp_earlyoom" "$EARLYOOM_CONF" "0644"; then
-    CONFIG_CHANGED=1
-fi
+install_file "$tmp_oomrule" "/etc/systemd/oomd/rules.d/10-zram-desktop.oomrule" "0644" || true
+install_file "$tmp_app_slice" "/etc/systemd/user/app-graphical.slice.d/10-oomd.conf" "0644" || true
+install_file "$tmp_session_slice" "/etc/systemd/user/session-graphical.slice.d/10-oomd-avoid.conf" "0644" || true
+install_file "$tmp_user_service" "/etc/systemd/system/user@.service.d/10-oom-score.conf" "0644" || true
+install_file "$tmp_user_conf" "/etc/systemd/user.conf.d/10-oom-default.conf" "0644" || true
 
-# Install Shield Bin & Service
-if install_file "$tmp_shield_bin" "$SHIELD_BIN" "0755"; then
-    SHIELD_CHANGED=1
-fi
-if install_file "$tmp_shield_svc" "$SHIELD_SVC" "0644"; then
-    SHIELD_CHANGED=1
-fi
+for svc in "${critical_services[@]}"; do
+    install_file "$tmp_wayland_wm" "/etc/systemd/user/${svc}.d/10-oom-shield.conf" "0644" || true
+done
+
+for svc in "${system_critical_services[@]}"; do
+    install_file "$tmp_wayland_wm" "/etc/systemd/system/${svc}.d/10-oom-shield.conf" "0644" || true
+done
 
 # =============================================================================
-# --- 7. IDEMPOTENT SERVICE LIFECYCLE ---
+# --- 5. ENABLE AND START NATIVE SYSTEMD-OOMD ---
 # =============================================================================
-systemctl unmask earlyoom.service >/dev/null 2>&1 || true
+log_info "Restoring and activating native systemd-oomd service..."
+systemctl unmask systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || true
+systemctl enable systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || log_warn "Failed to enable systemd-oomd."
+systemctl restart systemd-oomd.service systemd-oomd.socket >/dev/null 2>&1 || log_warn "Failed to restart systemd-oomd."
 
-# Force restart to ensure active daemon matches the configuration in memory
-if true; then
-    log_info "Enabling and activating earlyoom service..."
-    systemctl enable earlyoom.service >/dev/null 2>&1 || log_warn "Failed to enable earlyoom."
-    systemctl restart earlyoom.service >/dev/null 2>&1 || die "Failed to start/restart earlyoom."
-    log_success "earlyoom service has been successfully activated and reloaded."
-fi
+log_info "Reloading systemd daemon to ingest OOM policies..."
+systemctl daemon-reload >/dev/null 2>&1 || true
 
-if true; then
-    log_info "Enabling and activating compositor-oom-shield service..."
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl enable compositor-oom-shield.service >/dev/null 2>&1 || log_warn "Failed to enable compositor-oom-shield."
-    systemctl restart compositor-oom-shield.service >/dev/null 2>&1 || die "Failed to start/restart compositor-oom-shield."
-    log_success "compositor-oom-shield service has been successfully activated."
-fi
+log_info "Reloading active user managers..."
+declare -a uids=()
+while read -r line; do
+    if [[ "$line" =~ user@([0-9]+)\.service ]]; then
+        uids+=("${BASH_REMATCH[1]}")
+    fi
+done < <(systemctl list-units --type=service --state=active --plain 'user@*.service' 2>/dev/null || true)
 
-log_success "OOM prevention and compositor shielding successfully configured."
+for uid in "${uids[@]:-}"; do
+    user="$(id -un "$uid" 2>/dev/null || true)"
+    [[ -z "$user" ]] && continue
+    if systemctl --user -M "${user}@" daemon-reload >/dev/null 2>&1; then
+        log_success "Reloaded user manager for ${user}."
+    fi
+done
+
+log_success "Platinum OOM architecture successfully deployed via systemd 261."
 exit 0
