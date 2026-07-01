@@ -123,6 +123,11 @@ post_hook   = '''
   touch "$HOME/.config/foot/foot.ini" || :
 '''
 
+[templates.khal]
+input_path  = '~/.config/matugen/templates/khal.conf'
+output_path = '~/.config/matugen/generated/khal-config'
+post_hook   = 'ln -nfs "$HOME/.config/matugen/generated/khal-config" "$HOME/.config/khal/config"'
+
 [templates.zellij]
 input_path  = '~/.config/matugen/templates/zellij.kdl'
 output_path = '~/.config/matugen/generated/zellij.kdl'
