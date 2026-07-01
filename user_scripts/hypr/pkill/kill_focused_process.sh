@@ -28,8 +28,8 @@ else
 fi
 
 # 4. Blast-Radius & Core System Safeguard
-# Fallback to single PID if PGID is invalid, matches compositor, or matches main process.
-if (( pgid <= 1 || pgid == hypr_pgid || pgid == pid )); then
+# Fallback to single PID if PGID is invalid or matches compositor.
+if (( pgid <= 1 || pgid == hypr_pgid )); then
     target="$pid"
 else
     target="-$pgid"

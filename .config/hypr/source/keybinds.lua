@@ -618,9 +618,9 @@ hl.bind(
 --
 -- /user_scripts/tools/workspace/close-workspace.sh -- Working Feature but Unsure
 -- hl.bind(
---     "SUPER + SHIFT + C",
---     hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
---     { description = "Close Workspace" }
+--    "CTRL + escape",
+--    hl.dsp.exec_cmd(dusky_scripts .. "tools/workspace/close-workspace.sh"),
+--    { description = "Close Workspace" }
 -- )
 -- ----
 -- /user_scripts/tools/workspace/safety-close.sh -- Working Feature but Unsure
@@ -630,6 +630,14 @@ hl.bind(
 --     { description = "Safety Close Window" }
 -- )
 -- ----
+
+hl.bind(
+    "SUPER + SHIFT + C",
+    hl.dsp.exec_cmd(dusky_scripts .. "hypr/pkill/kill_focused_process.sh"),
+    { description = "Kill Focused Process Completely"}
+)
+
+
 
 hl.bind(
     "SUPER + A",
