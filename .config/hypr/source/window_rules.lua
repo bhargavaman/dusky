@@ -1846,7 +1846,7 @@ hl.window_rule({
         class = "^(ikhal)$"
     },
     float = true,
-    size = {625, 700},
+    size = {650, 700},
     center = true
 })
 
