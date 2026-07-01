@@ -55,6 +55,7 @@ Productivity| gimp                  | Photoshop alternative for Linux
 Productivity| libreoffice-still     | Microsoft Office alternative (Stable)
 # Productivity| libreoffice-fresh     | Microsoft Office alternative (latest)
 Productivity| calcurse              | Text-based calendar and scheduling application
+Productivity| gnome-calendar        | Simple and beautiful calendar (GNOME)
 Productivity| blanket               | Ambient noise player for focus and productivity
 Productivity| errands               | Simple to-do list application
 Productivity| obsidian              | Markdown-based knowledge base and note taking

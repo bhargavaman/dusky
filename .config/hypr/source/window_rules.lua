@@ -1839,6 +1839,17 @@ hl.config({
 --     center = true
 -- })
 
+--- Calendar (ikhal): Float with Default Size ---
+hl.window_rule({
+    name = "float-calendar",
+    match = {
+        class = "^(ikhal)$"
+    },
+    float = true,
+    size = {625, 700},
+    center = true
+})
+
 -- =============================================================================
 -- END OF FILE
 -- =============================================================================
