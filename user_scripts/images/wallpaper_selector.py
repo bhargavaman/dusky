@@ -1518,16 +1518,20 @@ def apply_fav_wallpaper(rel_path: str):
             [str(THEME_CTL), "refresh"], check=True, capture_output=True, text=True
         )
         subprocess.run([
-            "notify-send", "-a", "Wallpaper Selector", 
-            "Wallpaper Applied", f"Cycled to favorite: {basename}", 
-            "-u", "low", "-t", "1500"
+            "notify-send", "-a", "dusky-fav-wal", 
+            "-h", "string:x-canonical-private-synchronous:fav-wal",
+            "-i", "/usr/share/icons/Papirus/16x16/symbolic/emblems/emblem-favorite-symbolic.svg",
+            "Favorite", basename,
+            "-u", "low", "-t", "1200"
         ])
     except subprocess.CalledProcessError as e:
         err_msg = e.stderr.strip() if e.stderr else str(e)
         print(f"Backend execution failed: {err_msg}")
         subprocess.run([
-            "notify-send", "-a", "Wallpaper Selector", 
-            "Theme Application Failed", err_msg, 
+            "notify-send", "-a", "dusky-fav-wal", 
+            "-h", "string:x-canonical-private-synchronous:fav-wal",
+            "-i", "/usr/share/icons/Papirus/16x16/symbolic/emblems/emblem-favorite-symbolic.svg",
+            "Error", "Failed to apply wallpaper", 
             "-u", "critical"
         ])
 
@@ -1536,8 +1540,9 @@ def cycle_favorites(direction: str = "next"):
     favs = load_favorites_list()
     if not favs:
         subprocess.run([
-            "notify-send", "-a", "Wallpaper Selector", 
-            "No Favorites", "You haven't liked any wallpapers yet.", 
+            "notify-send", "-a", "dusky-fav-wal", 
+            "-i", "/usr/share/icons/Papirus/16x16/symbolic/emblems/emblem-favorite-symbolic.svg",
+            "No Favorites", "No liked wallpapers yet.", 
             "-u", "normal", "-t", "2500"
         ])
         sys.exit(0)
