@@ -68,6 +68,7 @@ hl.on("hyprland.start", function()
 
     -- EG: dusky glance (uncomment only one at a time)
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu")
+    -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu-power")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-temp")
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --temp")

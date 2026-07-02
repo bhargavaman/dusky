@@ -190,6 +190,44 @@ case "$MODE" in
         done
         ;;
 
+    --cpu-power)
+        path="/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj"
+        if [[ ! -r "$path" ]]; then
+            send_osd "N/A"
+            exit 1
+        fi
+        
+        # Read initial values
+        read -r last_energy < "$path"
+        last_time_str="${EPOCHREALTIME//./}"
+        
+        sleep 1
+        
+        while true; do
+            if read -r current_energy < "$path" 2>/dev/null; then
+                curr_time_str="${EPOCHREALTIME//./}"
+                
+                delta_energy=$((current_energy - last_energy))
+                delta_time_us=$((curr_time_str - last_time_str))
+                
+                if (( delta_time_us > 0 )); then
+                    if (( delta_energy < 0 )); then
+                        # 32-bit counter rollover compensation
+                        delta_energy=$(( delta_energy + 4294967296 ))
+                    fi
+                    watts_x10=$(( (delta_energy * 10) / delta_time_us ))
+                    watts_int=$(( watts_x10 / 10 ))
+                    watts_frac=$(( watts_x10 % 10 ))
+                    send_osd "${watts_int}.${watts_frac}W"
+                fi
+                
+                last_energy=$current_energy
+                last_time_str=$curr_time_str
+            fi
+            sleep 1
+        done
+        ;;
+
     --cpu)
         prev_idle=0; prev_total=0
         while true; do

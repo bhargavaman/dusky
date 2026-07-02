@@ -1,0 +1,11 @@
+[Unit]
+Description=Set RAPL energy_uj read permissions for Dusky Glance
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/chmod 444 /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

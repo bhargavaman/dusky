@@ -68,6 +68,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     printf "  \e[32m--stopwatch\e[0m                Start the stopwatch\n"
     printf "  \e[32m--clock\e[0m                    Show the live clock\n"
     printf "  \e[32m--clock-short\e[0m              Show the live clock (no seconds)\n"
+    printf "  \e[32m--cpu-power\e[0m                Show live CPU Package Power (Watts)\n"
     printf "  \e[32m--cpu\e[0m                      Show live CPU usage\n"
     printf "  \e[32m--ram\e[0m                      Show live RAM usage\n"
     printf "  \e[32m--temp\e[0m                     Show CPU temperature\n"
@@ -227,12 +228,12 @@ PROMPT_STYLE='window { width: 340px; x-offset: -20px; y-offset: 20px; padding: 2
 
 declare -a MENU_OPTIONS=(
     "󰜺  Stop / Clear"          "󰸉  Edit"
-    "󱎫  Pomodoro"              "  CPU Usage"
+    "󱎫  Pomodoro"              "  CPU"
     "󰔟  Timer"                 "󰘚  Memory (RAM)"
-    "󱑎  Stopwatch"             "  CPU Temp"
-    "󰥔  Live Clock"            "󰁹  Battery"
-    "󰽽  Workspace"             "󰋊  Disk Usage"
-    "󰈀  Network Speed"         "󰔚  System Uptime"
+    "󱑎  Stopwatch"             "󰁹  Battery"
+    "󰥔  Live Clock"            "󰋊  Disk Usage"
+    "󰽽  Workspace"             "󰔚  System Uptime"
+    "󰈀  Network Speed"
 )
 
 choice=$(printf '%s\n' "${MENU_OPTIONS[@]}" | "${ROFI_CMD[@]}" -p "Glance") || exit 0
@@ -389,7 +390,22 @@ case "$choice" in
         ;;
 
     '󱑎  Stopwatch')      "$DAEMON_SCRIPT" --stopwatch & disown ;;
-    '  CPU Usage')      "$DAEMON_SCRIPT" --cpu & disown ;;
+    '  CPU')
+        cpu_opts=(
+            "󱐋  CPU Power (Watts)"
+            "  CPU Usage"
+            "  CPU Temp"
+        )
+        cpuchoice=$(printf '%s\n' "${cpu_opts[@]}" | "${ROFI_SUB[@]}" -p "CPU") || exit 0
+        
+        if [[ "$cpuchoice" == *"CPU Power"* ]]; then
+            "$DAEMON_SCRIPT" --cpu-power & disown
+        elif [[ "$cpuchoice" == *"CPU Usage"* ]]; then
+            "$DAEMON_SCRIPT" --cpu & disown
+        elif [[ "$cpuchoice" == *"CPU Temp"* ]]; then
+            "$DAEMON_SCRIPT" --temp & disown
+        fi
+        ;;
     '󰘚  Memory (RAM)')
         m_opts=("󰘚  System RAM Usage" "󰘚  RAM Temperature" "󰘚  ZRAM Usage")
         mchoice=$(printf '%s\n' "${m_opts[@]}" | "${ROFI_SUB[@]}" -p "Memory") || exit 0
