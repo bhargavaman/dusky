@@ -787,6 +787,55 @@ cat << 'GUIDE'
 GUIDE
 
 echo ""
+
+# ── 13. CUSTOM KERNEL SAVINGS ESTIMATION ────────────────────────────────────
+echo "## 13. Custom Kernel RAM Savings Estimation"
+echo "---"
+echo "> **Understanding this section:** Distro kernels compile almost all drivers and protocols as modules or built-ins to support a wide range of hardware. A custom kernel tailored exclusively to your machine can save RAM by reducing static kernel code size, eliminating unneeded drivers/maps (vmalloc), and reducing slab overhead."
+echo ""
+
+NUM_MODULES=$(lsmod | wc -l)
+VMALLOC_USED=$(get_mem VmallocUsed)
+S_UNRECLAIM=$(get_mem SUnreclaim)
+SLAB=$(get_mem Slab)
+K_RECLAIMABLE=$(get_mem KReclaimable)
+K_STACK=$(get_mem KernelStack)
+PAGE_TABLES=$(get_mem PageTables)
+SEC_PAGE_TABLES=$(get_mem SecPageTables)
+PERCPU=$(get_mem Percpu)
+
+# Compute current kernel totals
+KERNEL_TOTAL_KB=$(( SLAB + K_STACK + PAGE_TABLES + SEC_PAGE_TABLES + PERCPU + VMALLOC_USED ))
+KERNEL_RECLAIMABLE_KB=$K_RECLAIMABLE
+KERNEL_NONRECLAIMABLE_KB=$(( KERNEL_TOTAL_KB - KERNEL_RECLAIMABLE_KB ))
+
+# Calculate estimated savings (60% of Vmalloc, 15% of Unreclaimable Slab, 30MB of static code/subsystems)
+EST_VMALLOC_SAVINGS=$(( VMALLOC_USED * 60 / 100 ))
+EST_SLAB_SAVINGS=$(( S_UNRECLAIM * 15 / 100 ))
+EST_STATIC_SAVINGS=30720
+TOTAL_SAVINGS_KB=$(( EST_VMALLOC_SAVINGS + EST_SLAB_SAVINGS + EST_STATIC_SAVINGS ))
+PROJECTED_KERNEL_KB=$(( KERNEL_TOTAL_KB - TOTAL_SAVINGS_KB ))
+
+echo "### Current Kernel Overhead Metrics"
+printf -- "- **Total Active Kernel RAM Allocation:** \`%s MB\` (\`$KERNEL_TOTAL_KB kB\`)\n" "$(to_mb $KERNEL_TOTAL_KB)"
+printf -- "  - **Reclaimable under memory pressure:** \`%s MB\` (\`$KERNEL_RECLAIMABLE_KB kB\`)\n" "$(to_mb $KERNEL_RECLAIMABLE_KB)"
+printf -- "  - **Strictly Non-Reclaimable allocation:** \`%s MB\` (\`$KERNEL_NONRECLAIMABLE_KB kB\`)\n" "$(to_mb $KERNEL_NONRECLAIMABLE_KB)"
+echo "- **Loaded Kernel Modules:** \`$NUM_MODULES\`"
+echo "- **Vmalloc Memory (Drivers/Modules):** \`$(to_mb $VMALLOC_USED) MB\`"
+echo "- **Unreclaimable Slab Memory:** \`$(to_mb $S_UNRECLAIM) MB\`"
+echo ""
+echo "### Potential Savings Estimates"
+printf -- "- **Static Code & Subsystem Trimming:** \`%s MB\`\n" "$(to_mb $EST_STATIC_SAVINGS)"
+printf -- "- **Vmalloc Optimization (disabling unused modules):** \`%s MB\`\n" "$(to_mb $EST_VMALLOC_SAVINGS)"
+printf -- "- **Slab Overhead Reduction:** \`%s MB\`\n" "$(to_mb $EST_SLAB_SAVINGS)"
+printf -- "- **Total Estimated RAM Saved:** **\`%s MB\`**\n" "$(to_mb $TOTAL_SAVINGS_KB)"
+printf -- "- **Projected Tailored Kernel Footprint:** \`%s MB\`\n" "$(to_mb $PROJECTED_KERNEL_KB)"
+echo ""
+echo "> **How these savings are achieved:**"
+echo "> 1. **Minimal Driver Footprint:** Distro kernels load drivers for hardware you don't own. Building only the required drivers into the kernel image or loading only necessary modules drops \`vmalloc\` consumption."
+echo "> 2. **Feature Pruning:** Compiling out unnecessary subsystems (e.g., debugging facilities, unused filesystems like xfs/f2fs, KVM, namespaces if not running containers) reduces code size and page/inode allocations."
+echo ""
+
 echo "***"
 echo "**END OF FORENSICS REPORT**"
 echo "***"
