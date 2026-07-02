@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Advanced Intel P-Core/E-Core Hotplug Manager (Ultimate Edition)
+Advanced Intel P-Core/E-Core Hotplug Manager (Definitive Edition)
 Kernel 7.1+ | Python 3.14+ | Arch Linux Optimized
 BSP-Aware | Race-Condition Immune | Vim-Interactive
 """
@@ -274,16 +274,24 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
 # ==========================================
 # 4. CLI Fallback & Formatting
 # ==========================================
-def parse_core_args(args_list: list[str]) -> list[int]:
-    """Parses lists of cores and ranges (e.g., '1', '12-15')."""
+def parse_core_args(args_list: list[str], valid_cores: list[int]) -> list[int]:
+    """Parses lists of cores, auto-corrects ranges, and validates hardware."""
     cores = set()
     try:
         for arg in args_list:
             if "-" in arg:
-                start, end = map(int, arg.split("-"))
+                # Automatically sorts reversed inputs (e.g., 15-12 becomes 12-15)
+                start, end = sorted(map(int, arg.split("-")))
                 cores.update(range(start, end + 1))
             else:
                 cores.add(int(arg))
+                
+        # Validate that user isn't targeting non-existent cores
+        invalid_cores = [c for c in cores if c not in valid_cores]
+        if invalid_cores:
+            console.print(f"[bold red]Hardware Error:[/bold red] The following CPU IDs do not exist on this system: {invalid_cores}")
+            sys.exit(1)
+            
         return sorted(list(cores))
     except ValueError:
         console.print("[bold red]Error:[/bold red] Invalid format. Use numbers or ranges (e.g., 1 2 12-15)")
@@ -371,15 +379,15 @@ def main() -> None:
             console.print(Panel("[bold green]Maximum Throughput Activated (All Cores Online).[/bold green]", border_style="green"))
             display_status_table(p_cores, e_cores, locked_cores)
         case "enable":
-            target_cores = parse_core_args(args.cores)
+            target_cores = parse_core_args(args.cores, all_known_cores)
             batch_process_cores(target_cores, enable=True, action_name="Targeted Wakeup", locked_cores=locked_cores)
             display_status_table(p_cores, e_cores, locked_cores)
         case "disable":
-            target_cores = parse_core_args(args.cores)
+            target_cores = parse_core_args(args.cores, all_known_cores)
             batch_process_cores(target_cores, enable=False, action_name="Targeted Shutdown", locked_cores=locked_cores)
             display_status_table(p_cores, e_cores, locked_cores)
         case "toggle":
-            target_cores = parse_core_args(args.cores)
+            target_cores = parse_core_args(args.cores, all_known_cores)
             console.print("[bold yellow]Initiating Targeted Toggle Sequence...[/bold yellow]")
             for core in target_cores:
                 if core in locked_cores:
