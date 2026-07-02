@@ -267,7 +267,15 @@ case "$choice" in
             fi
             [[ -z "$card_name" ]] && card_name="${vendor_lbl} GPU"
             
-            gpu_list+=("${card##*/}|$card_name|$vendor_lbl|$power_state")
+            # Order primary boot GPU first
+            boot_vga=0
+            [[ -r "$card/device/boot_vga" ]] && boot_vga=$(cat "$card/device/boot_vga" 2>/dev/null)
+            
+            if [[ "$boot_vga" == "1" ]]; then
+                gpu_list=("${card##*/}|$card_name|$vendor_lbl|$power_state" "${gpu_list[@]:-}")
+            else
+                gpu_list+=("${card##*/}|$card_name|$vendor_lbl|$power_state")
+            fi
         done
         
         if [[ ${#gpu_list[@]} -eq 0 ]]; then
