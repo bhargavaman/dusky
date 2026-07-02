@@ -228,85 +228,92 @@ PROMPT_STYLE='window { width: 340px; x-offset: -20px; y-offset: 20px; padding: 2
 
 declare -a MENU_OPTIONS=(
     "󰜺  Stop / Clear"          "󰸉  Edit"
-    "󱎫  Pomodoro"              "  CPU"
-    "󰔟  Timer"                 "󰘚  Memory (RAM)"
-    "󱑎  Stopwatch"             "󰁹  Battery"
-    "󰥔  Live Clock"            "󰋊  Disk Usage"
-    "󰽽  Workspace"             "󰔚  System Uptime"
-    "󰈀  Network Speed"
+    "󰔟  Time & Focus"          "  CPU"
+    "󰘚  Memory (RAM)"          "󰁹  Battery"
+    "󰋊  Disk Usage"             "󰈀  Network Speed"
+    "󰽽  Workspace"
 )
 
 choice=$(printf '%s\n' "${MENU_OPTIONS[@]}" | "${ROFI_CMD[@]}" -p "Glance") || exit 0
 
 case "$choice" in
-    '󱎫  Pomodoro')
-        last_pomo="1500:300"
-        [[ -f "$POMO_STATE" ]] && last_pomo=$(<"$POMO_STATE")
-        
-        read -r lw_sec lb_sec <<< "$(parse_pomodoro "$last_pomo")"
-        
-        p_opts=(
-            "󰐊  Start Last ($(fmt_t "$lw_sec") Work / $(fmt_t "$lb_sec") Break)"
-            "󰒓  Set in Minutes"
-            "󰒓  Set in Seconds"
+    '󰔟  Time & Focus')
+        tf_opts=(
+            "󰥔  Clock (no seconds)"
+            "󰥔  Clock (with seconds)"
+            "󰔟  Timer"
+            "󰔚  System Uptime"
+            "󱎫  Pomodoro"
+            "󱑎  Stopwatch"
         )
-        pchoice=$(printf '%s\n' "${p_opts[@]}" | "${ROFI_SUB[@]}" -p "Pomodoro") || exit 0
+        tfchoice=$(printf '%s\n' "${tf_opts[@]}" | "${ROFI_SUB[@]}" -p "Time & Focus") || exit 0
         
-        if [[ "$pchoice" == *"Start Last"* ]]; then
-            "$DAEMON_SCRIPT" --pomodoro "$lw_sec" "$lb_sec" & disown
-            
-        elif [[ "$pchoice" == *"Minutes"* ]]; then
-            w=$(rofi -dmenu -i -p "Work (Mins)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
-            w=${w//[!0-9]/}; [[ -z "$w" ]] && exit 0
-            
-            b=$(rofi -dmenu -i -p "Break (Mins)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
-            b=${b//[!0-9]/}; [[ -z "$b" ]] && b=0
-            
-            echo "$((w*60)):$((b*60))" > "$POMO_STATE"
-            "$DAEMON_SCRIPT" --pomodoro "$((w*60))" "$((b*60))" & disown
-            
-        elif [[ "$pchoice" == *"Seconds"* ]]; then
-            w=$(rofi -dmenu -i -p "Work (Secs)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
-            w=${w//[!0-9]/}; [[ -z "$w" ]] && exit 0
-            
-            b=$(rofi -dmenu -i -p "Break (Secs)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
-            b=${b//[!0-9]/}; [[ -z "$b" ]] && b=0
-            
-            echo "$w:$b" > "$POMO_STATE"
-            "$DAEMON_SCRIPT" --pomodoro "$w" "$b" & disown
-        fi
-        ;;
-        
-    '󰔟  Timer')
-        last_timer="15m"
-        [[ -f "$TIMER_STATE" ]] && last_timer=$(<"$TIMER_STATE")
-        
-        lt_sec=$(parse_timer "$last_timer")
-        
-        t_opts=(
-            "󰐊  Start Last ($(fmt_t "$lt_sec"))"
-            "󰒓  Set in Minutes"
-            "󰒓  Set in Seconds"
-        )
-        tchoice=$(printf '%s\n' "${t_opts[@]}" | "${ROFI_SUB[@]}" -p "Timer") || exit 0
-        
-        if [[ "$tchoice" == *"Start Last"* ]]; then
-            "$DAEMON_SCRIPT" --timer "$lt_sec" & disown
-            
-        elif [[ "$tchoice" == *"Minutes"* ]]; then
-            val=$(rofi -dmenu -i -p "Duration (Mins)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
-            val=${val//[!0-9]/}; [[ -z "$val" ]] && exit 0
-            
-            echo "${val}m" > "$TIMER_STATE"
-            "$DAEMON_SCRIPT" --timer "$((val*60))" & disown
-            
-        elif [[ "$tchoice" == *"Seconds"* ]]; then
-            val=$(rofi -dmenu -i -p "Duration (Secs)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
-            val=${val//[!0-9]/}; [[ -z "$val" ]] && exit 0
-            
-            echo "${val}s" > "$TIMER_STATE"
-            "$DAEMON_SCRIPT" --timer "$val" & disown
-        fi
+        case "$tfchoice" in
+            *"Clock (no seconds)"*)
+                "$DAEMON_SCRIPT" --clock-short & disown
+                ;;
+            *"Clock (with seconds)"*)
+                "$DAEMON_SCRIPT" --clock & disown
+                ;;
+            *"Timer"*)
+                last_timer="15m"
+                [[ -f "$TIMER_STATE" ]] && last_timer=$(<"$TIMER_STATE")
+                lt_sec=$(parse_timer "$last_timer")
+                t_opts=(
+                    "󰐊  Start Last ($(fmt_t "$lt_sec"))"
+                    "󰒓  Set in Minutes"
+                    "󰒓  Set in Seconds"
+                )
+                tchoice=$(printf '%s\n' "${t_opts[@]}" | "${ROFI_SUB[@]}" -p "Timer") || exit 0
+                if [[ "$tchoice" == *"Start Last"* ]]; then
+                    "$DAEMON_SCRIPT" --timer "$lt_sec" & disown
+                elif [[ "$tchoice" == *"Minutes"* ]]; then
+                    val=$(rofi -dmenu -i -p "Duration (Mins)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
+                    val=${val//[!0-9]/}; [[ -z "$val" ]] && exit 0
+                    echo "${val}m" > "$TIMER_STATE"
+                    "$DAEMON_SCRIPT" --timer "$((val*60))" & disown
+                elif [[ "$tchoice" == *"Seconds"* ]]; then
+                    val=$(rofi -dmenu -i -p "Duration (Secs)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
+                    val=${val//[!0-9]/}; [[ -z "$val" ]] && exit 0
+                    echo "${val}s" > "$TIMER_STATE"
+                    "$DAEMON_SCRIPT" --timer "$val" & disown
+                fi
+                ;;
+            *"System Uptime"*)
+                "$DAEMON_SCRIPT" --uptime & disown
+                ;;
+            *"Pomodoro"*)
+                last_pomo="1500:300"
+                [[ -f "$POMO_STATE" ]] && last_pomo=$(<"$POMO_STATE")
+                read -r lw_sec lb_sec <<< "$(parse_pomodoro "$last_pomo")"
+                p_opts=(
+                    "󰐊  Start Last ($(fmt_t "$lw_sec") Work / $(fmt_t "$lb_sec") Break)"
+                    "󰒓  Set in Minutes"
+                    "󰒓  Set in Seconds"
+                )
+                pchoice=$(printf '%s\n' "${p_opts[@]}" | "${ROFI_SUB[@]}" -p "Pomodoro") || exit 0
+                if [[ "$pchoice" == *"Start Last"* ]]; then
+                    "$DAEMON_SCRIPT" --pomodoro "$lw_sec" "$lb_sec" & disown
+                elif [[ "$pchoice" == *"Minutes"* ]]; then
+                    w=$(rofi -dmenu -i -p "Work (Mins)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
+                    w=${w//[!0-9]/}; [[ -z "$w" ]] && exit 0
+                    b=$(rofi -dmenu -i -p "Break (Mins)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
+                    b=${b//[!0-9]/}; [[ -z "$b" ]] && b=0
+                    echo "$((w*60)):$((b*60))" > "$POMO_STATE"
+                    "$DAEMON_SCRIPT" --pomodoro "$((w*60))" "$((b*60))" & disown
+                elif [[ "$pchoice" == *"Seconds"* ]]; then
+                    w=$(rofi -dmenu -i -p "Work (Secs)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
+                    w=${w//[!0-9]/}; [[ -z "$w" ]] && exit 0
+                    b=$(rofi -dmenu -i -p "Break (Secs)" -location 3 -theme-str "$PROMPT_STYLE") || exit 0
+                    b=${b//[!0-9]/}; [[ -z "$b" ]] && b=0
+                    echo "$w:$b" > "$POMO_STATE"
+                    "$DAEMON_SCRIPT" --pomodoro "$w" "$b" & disown
+                fi
+                ;;
+            *"Stopwatch"*)
+                "$DAEMON_SCRIPT" --stopwatch & disown
+                ;;
+        esac
         ;;
         
     '󰋊  Disk Usage')
@@ -378,18 +385,6 @@ case "$choice" in
         fi
         ;;
 
-    '󰥔  Live Clock')
-        c_opts=("󰥔  With Seconds" "󰥔  Without Seconds")
-        cchoice=$(printf '%s\n' "${c_opts[@]}" | "${ROFI_SUB[@]}" -p "Clock") || exit 0
-        
-        if [[ "$cchoice" == *"With Seconds"* ]]; then
-            "$DAEMON_SCRIPT" --clock & disown
-        elif [[ "$cchoice" == *"Without Seconds"* ]]; then
-            "$DAEMON_SCRIPT" --clock-short & disown
-        fi
-        ;;
-
-    '󱑎  Stopwatch')      "$DAEMON_SCRIPT" --stopwatch & disown ;;
     '  CPU')
         cpu_opts=(
             "󱐋  CPU Power (Watts)"
@@ -418,7 +413,6 @@ case "$choice" in
             "$DAEMON_SCRIPT" --zram & disown
         fi
         ;;
-    '  CPU Temp')       "$DAEMON_SCRIPT" --temp & disown ;;
     '󰁹  Battery')
         b_opts=(
             "󰁹  Power Draw Only"
@@ -439,7 +433,6 @@ case "$choice" in
         fi
         ;;
     '󰈀  Network Speed')  "$DAEMON_SCRIPT" --network & disown ;;
-    '󰔚  System Uptime')  "$DAEMON_SCRIPT" --uptime & disown ;;
     '󰽽  Workspace')      "$DAEMON_SCRIPT" --workspace & disown ;;
     '󰸉  Edit')           foot --app-id=dusky_tui python ~/user_scripts/dusky_tui/python/main/main.py ~/user_scripts/mako_osd/dusky_glance/tui_glance_mako.py & disown ;;
     '󰜺  Stop / Clear')   "$DAEMON_SCRIPT" --stop & disown ;;

@@ -30,7 +30,7 @@ fi
 # --- Configuration ---
 readonly SERVICES_CONFIG=(
     # RAPL energy permissions setter service (Default: Enable)
-    "$REAL_HOME/user_scripts/mako_osd/dusky_glance/services/glance_cpu_pkg_watt.service | enable"
+    "$HOME/user_scripts/mako_osd/dusky_glance/services/glance_cpu_pkg_watt.service | enable"
 )
 
 readonly SYSTEMD_SYSTEM_DIR="/etc/systemd/system"
@@ -56,6 +56,15 @@ install_and_manage() {
     local prompt_msg
     local user_input
     local user_choice
+
+    # Resolve leading ~/ or $HOME or /root/ to REAL_HOME
+    if [[ "$source_path" == "~/"* ]]; then
+        source_path="${REAL_HOME}/${source_path#"~/"}"
+    elif [[ "$source_path" == '$HOME/'* ]]; then
+        source_path="${REAL_HOME}/${source_path#'$HOME/'}"
+    elif [[ "$source_path" == "/root/"* ]]; then
+        source_path="${REAL_HOME}/${source_path#"/root/"}"
+    fi
 
     service_name="${source_path##*/}"
     target_file="${SYSTEMD_SYSTEM_DIR}/${service_name}"
