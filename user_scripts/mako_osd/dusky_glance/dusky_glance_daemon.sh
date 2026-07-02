@@ -841,24 +841,60 @@ case "$MODE" in
         case "${vendor,,}" in
             intel)
                 while true; do
-                    send_osd "Shared"
+                    # Pure Bash proc fdinfo scanner for user DRM memory (no subprocesses)
+                    declare -A client_mem=()
+                    for f in /proc/[0-9]*/fdinfo/[0-9]*; do
+                        [[ -r "$f" ]] || continue
+                        driver=""
+                        client_id=""
+                        total_sys=0
+                        total_vram=0
+                        
+                        while read -r name val unit; do
+                            case "$name" in
+                                drm-driver:) driver="$val" ;;
+                                drm-client-id:) client_id="$val" ;;
+                                drm-total-system0:|drm-total-system:)
+                                    total_sys="$val"
+                                    [[ "$unit" == "KiB" ]] && total_sys=$((val * 1024))
+                                    ;;
+                                drm-total-vram:)
+                                    total_vram="$val"
+                                    [[ "$unit" == "KiB" ]] && total_vram=$((val * 1024))
+                                    ;;
+                            esac
+                        done < "$f" 2>/dev/null
+                        
+                        if [[ -n "$driver" && -n "$client_id" ]]; then
+                            total=$((total_sys + total_vram))
+                            key="${driver}_${client_id}"
+                            if [[ -z "${client_mem[$key]:-}" ]] || (( total > client_mem[$key] )); then
+                                client_mem["$key"]=$total
+                            fi
+                        fi
+                    done
+                    
+                    sum=0
+                    for key in "${!client_mem[@]}"; do
+                        sum=$((sum + client_mem[$key]))
+                    done
+                    
+                    send_osd "$((sum / 1048576))MB"
                     sleep 1
                 done
                 ;;
                 
             amd)
                 used_path="/sys/class/drm/$card/device/mem_info_vram_used"
-                total_path="/sys/class/drm/$card/device/mem_info_vram_total"
-                if [[ ! -r "$used_path" || ! -r "$total_path" ]]; then
+                if [[ ! -r "$used_path" ]]; then
                     send_osd "N/A"
                     exit 1
                 fi
                 
                 while true; do
-                    if read -r used < "$used_path" 2>/dev/null && read -r total < "$total_path" 2>/dev/null; then
+                    if read -r used < "$used_path" 2>/dev/null; then
                         used_mb=$(( used / 1048576 ))
-                        total_mb=$(( total / 1048576 ))
-                        send_osd "${used_mb}M / ${total_mb}M"
+                        send_osd "${used_mb}MB"
                     else
                         send_osd "N/A"
                     fi
@@ -874,11 +910,9 @@ case "$MODE" in
                     if [[ "$pstate" == D3* ]]; then
                         send_osd "D3"
                     else
-                        mem_str=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
-                        if [[ "$mem_str" != "N/A" ]]; then
-                            used=$(echo "$mem_str" | cut -d, -f1 | tr -d ' ')
-                            total=$(echo "$mem_str" | cut -d, -f2 | tr -d ' ')
-                            send_osd "${used}M / ${total}M"
+                        used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
+                        if [[ "$used" != "N/A" ]]; then
+                            send_osd "${used}MB"
                         else
                             send_osd "N/A"
                         fi
