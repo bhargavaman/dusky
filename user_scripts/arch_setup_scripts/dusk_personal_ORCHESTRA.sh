@@ -87,6 +87,7 @@ INSTALL_SEQUENCE=(
     "S | 127_pam_keyring_greetd.sh --mode auto"
     "U | 130_copy_service_files.sh"
     "U | 131_dbus_copy_service_files.sh"
+    "U | 132_copy_system_services.sh"
     "U | 135_battery_notify_service.sh"
     "U | 137_snapper_isolation_subvolume.sh --auto"
 

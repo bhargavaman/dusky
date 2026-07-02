@@ -640,6 +640,260 @@ case "$MODE" in
         done
         ;;
         
+    --gpu-power)
+        card="${2:-}"
+        vendor="${3:-}"
+        if [[ -z "$card" || -z "$vendor" ]]; then
+            send_osd "GPU Err"
+            exit 1
+        fi
+        
+        case "${vendor,,}" in
+            intel)
+                path=""
+                for name_file in /sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/*/name; do
+                    if [[ -f "$name_file" ]] && [[ "$(cat "$name_file")" == "uncore" ]]; then
+                        path="${name_file%/*}/energy_uj"
+                        break
+                    fi
+                done
+                
+                if [[ -z "$path" || ! -r "$path" ]]; then
+                    send_osd "N/A"
+                    exit 1
+                fi
+                
+                read -r last_energy < "$path"
+                last_time_str="${EPOCHREALTIME//./}"
+                
+                sleep 1
+                
+                while true; do
+                    if read -r current_energy < "$path" 2>/dev/null; then
+                        curr_time_str="${EPOCHREALTIME//./}"
+                        delta_energy=$((current_energy - last_energy))
+                        delta_time_us=$((curr_time_str - last_time_str))
+                        if (( delta_time_us > 0 )); then
+                            if (( delta_energy < 0 )); then
+                                delta_energy=$(( delta_energy + 4294967296 ))
+                            fi
+                            watts_x10=$(( (delta_energy * 10) / delta_time_us ))
+                            watts_int=$(( watts_x10 / 10 ))
+                            watts_frac=$(( watts_x10 % 10 ))
+                            send_osd "${watts_int}.${watts_frac}W"
+                        fi
+                        last_energy=$current_energy
+                        last_time_str=$curr_time_str
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            amd)
+                path=""
+                for f in /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_average /sys/class/drm/"$card"/device/hwmon/hwmon*/power1_input; do
+                    if [[ -f "$f" ]]; then
+                        path="$f"
+                        break
+                    fi
+                done
+                
+                if [[ -z "$path" || ! -r "$path" ]]; then
+                    send_osd "N/A"
+                    exit 1
+                fi
+                
+                while true; do
+                    if read -r microwatts < "$path" 2>/dev/null; then
+                        watts_x10=$(( microwatts / 100000 ))
+                        watts_int=$(( watts_x10 / 10 ))
+                        watts_frac=$(( watts_x10 % 10 ))
+                        send_osd "${watts_int}.${watts_frac}W"
+                    else
+                        send_osd "N/A"
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            nvidia)
+                pstate_path="/sys/class/drm/$card/device/power_state"
+                while true; do
+                    pstate=""
+                    [[ -r "$pstate_path" ]] && read -r pstate < "$pstate_path" 2>/dev/null
+                    if [[ "$pstate" == D3* ]]; then
+                        send_osd "D3"
+                    else
+                        power_str=$(nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
+                        if [[ "$power_str" != "N/A" ]]; then
+                            if [[ "$power_str" =~ ^([0-9]+)\.([0-9]) ]]; then
+                                send_osd "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}W"
+                            else
+                                send_osd "${power_str}W"
+                            fi
+                        else
+                            send_osd "N/A"
+                        fi
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            *)
+                send_osd "N/A"
+                exit 1
+                ;;
+        esac
+        ;;
+
+    --gpu-usage)
+        card="${2:-}"
+        vendor="${3:-}"
+        if [[ -z "$card" || -z "$vendor" ]]; then
+            send_osd "GPU Err"
+            exit 1
+        fi
+        
+        case "${vendor,,}" in
+            intel)
+                path="/sys/class/drm/$card/device/drm/$card/power/rc6_residency_ms"
+                if [[ ! -r "$path" ]]; then
+                    send_osd "N/A"
+                    exit 1
+                fi
+                
+                read -r last_rc6 < "$path"
+                last_time_str="${EPOCHREALTIME//./}"
+                last_time_ms=$(( last_time_str / 1000 ))
+                
+                sleep 1
+                
+                while true; do
+                    if read -r current_rc6 < "$path" 2>/dev/null; then
+                        curr_time_str="${EPOCHREALTIME//./}"
+                        curr_time_ms=$(( curr_time_str / 1000 ))
+                        delta_rc6=$((current_rc6 - last_rc6))
+                        delta_time=$((curr_time_ms - last_time_ms))
+                        if (( delta_time > 0 )); then
+                            usage=$(( 100 * (delta_time - delta_rc6) / delta_time ))
+                            (( usage < 0 )) && usage=0
+                            (( usage > 100 )) && usage=100
+                            send_osd "${usage}%"
+                        fi
+                        last_rc6=$current_rc6
+                        last_time_ms=$curr_time_ms
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            amd)
+                path="/sys/class/drm/$card/device/gpu_busy_percent"
+                if [[ ! -r "$path" ]]; then
+                    send_osd "N/A"
+                    exit 1
+                fi
+                
+                while true; do
+                    if read -r usage < "$path" 2>/dev/null; then
+                        send_osd "${usage}%"
+                    else
+                        send_osd "N/A"
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            nvidia)
+                pstate_path="/sys/class/drm/$card/device/power_state"
+                while true; do
+                    pstate=""
+                    [[ -r "$pstate_path" ]] && read -r pstate < "$pstate_path" 2>/dev/null
+                    if [[ "$pstate" == D3* ]]; then
+                        send_osd "D3"
+                    else
+                        usage=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
+                        if [[ "$usage" != "N/A" ]]; then
+                            send_osd "${usage}%"
+                        else
+                            send_osd "N/A"
+                        fi
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            *)
+                send_osd "N/A"
+                exit 1
+                ;;
+        esac
+        ;;
+
+    --gpu-mem)
+        card="${2:-}"
+        vendor="${3:-}"
+        if [[ -z "$card" || -z "$vendor" ]]; then
+            send_osd "GPU Err"
+            exit 1
+        fi
+        
+        case "${vendor,,}" in
+            intel)
+                while true; do
+                    send_osd "Shared"
+                    sleep 1
+                done
+                ;;
+                
+            amd)
+                used_path="/sys/class/drm/$card/device/mem_info_vram_used"
+                total_path="/sys/class/drm/$card/device/mem_info_vram_total"
+                if [[ ! -r "$used_path" || ! -r "$total_path" ]]; then
+                    send_osd "N/A"
+                    exit 1
+                fi
+                
+                while true; do
+                    if read -r used < "$used_path" 2>/dev/null && read -r total < "$total_path" 2>/dev/null; then
+                        used_mb=$(( used / 1048576 ))
+                        total_mb=$(( total / 1048576 ))
+                        send_osd "${used_mb}M / ${total_mb}M"
+                    else
+                        send_osd "N/A"
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            nvidia)
+                pstate_path="/sys/class/drm/$card/device/power_state"
+                while true; do
+                    pstate=""
+                    [[ -r "$pstate_path" ]] && read -r pstate < "$pstate_path" 2>/dev/null
+                    if [[ "$pstate" == D3* ]]; then
+                        send_osd "D3"
+                    else
+                        mem_str=$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
+                        if [[ "$mem_str" != "N/A" ]]; then
+                            used=$(echo "$mem_str" | cut -d, -f1 | tr -d ' ')
+                            total=$(echo "$mem_str" | cut -d, -f2 | tr -d ' ')
+                            send_osd "${used}M / ${total}M"
+                        else
+                            send_osd "N/A"
+                        fi
+                    fi
+                    sleep 1
+                done
+                ;;
+                
+            *)
+                send_osd "N/A"
+                exit 1
+                ;;
+        esac
+        ;;
+
     --workspace)
         if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
             send_osd "WS: ?"

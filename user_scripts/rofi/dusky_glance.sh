@@ -156,7 +156,7 @@ declare -a ROFI_CMD=(
         }
         listview {
             columns: 2;
-            lines: 7;
+            lines: 5;
             spacing: 12px;
             fixed-height: false;
             dynamic: true;
@@ -229,14 +229,103 @@ PROMPT_STYLE='window { width: 340px; x-offset: -20px; y-offset: 20px; padding: 2
 declare -a MENU_OPTIONS=(
     "󰜺  Stop / Clear"          "󰸉  Edit"
     "󰔟  Time & Focus"          "  CPU"
-    "󰘚  Memory (RAM)"          "󰁹  Battery"
-    "󰋊  Disk Usage"             "󰈀  Network Speed"
-    "󰽽  Workspace"
+    "󰘚  Memory (RAM)"          "󰢮  GPU"
+    "󰁹  Battery"               "󰋊  Disk Usage"
+    "󰈀  Network Speed"          "󰽽  Workspace"
 )
 
 choice=$(printf '%s\n' "${MENU_OPTIONS[@]}" | "${ROFI_CMD[@]}" -p "Glance") || exit 0
 
 case "$choice" in
+    '󰢮  GPU')
+        # Dynamic GPU Scan (power-state-first — never wakes sleeping GPUs)
+        gpu_list=()
+        for card in /sys/class/drm/card[0-9]; do
+            [[ -r "$card/device/vendor" ]] || continue
+            vendor=$(cat "$card/device/vendor")
+            vendor_lbl=""
+            case "${vendor,,}" in
+                0x8086) vendor_lbl="Intel" ;;
+                0x1002) vendor_lbl="AMD" ;;
+                0x10de) vendor_lbl="NVIDIA" ;;
+                *)      vendor_lbl="GPU" ;;
+            esac
+            
+            # Read power state FIRST — before any PCI config space access
+            power_state=""
+            [[ -r "$card/device/power_state" ]] && power_state=$(cat "$card/device/power_state" 2>/dev/null)
+            
+            # Only query lspci for D0 (active) GPUs — lspci reads PCI config
+            # space which WILL wake a D3cold GPU
+            card_name=""
+            if [[ "$power_state" != D3* ]]; then
+                sys_device_path=$(readlink -f "$card/device" 2>/dev/null || true)
+                pci_address="${sys_device_path##*/}"
+                if [[ -n "$pci_address" ]] && command -v lspci >/dev/null 2>&1; then
+                    card_name=$(lspci -s "$pci_address" 2>/dev/null | sed -E 's/^[0-9a-fA-F:.]+ [^:]+: //' || true)
+                fi
+            fi
+            [[ -z "$card_name" ]] && card_name="${vendor_lbl} GPU"
+            
+            gpu_list+=("${card##*/}|$card_name|$vendor_lbl|$power_state")
+        done
+        
+        if [[ ${#gpu_list[@]} -eq 0 ]]; then
+            rofi -e "No GPUs detected."
+            exit 1
+        fi
+        
+        selected_card=""
+        selected_vendor=""
+        selected_name=""
+        selected_pstate=""
+        
+        if [[ ${#gpu_list[@]} -eq 1 ]]; then
+            IFS='|' read -r selected_card selected_name selected_vendor selected_pstate <<< "${gpu_list[0]}"
+        else
+            declare -a card_opts=()
+            for entry in "${gpu_list[@]}"; do
+                IFS='|' read -r c_node c_name c_vend c_pstate <<< "$entry"
+                if [[ "$c_pstate" == D3* ]]; then
+                    card_opts+=("󰤄  $c_vend ($c_pstate)")
+                else
+                    card_opts+=("󰢮  $c_vend (Active)")
+                fi
+            done
+            
+            cardchoice=$(printf '%s\n' "${card_opts[@]}" | "${ROFI_SUB[@]}" -p "GPU") || exit 0
+            
+            for entry in "${gpu_list[@]}"; do
+                IFS='|' read -r c_node c_name c_vend c_pstate <<< "$entry"
+                if [[ "$cardchoice" == *"$c_vend"* ]]; then
+                    selected_card="$c_node"
+                    selected_name="$c_name"
+                    selected_vendor="$c_vend"
+                    selected_pstate="$c_pstate"
+                    break
+                fi
+            done
+        fi
+        
+        [[ -z "$selected_card" ]] && exit 0
+        
+        
+        gpu_opts=(
+            "󱐋  GPU Power (Watts)"
+            "󰢮  GPU Usage"
+            "󰘚  GPU Memory"
+        )
+        gpuchoice=$(printf '%s\n' "${gpu_opts[@]}" | "${ROFI_SUB[@]}" -p "$selected_vendor") || exit 0
+        
+        if [[ "$gpuchoice" == *"GPU Power"* ]]; then
+            "$DAEMON_SCRIPT" --gpu-power "$selected_card" "$selected_vendor" & disown
+        elif [[ "$gpuchoice" == *"GPU Usage"* ]]; then
+            "$DAEMON_SCRIPT" --gpu-usage "$selected_card" "$selected_vendor" & disown
+        elif [[ "$gpuchoice" == *"GPU Memory"* ]]; then
+            "$DAEMON_SCRIPT" --gpu-mem "$selected_card" "$selected_vendor" & disown
+        fi
+        ;;
+
     '󰔟  Time & Focus')
         tf_opts=(
             "󰥔  Clock (no seconds)"

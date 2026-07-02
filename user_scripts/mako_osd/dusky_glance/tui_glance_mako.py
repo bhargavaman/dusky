@@ -119,8 +119,9 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
     # Surgical variants directly compiled from the active Mako specification sheet
     width_map = {
         "": 170, "clock": 170, "clock-short": 170, "stopwatch": 170, "timer": 170, "pomodoro": 170,
-        "cpu": 100, "cpu-power": 120, "ram": 120, "ram-temp": 160, "zram": 210, "temp": 110,
+        "cpu": 100, "cpu-power": 130, "ram": 120, "ram-temp": 160, "zram": 210, "temp": 110,
         "battery": 180, "battery-percent": 100, "battery-watts": 120, "battery-time": 130,
+        "gpu-power": 130, "gpu-usage": 100, "gpu-mem": 160,
         "disk": 240, "disk-read": 190, "disk-write": 190, "disk-temp": 100,
         "network": 190, "uptime": 170, "workspace": 140
     }
@@ -542,7 +543,10 @@ SCHEMA = {
        build_standard_glance("battery", "Battery", "Hardware") +
        build_standard_glance("battery-percent", "Battery (Percent)", "Hardware") +
        build_standard_glance("battery-watts", "Battery (Watts)", "Hardware") +
-       build_standard_glance("battery-time", "Battery (Time)", "Hardware"),
+       build_standard_glance("battery-time", "Battery (Time)", "Hardware") +
+       build_standard_glance("gpu-power", "GPU-Power", "Hardware") +
+       build_standard_glance("gpu-usage", "GPU-Usage", "Hardware") +
+       build_standard_glance("gpu-mem", "GPU-Memory", "Hardware"),
 
     # --- TAB 4: Storage Metrics ---
     4: build_standard_glance("disk", "Disk-Space", "Storage") +
