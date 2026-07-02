@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Dusky Core Manager (v11)
+Dusky Core Manager (v13)
 Kernel 7.1+ | Python 3.14+ | Arch Linux Optimized
-Features: RAPL Power, Non-Invasive Usage, Persistent C-States, Boundary Scrolling
+Features: RAPL Power, Non-Invasive Usage, Percentage-Based C-States
 """
 
 import os
@@ -95,7 +95,6 @@ def hydrate_and_detect_topology() -> tuple[list[int], list[int], set[int]]:
             try: Path(f"/sys/devices/system/cpu/cpu{cpu_id}/online").write_text("0")
             except OSError: pass
 
-    # Absolute Safety Lock: Ensure at least one core is ALWAYS locked to prevent kernel panic
     all_found = sorted(p_cores + e_cores)
     if not locked_cores and all_found:
         locked_cores.add(all_found[0])
@@ -141,7 +140,6 @@ def get_package_power(last_energy: int, last_time: float) -> tuple[str, int, flo
     return "N/A", last_energy, last_time
 
 def read_cpu_usage(prev_stat: dict) -> tuple[dict, dict]:
-    """Reads /proc/stat to calculate non-invasive CPU utilization percentage."""
     current_stat = {}
     usage_dict = {}
     try:
@@ -151,7 +149,6 @@ def read_cpu_usage(prev_stat: dict) -> tuple[dict, dict]:
             if line.startswith('cpu') and line[3].isdigit():
                 parts = line.split()
                 cpu_id = int(parts[0][3:])
-                # user, nice, system, idle, iowait, irq, softirq, steal
                 stats = list(map(int, parts[1:9]))
                 idle = stats[3] + stats[4]
                 non_idle = stats[0] + stats[1] + stats[2] + stats[5] + stats[6] + stats[7]
@@ -173,6 +170,9 @@ def read_cpu_usage(prev_stat: dict) -> tuple[dict, dict]:
     return usage_dict, current_stat
 
 def take_cstate_snapshot(active_cores: list[int]) -> dict[int, str]:
+    """
+    Calculates exact percentage residency to prove C-state oscillation.
+    """
     snapshot = {}
     t1_data = {}
     
@@ -187,27 +187,43 @@ def take_cstate_snapshot(active_cores: list[int]) -> dict[int, str]:
                 if t_val.isdigit(): t1_data[core][name] = int(t_val)
             except OSError: pass
 
+    t_start = time.perf_counter()
     time.sleep(0.15) 
+    t_end = time.perf_counter()
+    
+    elapsed_us = (t_end - t_start) * 1_000_000
 
     for core in active_cores:
         if core not in t1_data:
-            snapshot[core] = "Active"
+            snapshot[core] = "C0 (100%)"
             continue
             
         core_path = Path(f"/sys/devices/system/cpu/cpu{core}/cpuidle")
-        max_delta = -1
-        active_state = "C0"
+        state_deltas = {}
+        total_idle_us = 0
+        
         for state_dir in core_path.glob("state*"):
             try:
                 name = safe_read(state_dir / "name")
                 t_val = safe_read(state_dir / "time")
                 if t_val.isdigit():
                     delta = int(t_val) - t1_data[core].get(name, 0)
-                    if delta > max_delta and delta > 0:
-                        max_delta = delta
-                        active_state = name
+                    if delta > 0:
+                        state_deltas[name] = delta
+                        total_idle_us += delta
             except OSError: pass
-        snapshot[core] = active_state
+            
+        # Time remaining in the 150ms window is mathematically Active C0 time
+        c0_us = max(0, elapsed_us - total_idle_us)
+        state_deltas["C0"] = c0_us
+        
+        if state_deltas:
+            active_state = max(state_deltas, key=state_deltas.get)
+            total_tracked = total_idle_us + c0_us
+            pct = (state_deltas[active_state] / total_tracked) * 100 if total_tracked > 0 else 0
+            snapshot[core] = f"{active_state} ({pct:.0f}%)"
+        else:
+            snapshot[core] = "C0 (100%)"
         
     return snapshot
 
@@ -219,13 +235,13 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
     curses.start_color()
     curses.use_default_colors()
     
-    curses.init_pair(1, curses.COLOR_CYAN, -1)     # P-Core
-    curses.init_pair(2, curses.COLOR_GREEN, -1)    # Online / E-Core
-    curses.init_pair(3, curses.COLOR_RED, -1)      # Sleeping / Errors
-    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE) # UI Cursor
-    curses.init_pair(5, curses.COLOR_YELLOW, -1)   # BSP Locked
-    curses.init_pair(6, curses.COLOR_MAGENTA, -1)  # Accents / Headers
-    curses.init_pair(7, curses.COLOR_BLUE, -1)     # Secondary Accents
+    curses.init_pair(1, curses.COLOR_CYAN, -1)     
+    curses.init_pair(2, curses.COLOR_GREEN, -1)    
+    curses.init_pair(3, curses.COLOR_RED, -1)      
+    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE) 
+    curses.init_pair(5, curses.COLOR_YELLOW, -1)   
+    curses.init_pair(6, curses.COLOR_MAGENTA, -1)  
+    curses.init_pair(7, curses.COLOR_BLUE, -1)     
 
     stdscr.timeout(1000)
 
@@ -240,7 +256,6 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
     last_time = time.time()
     prev_stat = {}
     
-    # Initialize C-States automatically on startup
     stdscr.addstr(0, 0, " Initializing C-States... ", curses.color_pair(5) | curses.A_REVERSE)
     stdscr.refresh()
     active_cores = [c for c in all_cores if get_core_status(c) or c in locked_cores]
@@ -285,11 +300,9 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
             stdscr.addstr(y_offset, 9, "[i] Refresh C-States  [Q] Quit")
             y_offset += 2
             
-        # Table Header (Vibrant & Dedicated Columns)
-        header_str = f"{'CORE':<8} | {'TYPE':<8} | {'ST':<4} | {'FREQ':<8} | {'USAGE':<7} | {'C-STATE':<10}"
+        header_str = f"{'CORE':<10} | {'TYPE':<8} | {'ST':<4} | {'FREQ':<9} | {'USAGE':<7} | {'C-STATE':<12}"
         stdscr.addstr(y_offset, 2, header_str, curses.A_UNDERLINE | curses.A_BOLD | curses.color_pair(6))
 
-        # Viewport Boundary Scrolling Math
         visible_rows = max_y - (y_offset + 2)
         half_page = visible_rows // 2
         
@@ -300,7 +313,6 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
             
         end_row = min(len(all_cores), start_row + visible_rows)
 
-        # Core Rendering Loop
         for idx in range(start_row, end_row):
             core = all_cores[idx]
             is_locked = core in locked_cores
@@ -313,23 +325,30 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
             usage_str = usage_dict.get(core, "---") if is_online or is_locked else "---"
             
             if is_locked:
-                icon_str = f" {ICON_LOCK} "
+                icon_str = f"{ICON_LOCK} "
                 status_color = curses.color_pair(5) | curses.A_BOLD
                 freq_str = get_core_freq(core)
             else:
-                icon_str = f" {ICON_ON} " if is_online else f" {ICON_OFF} "
+                icon_str = f"{ICON_ON} " if is_online else f"{ICON_OFF} "
                 status_color = curses.color_pair(2) | curses.A_BOLD if is_online else curses.color_pair(3) | curses.A_DIM
                 freq_str = get_core_freq(core) if is_online else "---"
             
             row_y = (y_offset + 1) + (idx - start_row)
             
+            core_s = f"CPU {core:02d}     | "
+            arch_s = f"{arch:<8} | "
+            icon_s = f"{icon_str:<4} | "
+            freq_s = f"{freq_str:<9} | "
+            usage_s = f"{usage_str:<7} | "
+            cstate_s = f"{cstate_str:<12}"
+            
             if idx == current_row:
-                stdscr.addstr(row_y, 2, f"CPU {core:02d}   | {arch:<8} |{icon_str:<5}| {freq_str:<8} | {usage_str:<7} | {cstate_str:<10}", curses.color_pair(4))
+                stdscr.addstr(row_y, 2, f"CPU {core:02d}     | {arch:<8} | {icon_str:<4} | {freq_str:<9} | {usage_str:<7} | {cstate_str:<12}", curses.color_pair(4))
             else:
-                stdscr.addstr(row_y, 2, f"CPU {core:02d}   | ", curses.A_NORMAL)
-                stdscr.addstr(row_y, 13, f"{arch:<8}", arch_color)
-                stdscr.addstr(row_y, 22, f"|{icon_str:<5}|", status_color)
-                stdscr.addstr(row_y, 29, f" {freq_str:<8} | {usage_str:<7} | {cstate_str:<10}", curses.A_NORMAL)
+                stdscr.addstr(row_y, 2, core_s, curses.A_NORMAL)
+                stdscr.addstr(row_y, 15, arch_s, arch_color)
+                stdscr.addstr(row_y, 26, icon_s, status_color)
+                stdscr.addstr(row_y, 33, freq_s + usage_s + cstate_s, curses.A_NORMAL)
 
         stdscr.refresh()
         
@@ -338,7 +357,6 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
         
         if key == curses.ERR: continue
             
-        # Navigation
         if key in (curses.KEY_UP, ord('k')):
             if current_row > 0: current_row -= 1
         elif key in (curses.KEY_DOWN, ord('j')):
@@ -354,7 +372,6 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
                 last_key_was_g = True
                 continue 
                 
-        # Dedicated C-State Refresh
         elif key == ord('i'):
             feedback_msg = "Refreshing C-States..."
             stdscr.addstr(2, max(0, (max_x - len(feedback_msg) - 9) // 2), f" Status: {feedback_msg} ", curses.color_pair(5) | curses.A_BOLD)
@@ -366,7 +383,6 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
         elif key == curses.KEY_F1:
             show_controls = not show_controls
             
-        # Toggling Logic (Space, H, L)
         elif key in (ord(' '), ord('h'), ord('l')):
             core = all_cores[current_row]
             if core in locked_cores:
@@ -379,11 +395,9 @@ def interactive_mode(stdscr, p_cores: list[int], e_cores: list[int], locked_core
                 success, msg = set_core_status(core, enable=target_enable)
                 if not success: feedback_msg = msg
                 else: 
-                    # Clear stale C-State data if core was just turned off
                     if not target_enable and core in cstate_data:
                         del cstate_data[core]
                     
-        # Batch Commands
         elif key in (ord('e'), ord('E')):
             for c in p_cores:
                 if c not in locked_cores: set_core_status(c, False)
