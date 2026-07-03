@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dusky Power Throttle (v4.0 - Zenith)
+Dusky Power Throttle (v7.0 - Apex)
 CPU Package Power Limiter via RAPL
 Arch Linux | Kernel 7.1+ | Intel/AMD
 """
@@ -12,11 +12,12 @@ import argparse
 import json
 import fcntl
 import shutil
+import curses
 from pathlib import Path
 from typing import Any
 
 # ==========================================
-# 1. TUI Dependencies & Custom Help Menu
+# 1. Dependency Resolution & Rich Help
 # ==========================================
 try:
     from rich.console import Console
@@ -26,6 +27,7 @@ try:
 except ImportError:
     if os.geteuid() != 0:
         print("\033[93m[!] Missing 'rich' library. Elevating to install...\033[0m")
+        sys.stdout.flush()
         os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
     import subprocess
     try:
@@ -38,68 +40,71 @@ except ImportError:
 console = Console()
 
 def display_help() -> None:
-    """Renders a beautiful, comprehensive manual using Rich."""
+    """Renders a comprehensive dashboard manual via Rich."""
     console.print(Panel.fit("[bold cyan]Dusky Power Throttle - Master Manual[/bold cyan]", border_style="cyan"))
     
-    console.print("\n[bold yellow]COMMANDS[/bold yellow]")
+    console.print("\n[bold yellow]EXECUTION MODES[/bold yellow]")
     cmd_table = Table(show_header=True, header_style="bold magenta", box=None)
-    cmd_table.add_column("Command", style="cyan", width=12)
+    cmd_table.add_column("Command", style="cyan", width=14)
     cmd_table.add_column("Description", style="white")
-    cmd_table.add_row("status", "Show active power limits and real-time package power.")
-    cmd_table.add_row("info", "Deep-dive into raw Sysfs RAPL structures and limits.")
-    cmd_table.add_row("set", "Modify CPU power bounds (PL1/PL2/PL4) and time windows.")
-    cmd_table.add_row("reset", "Purge software modifications and restore BIOS defaults.")
-    cmd_table.add_row("monitor", "Launch the live, ultra-fast TUI power telemetry dashboard.")
-    cmd_table.add_row("raw", "Output pure JSON state for external scripting/Waybar.")
+    cmd_table.add_row("(no args)", "Launches the Live Interactive TUI Dashboard (Vim Tweak Mode).")
+    cmd_table.add_row("status", "Print active power boundaries and package telemetry.")
+    cmd_table.add_row("info", "Perform a forensic dump of raw Sysfs RAPL structures.")
+    cmd_table.add_row("set", "Directly override limits or windows via standard CLI bounds.")
+    cmd_table.add_row("reset", "Purge all runtime changes and force sync with BIOS baseline.")
+    cmd_table.add_row("monitor", "Launch standard clean-line stdout terminal tracker.")
+    cmd_table.add_row("raw", "Emit an atomic JSON dictionary string for scripts/Waybar.")
     console.print(cmd_table)
     
-    console.print("\n[bold yellow]PARAMETERS (for 'set' command)[/bold yellow]")
-    param_table = Table(show_header=True, header_style="bold magenta", box=None)
-    param_table.add_column("Argument", style="green", width=20)
-    param_table.add_column("Description", style="white")
-    param_table.add_row("--pl1 <watts>", "Long-term sustained power limit (e.g., 60)")
-    param_table.add_row("--pl2 <watts>", "Short-term boost power limit (e.g., 70)")
-    param_table.add_row("--pl4 <watts>", "Absolute peak transient power limit (e.g., 215)")
-    param_table.add_row("--pl1-time <sec>", "PL1 averaging window in seconds (e.g., 80.0)")
-    param_table.add_row("--pl2-time <sec>", "PL2 time window in seconds (e.g., 0.0024)")
-    param_table.add_row("--save", "Persist applied values across tool restarts as the baseline.")
-    console.print(param_table)
-    
-    console.print("\n[bold yellow]EXAMPLES[/bold yellow]")
-    console.print("  [dim]1. Check current hardware status:[/dim]\n     [green]sudo ./tui_dusky_power_throttle.py status[/green]\n")
-    console.print("  [dim]2. Apply a strict 15W eco-mode with 10s window:[/dim]\n     [green]sudo ./tui_dusky_power_throttle.py set --pl1 15 --pl2 20 --pl1-time 10.0[/green]\n")
-    console.print("  [dim]3. Monitor power with a high refresh rate (0.1s):[/dim]\n     [green]sudo ./tui_dusky_power_throttle.py monitor -i 0.1[/green]\n")
+    console.print("\n[bold yellow]INTERACTIVE TUI KEYBINDINGS (Zero-Arg Mode)[/bold yellow]")
+    tui_table = Table(show_header=True, header_style="bold magenta", box=None)
+    tui_table.add_column("Keybind", style="green", width=16)
+    tui_table.add_column("Action Performed", style="white")
+    tui_table.add_row("j / k", "Navigate selection down / up through the power constraints.")
+    tui_table.add_row("h / l", "Fine Adjustment: Decrement / Increment the selected parameter.")
+    tui_table.add_row("H / L", "Coarse Adjustment: Macro decrement / increment the selected parameter.")
+    tui_table.add_row("r", "Local Reset: Restore the currently selected parameter to BIOS default.")
+    tui_table.add_row("Shift + R", "Global Reset: Restore ALL parameters to their BIOS defaults instantly.")
+    tui_table.add_row("q", "Gracefully terminate the interactive TUI mode.")
+    console.print(tui_table)
 
-# Intercept help instantly so the user doesn't need 'sudo' just to read the manual
-if "-h" in sys.argv or "--help" in sys.argv:
-    display_help()
+    console.print("\n[bold yellow]CLI ARGUMENTS (for 'set' command)[/bold yellow]")
+    param_table = Table(show_header=True, header_style="bold magenta", box=None)
+    param_table.add_column("Argument", style="green", width=22)
+    param_table.add_column("Description", style="white")
+    param_table.add_row("--pl1 <watts>", "Long-term sustained package ceiling limit.")
+    param_table.add_row("--pl2 <watts>", "Short-term maximum boost package ceiling limit.")
+    param_table.add_row("--pl4 <watts>", "Absolute peak hardware transient limit.")
+    param_table.add_row("--pl1-time <sec>", "PL1 averaging time constant envelope window.")
+    param_table.add_row("--pl2-time <sec>", "PL2 duration threshold window.")
+    param_table.add_row("--save", "Lock structural changes into baseline buffer memory.")
+    console.print(param_table)
     sys.exit(0)
 
+if "-h" in sys.argv or "--help" in sys.argv:
+    display_help()
+
 # ==========================================
-# 2. Privilege Escalation
+# 2. Privilege Escalation Check
 # ==========================================
 if os.geteuid() != 0:
     print("\033[93m[!] Elevating to root privileges...\033[0m")
     sys.stdout.flush()
     os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
 
-# Graceful fallback: Default to 'status' if run without arguments
-if len(sys.argv) == 1:
-    sys.argv.append("status")
-
 # ==========================================
-# 3. Hardware Telemetry & Core Logic
+# 3. Hardware Telemetry & I/O Engine
 # ==========================================
 RAPL_BASE = Path("/sys/class/powercap")
 STATE_FILE = Path("/dev/shm/dusky_rapl_state.json")
 
 def format_time(us: int) -> str:
-    if us >= 1_000_000: return f"{us / 1_000_000:.1f}s"
+    if us >= 1_000_000: return f"{us / 1_000_000:.2f}s"
     if us >= 1_000: return f"{us / 1_000:.1f}ms"
     return f"{us}µs"
 
 class FastEnergyReader:
-    """Context Manager for zero-overhead, deterministic sysfs polling."""
+    """Context Manager providing persistent, zero-overhead file descriptor polling."""
     def __init__(self, path: Path):
         self.fd = os.open(path, os.O_RDONLY)
         
@@ -112,8 +117,7 @@ class FastEnergyReader:
     def read(self) -> int | None:
         try:
             os.lseek(self.fd, 0, os.SEEK_SET)
-            val = os.read(self.fd, 32).decode().strip()
-            return int(val)
+            return int(os.read(self.fd, 32).decode().strip())
         except (OSError, ValueError):
             return None
             
@@ -151,25 +155,42 @@ def get_power_info(domain: Path) -> dict[str, Any]:
         "enabled": safe_read_int(domain / "enabled"),
         "name": (domain / "name").read_text().strip() if (domain / "name").exists() else "unknown"
     }
-    
     for f in domain.glob("constraint_*"):
         if f.is_file() and not f.name.endswith("_name"):
             info[f.name] = safe_read_int(f)
-            
     for nf in domain.glob("constraint_*_name"):
         info[nf.name] = nf.read_text().strip()
-        
     return info
 
 # ==========================================
-# 4. Throttle Management & State
+# 4. Core Management State Controller
 # ==========================================
 class PowerThrottle:
     def __init__(self):
         self.domain = find_package_domain()
         if not self.domain:
-            console.print("[bold red][X] No RAPL package domain found. Power limiting unsupported on this hardware.[/bold red]")
+            console.print("[bold red][X] No RAPL package domain found. Hardware limitation features unavailable.[/bold red]")
             sys.exit(1)
+        self._ensure_state_exists()
+
+    def _ensure_state_exists(self) -> None:
+        """Bootstraps the JSON state file and auto-heals any missing keys from older script versions."""
+        if not STATE_FILE.exists():
+            self._persist_boot_values()
+        else:
+            def heal_state(data):
+                boot = data.get("boot", {})
+                current = self._capture_power_limits()
+                healed = False
+                for k, v in current.items():
+                    if k not in boot:
+                        boot[k] = v
+                        healed = True
+                if healed:
+                    data["boot"] = boot
+                    return data
+                return None
+            self._atomic_state_update(heal_state)
 
     def _atomic_state_update(self, callback) -> None:
         STATE_FILE.touch(mode=0o644, exist_ok=True)
@@ -183,7 +204,6 @@ class PowerThrottle:
                     data = {"boot": self._capture_power_limits(), "modified": False}
                 
                 updated_data = callback(data)
-                
                 if updated_data is not None:
                     f.seek(0)
                     f.truncate()
@@ -193,11 +213,19 @@ class PowerThrottle:
 
     def _capture_power_limits(self) -> dict[str, int]:
         result = {}
-        for c in ["constraint_0_power_limit_uw", "constraint_1_power_limit_uw", "constraint_2_power_limit_uw"]:
+        for c in ["constraint_0_power_limit_uw", "constraint_1_power_limit_uw", "constraint_2_power_limit_uw",
+                  "constraint_0_time_window_us", "constraint_1_time_window_us"]:
             val = safe_read_int(self.domain / c)
             if val is not None:
                 result[c] = val
         return result
+
+    def get_boot_state(self) -> dict[str, int]:
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f).get("boot", {})
+        except (OSError, json.JSONDecodeError):
+            return self._capture_power_limits()
 
     def _persist_boot_values(self) -> None:
         def update_boot(data):
@@ -234,11 +262,13 @@ class PowerThrottle:
                 if safe_write(self.domain / sysfs_file, value):
                     result[f"{name}_set"] = value
 
-        time.sleep(0.1) # Sync with kernel/ACPI
+        time.sleep(0.05) # Sync processing gap
         
         for name, sysfs_file in [("pl1", "constraint_0_power_limit_uw"), 
                                  ("pl2", "constraint_1_power_limit_uw"),
-                                 ("pl4", "constraint_2_power_limit_uw")]:
+                                 ("pl4", "constraint_2_power_limit_uw"),
+                                 ("pl1_time", "constraint_0_time_window_us"),
+                                 ("pl2_time", "constraint_1_time_window_us")]:
             actual = safe_read_int(self.domain / sysfs_file)
             if actual is not None:
                 result[f"{name}_actual"] = actual
@@ -262,14 +292,15 @@ class PowerThrottle:
             with FastEnergyReader(energy_file) as reader:
                 e1 = reader.read()
                 t1 = time.perf_counter()
-                time.sleep(0.3)
+                time.sleep(0.2)
                 e2 = reader.read()
                 t2 = time.perf_counter()
                 
                 if e1 is not None and e2 is not None and (t2 - t1) > 0:
-                    if e2 < e1 and max_energy > 0:
-                        e2 += max_energy 
-                    pkg_power = (e2 - e1) / 1_000_000 / (t2 - t1)
+                    delta_e = e2 - e1
+                    if delta_e < 0 and max_energy > 0:
+                        delta_e += max_energy 
+                    pkg_power = (delta_e / 1_000_000) / (t2 - t1)
             
         info["power_watts"] = pkg_power
         return info
@@ -287,7 +318,6 @@ class PowerThrottle:
         dynamic_max = max(pl4_base, pl2_base * 1.2, pl1_base * 1.5, 100.0)
 
         console.print(f"[bold cyan]RAPL Power Monitor[/bold cyan] (Interval: {interval}s | Range: 0-{int(dynamic_max)}W | Ctrl+C to stop)")
-        
         t_start = time.monotonic()
         n = 0
         
@@ -305,9 +335,10 @@ class PowerThrottle:
                     
                     p = None
                     if e1 is not None and e2 is not None and (t2 - t1) > 0:
-                        if e2 < e1 and max_energy > 0:
-                            e2 += max_energy
-                        p = (e2 - e1) / 1_000_000 / (t2 - t1)
+                        delta_e = e2 - e1
+                        if delta_e < 0 and max_energy > 0:
+                            delta_e += max_energy
+                        p = (delta_e / 1_000_000) / (t2 - t1)
 
                     if p is None:
                         line = f"[{ts:7.1f}s]  Power: N/A"
@@ -324,10 +355,201 @@ class PowerThrottle:
                     sys.stdout.flush()
                     n += 1
         except KeyboardInterrupt:
-            print() 
+            print()
 
 # ==========================================
-# 5. Argument Parsing & Main Execution
+# 5. Interactive Curses Dashboard (Vim Mode)
+# ==========================================
+def safe_addstr(stdscr, y: int, x: int, string: str, attr: int = 0) -> None:
+    try:
+        max_y, max_x = stdscr.getmaxyx()
+        if y < 0 or y >= max_y or x < 0 or x >= max_x: return
+        stdscr.addstr(y, x, string[:max_x - x], attr)
+    except curses.error:
+        pass
+
+def interactive_mode(stdscr, throttle: PowerThrottle) -> None:
+    curses.curs_set(0)
+    curses.start_color()
+    curses.use_default_colors()
+    stdscr.timeout(250)
+    
+    curses.init_pair(1, curses.COLOR_CYAN, -1)
+    curses.init_pair(2, curses.COLOR_GREEN, -1)
+    curses.init_pair(3, curses.COLOR_RED, -1)
+    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
+    curses.init_pair(5, curses.COLOR_YELLOW, -1)
+    curses.init_pair(6, curses.COLOR_MAGENTA, -1)
+
+    items = [
+        {"id": "pl1", "label": "PL1 Limit", "type": "power", "sysfs": "constraint_0_power_limit_uw", "step": 1, "big": 5},
+        {"id": "pl1_time", "label": "PL1 Window", "type": "time", "sysfs": "constraint_0_time_window_us", "step": 500_000, "big": 5_000_000},
+        {"id": "pl2", "label": "PL2 Limit", "type": "power", "sysfs": "constraint_1_power_limit_uw", "step": 1, "big": 5},
+        {"id": "pl2_time", "label": "PL2 Window", "type": "time", "sysfs": "constraint_1_time_window_us", "step": 250, "big": 2500},
+        {"id": "pl4", "label": "PL4 Limit", "type": "power", "sysfs": "constraint_2_power_limit_uw", "step": 5, "big": 25},
+    ]
+    
+    selected_idx = 0
+    feedback_msg = "Dashboard initialized. Ready."
+    feedback_time = time.time()
+
+    max_energy = safe_read_int(throttle.domain / "max_energy_range_uj") or 0
+    energy_file = throttle.domain / "energy_uj"
+    
+    with FastEnergyReader(energy_file) as reader:
+        last_e = reader.read()
+        last_t = time.perf_counter()
+        pkg_watts = 0.0
+
+        while True:
+            stdscr.clear()
+            my, mx = stdscr.getmaxyx()
+            
+            if my < 12 or mx < 68:
+                safe_addstr(stdscr, 0, 0, "Terminal window too small for layout visualization.", curses.color_pair(3))
+                stdscr.refresh()
+                if stdscr.getch() == ord('q'): break
+                continue
+
+            curr_e = reader.read()
+            curr_t = time.perf_counter()
+            if curr_e is not None and last_e is not None and (curr_t - last_t) >= 0.2:
+                delta_e = curr_e - last_e
+                if delta_e < 0 and max_energy > 0: 
+                    delta_e += max_energy
+                pkg_watts = (delta_e / 1_000_000) / (curr_t - last_t)
+                last_e = curr_e  # Update with raw hardware value, preventing bounds corruption
+                last_t = curr_t
+
+            # Fetch fresh boot state each loop in case it self-healed
+            boot_state = throttle.get_boot_state()
+
+            title = " Dusky Power Throttle "
+            safe_addstr(stdscr, 0, max(0, (mx - len(title)) // 2), title, curses.color_pair(6) | curses.A_REVERSE | curses.A_BOLD)
+            
+            p_str = f"PKG Telemetry: {pkg_watts:5.1f} W"
+            safe_addstr(stdscr, 2, 2, p_str, curses.A_BOLD)
+            bar_space = max(10, mx - 30)
+            filled = max(0, min(bar_space, int((pkg_watts / 150.0) * bar_space)))
+            bar_graph = "█" * filled + "░" * (bar_space - filled)
+            safe_addstr(stdscr, 2, 24, f"[{bar_graph}]", curses.color_pair(1))
+
+            if time.time() - feedback_time > 4.0:
+                feedback_msg = "System tracking operational."
+            
+            # Dynamic feedback coloring
+            status_color = curses.color_pair(5)
+            if "operation" in feedback_msg.lower(): status_color = curses.color_pair(2)
+            if "floor" in feedback_msg.lower() or "ceiling" in feedback_msg.lower() or "reject" in feedback_msg.lower(): 
+                status_color = curses.color_pair(3) | curses.A_BOLD
+            
+            safe_addstr(stdscr, 4, 2, f"Status: {feedback_msg}", status_color)
+
+            # Upgraded UI Layout Headers
+            safe_addstr(stdscr, 6, 2, f"{'CONSTRAINT PARAMETER':<22} | {'CURRENT VALUE':<15} | {'BIOS DEFAULT':<15}", curses.A_UNDERLINE | curses.A_BOLD)
+
+            for idx, item in enumerate(items):
+                current_raw = safe_read_int(throttle.domain / item["sysfs"])
+                boot_raw = boot_state.get(item["sysfs"])
+                
+                # Format Current Value
+                if current_raw is None or current_raw == 0:
+                    current_str = "N/A"
+                else:
+                    current_str = f"{current_raw // 1_000_000} W" if item["type"] == "power" else format_time(current_raw)
+                    
+                # Format Boot Default
+                if boot_raw is None or boot_raw == 0:
+                    boot_str = "N/A"
+                else:
+                    boot_str = f"{boot_raw // 1_000_000} W" if item["type"] == "power" else format_time(boot_raw)
+
+                row_y = 7 + idx
+                lbl = item["label"]
+                
+                # Determine drift highlight color
+                val_color = curses.A_NORMAL
+                if current_raw != boot_raw and current_raw is not None and boot_raw is not None:
+                    val_color = curses.color_pair(5) # Yellow if modified from BIOS
+
+                if idx == selected_idx:
+                    safe_addstr(stdscr, row_y, 2, f"-> {lbl:<19} | ", curses.color_pair(4))
+                    safe_addstr(stdscr, row_y, 27, f"{current_str:<15}", curses.color_pair(4) | curses.A_BOLD)
+                    safe_addstr(stdscr, row_y, 42, f" | {boot_str:<15}", curses.color_pair(4))
+                else:
+                    safe_addstr(stdscr, row_y, 2, f"   {lbl:<19} | ")
+                    safe_addstr(stdscr, row_y, 27, f"{current_str:<15}", val_color)
+                    safe_addstr(stdscr, row_y, 42, f" | {boot_str:<15}", curses.A_DIM)
+
+            safe_addstr(stdscr, 14, 2, "[j/k] Nav | [h/l] Modify | [H/L] Coarse | [r] Reset Row | [Shift+R] Reset All | [q] Quit", curses.color_pair(1) | curses.A_DIM)
+            stdscr.refresh()
+
+            ch = stdscr.getch()
+            if ch == curses.ERR: continue
+            
+            match ch:
+                case 107 | curses.KEY_UP:    # 'k'
+                    selected_idx = max(0, selected_idx - 1)
+                case 106 | curses.KEY_DOWN:  # 'j'
+                    selected_idx = min(len(items) - 1, selected_idx + 1)
+                case 113:                    # 'q'
+                    break
+                case 114:                    # 'r' (Local Reset)
+                    curr_item = items[selected_idx]
+                    boot_val = boot_state.get(curr_item["sysfs"])
+                    if boot_val is not None:
+                        safe_write(throttle.domain / curr_item["sysfs"], boot_val)
+                        feedback_msg = f"Restored {curr_item['label']} to BIOS default."
+                    else:
+                        feedback_msg = f"No known default for {curr_item['label']}."
+                    feedback_time = time.time()
+                case 82:                     # 'R' (Shift+R) (Global Reset)
+                    def do_restore(data):
+                        boot = data.get("boot", {})
+                        for key, val in boot.items():
+                            safe_write(throttle.domain / key, val)
+                        return {"boot": boot, "modified": False}
+                    throttle._atomic_state_update(do_restore)
+                    feedback_msg = "Global Reset Executed! Restored all to BIOS defaults."
+                    feedback_time = time.time()
+                    
+                case 104 | 108 | 72 | 76:    # 'h', 'l', 'H', 'L'
+                    curr_item = items[selected_idx]
+                    raw_curr = safe_read_int(throttle.domain / curr_item["sysfs"]) or 0
+                    
+                    multiplier = curr_item["big"] if ch in (72, 76) else curr_item["step"]
+                    if curr_item["type"] == "power":
+                        multiplier *= 1_000_000
+                    
+                    if ch in (104, 72): 
+                        new_raw = max(0, raw_curr - multiplier)
+                    else: 
+                        new_raw = raw_curr + multiplier
+                        
+                    safe_write(throttle.domain / curr_item["sysfs"], new_raw)
+                    time.sleep(0.01) 
+                    
+                    verify_raw = safe_read_int(throttle.domain / curr_item["sysfs"])
+                    
+                    if verify_raw is not None:
+                        # Validate whether it was a strict hardware rejection or a soft mathematical clamping
+                        if verify_raw == raw_curr and new_raw != raw_curr:
+                            if new_raw < raw_curr:
+                                feedback_msg = f"Hardware floor hit: {curr_item['label']} cannot go lower."
+                            else:
+                                feedback_msg = f"Hardware ceiling hit: {curr_item['label']} cannot go higher."
+                        elif verify_raw != new_raw:
+                            val_str = format_time(verify_raw) if curr_item["type"] == "time" else f"{verify_raw // 1_000_000} W"
+                            feedback_msg = f"Hardware quantized {curr_item['label']} to nearest step ({val_str})."
+                        else:
+                            feedback_msg = f"Updated {curr_item['label']} successfully."
+                    else:
+                        feedback_msg = f"Rejected! {curr_item['label']} unsupported by hardware."
+                    
+                    feedback_time = time.time()
+
+# ==========================================
+# 6. Command Line Entry Parser & Fallbacks
 # ==========================================
 def display_status(throttle: PowerThrottle) -> None:
     s = throttle.status()
@@ -336,9 +558,8 @@ def display_status(throttle: PowerThrottle) -> None:
     pl1_w = (s.get("constraint_0_power_limit_uw") or 0) // 1_000_000
     pl2_w = (s.get("constraint_1_power_limit_uw") or 0) // 1_000_000
     pl4_w = (s.get("constraint_2_power_limit_uw") or 0) // 1_000_000
-    
-    pl1_time_str = format_time(s.get("constraint_0_time_window_us") or 0)
-    pl2_time_str = format_time(s.get("constraint_1_time_window_us") or 0)
+    pl1_time = format_time(s.get("constraint_0_time_window_us") or 0)
+    pl2_time = format_time(s.get("constraint_1_time_window_us") or 0)
     
     power = s.get("power_watts")
     power_str = f"{power:.1f} W" if power is not None else "N/A"
@@ -346,23 +567,20 @@ def display_status(throttle: PowerThrottle) -> None:
     table = Table(show_header=False, expand=True, box=None)
     table.add_column("Property", style="bold cyan")
     table.add_column("Value", style="bold white")
-    
     table.add_row("RAPL Domain", s.get('name', 'unknown'))
     table.add_row("Package Power", power_str)
-    table.add_row("PL1 (Long-Term)", f"[yellow]{pl1_w} W[/yellow] [dim](Window: {pl1_time_str})[/dim]")
-    table.add_row("PL2 (Short-Term)", f"[yellow]{pl2_w} W[/yellow] [dim](Window: {pl2_time_str})[/dim]")
+    table.add_row("PL1 (Long-Term)", f"[yellow]{pl1_w} W[/yellow] [dim](Window: {pl1_time})[/dim]")
+    table.add_row("PL2 (Short-Term)", f"[yellow]{pl2_w} W[/yellow] [dim](Window: {pl2_time})[/dim]")
     if pl4_w:
         table.add_row("PL4 (Peak Limit)", f"[yellow]{pl4_w} W[/yellow]")
-
     console.print(table)
 
 def main() -> None:
     throttle = PowerThrottle()
 
-    # Disable default help so we can use our custom rich implementation
     parser = argparse.ArgumentParser(add_help=False)
     sub = parser.add_subparsers(dest="command")
-
+    
     sub.add_parser("status")
     sub.add_parser("info")
     
@@ -376,15 +594,20 @@ def main() -> None:
 
     p_reset = sub.add_parser("reset")
     p_reset.add_argument("--force", action="store_true")
-
+    
     p_mon = sub.add_parser("monitor")
     p_mon.add_argument("-i", "--interval", type=float, default=1.0)
     p_mon.add_argument("-n", "--count", type=int, default=None)
-
+    
     p_raw = sub.add_parser("raw")
     p_raw.add_argument("--watch", action="store_true")
 
-    args, _ = parser.parse_known_args()
+    args, unknown = parser.parse_known_args()
+
+    # Default to Curses interactive GUI environment if no subcommand passed
+    if not args.command:
+        curses.wrapper(interactive_mode, throttle)
+        sys.exit(0)
 
     match args.command:
         case "status":
@@ -395,76 +618,50 @@ def main() -> None:
             table = Table(title="Raw Sysfs RAPL Output", show_header=True, header_style="bold magenta")
             table.add_column("Parameter", style="cyan")
             table.add_column("Value", style="green")
-            
             for k, v in sorted(s.items()):
-                if v is None:
-                    display_v = "[dim]N/A[/dim]"
-                elif k.endswith("_power_limit_uw") and isinstance(v, int):
-                    display_v = f"{v} µW ({v // 1_000_000} W)"
-                elif k.endswith("_time_window_us") and isinstance(v, int):
-                    display_v = f"{v} µs ({format_time(v)})"
-                elif k in ("energy_uj", "max_energy_range_uj") and isinstance(v, int):
-                    display_v = f"{v} µJ"
-                elif k == "power_watts":
-                    display_v = f"{v:.1f} W"
-                else:
-                    display_v = str(v)
+                if v is None: display_v = "[dim]N/A[/dim]"
+                elif k.endswith("_power_limit_uw") and isinstance(v, int): display_v = f"{v} µW ({v // 1_000_000} W)"
+                elif k.endswith("_time_window_us") and isinstance(v, int): display_v = f"{v} µs ({format_time(v)})"
+                elif k in ("energy_uj", "max_energy_range_uj") and isinstance(v, int): display_v = f"{v} µJ"
+                elif k == "power_watts": display_v = f"{v:.1f} W"
+                else: display_v = str(v)
                 table.add_row(k, display_v)
             console.print(table)
 
         case "set":
             if all(v is None for v in [args.pl1, args.pl2, args.pl4, args.pl1_time, args.pl2_time]):
-                console.print("[bold red][X] Specify at least one bound: --pl1, --pl2, --pl4, --pl1-time, or --pl2-time[/bold red]")
+                console.print("[bold red][X] Specify at least one bound parameter attribute constraint.[/bold red]")
                 sys.exit(1)
 
             pl1_uw = args.pl1 * 1_000_000 if args.pl1 is not None else None
             pl2_uw = args.pl2 * 1_000_000 if args.pl2 is not None else None
             pl4_uw = args.pl4 * 1_000_000 if args.pl4 is not None else None
-            
             pl1_time_us = int(args.pl1_time * 1_000_000) if args.pl1_time is not None else None
             pl2_time_us = int(args.pl2_time * 1_000_000) if args.pl2_time is not None else None
 
-            if pl1_uw is not None and pl1_uw < 1_000_000:
-                sys.exit("PL1 minimum is 1W")
-            if pl2_uw is not None and pl2_uw < 1_000_000:
-                sys.exit("PL2 minimum is 1W")
-            if pl4_uw is not None and pl4_uw < 1_000_000:
-                sys.exit("PL4 minimum is 1W")
-
             result = throttle.set_limit(pl1=pl1_uw, pl2=pl2_uw, pl4=pl4_uw, 
-                                        pl1_time=pl1_time_us, pl2_time=pl2_time_us, 
-                                        save_as_default=args.save)
+                                        pl1_time=pl1_time_us, pl2_time=pl2_time_us, save_as_default=args.save)
             
-            console.print("\n[bold green][+] Power Limit Request Sent:[/bold green]")
-            
+            console.print("\n[bold green][+] Power Configuration Sync Pipeline Complete:[/bold green]")
             for param, label in [("pl1", "PL1 (Long-Term)"), ("pl2", "PL2 (Short-Term)"), ("pl4", "PL4 (Peak)")]:
                 if f"{param}_set" in result:
                     target = result[f"{param}_set"] // 1_000_000
-                    actual = result.get(f"{param}_actual", result[f"{param}_set"]) // 1_000_000
-                    
+                    actual = result.get(f"{param}_actual", 0) // 1_000_000
                     if actual == target:
                         console.print(f"    {label:<18}: [green]{target} W[/green] [dim](Verified)[/dim]")
                     else:
-                        console.print(f"    {label:<18}: [yellow]{target} W[/yellow] [bold red](Rejected by BIOS/Hardware! Actual: {actual} W)[/bold red]")
-                    
-            if args.pl1_time is not None:
-                console.print(f"    PL1 Time Window   : [green]{args.pl1_time}s[/green]")
-            if args.pl2_time is not None:
-                console.print(f"    PL2 Time Window   : [green]{args.pl2_time}s[/green]")
-                
-            if args.save:
-                console.print("\n[bold yellow][i] Applied limits have been saved as the new baseline.[/bold yellow]")
+                        console.print(f"    {label:<18}: [yellow]{target} W[/yellow] [bold red](Rejected by Hardware! Actual Locked: {actual} W)[/bold red]")
 
         case "reset":
             if not args.force:
-                console.print("[bold yellow][!] This will restore original BIOS package power limits.[/bold yellow]")
+                console.print("[bold yellow][!] This will clear local baseline tracking and restore original BIOS values.[/bold yellow]")
                 try:
-                    confirm = input("Continue? [y/N] ").strip().lower()
-                    if confirm != "y":
-                        sys.exit("Aborted.")
-                except (EOFError, KeyboardInterrupt):
-                    sys.exit("\nAborted.")
+                    if input("Continue? [y/N] ").strip().lower() != "y": sys.exit("Aborted.")
+                except (EOFError, KeyboardInterrupt): sys.exit("\nAborted.")
             throttle.restore()
+
+        case "monitor":
+            throttle.monitor(args.interval, args.count)
 
         case "raw":
             s = throttle.status()
@@ -487,25 +684,21 @@ def main() -> None:
                                 
                                 p = None
                                 if e1 is not None and e2 is not None and (t2 - t1) > 0:
-                                    if e2 < e1 and max_energy > 0:
-                                        e2 += max_energy
-                                    p = (e2 - e1) / 1_000_000 / (t2 - t1)
-                                    
-                                pl1_raw = safe_read_int(throttle.domain / "constraint_0_power_limit_uw")
-                                pl2_raw = safe_read_int(throttle.domain / "constraint_1_power_limit_uw")
-                                pl4_raw = safe_read_int(throttle.domain / "constraint_2_power_limit_uw")
+                                    delta_e = e2 - e1
+                                    if delta_e < 0 and max_energy > 0: 
+                                        delta_e += max_energy
+                                    p = (delta_e / 1_000_000) / (t2 - t1)
                                     
                                 out = {
                                     "timestamp": time.time(), 
                                     "power_w": round(p, 2) if p is not None else None,
-                                    "pl1_w": pl1_raw // 1_000_000 if pl1_raw else None,
-                                    "pl2_w": pl2_raw // 1_000_000 if pl2_raw else None,
-                                    "pl4_w": pl4_raw // 1_000_000 if pl4_raw else None
+                                    "pl1_w": (safe_read_int(throttle.domain / "constraint_0_power_limit_uw") or 0) // 1_000_000,
+                                    "pl2_w": (safe_read_int(throttle.domain / "constraint_1_power_limit_uw") or 0) // 1_000_000,
+                                    "pl4_w": (safe_read_int(throttle.domain / "constraint_2_power_limit_uw") or 0) // 1_000_000
                                 }
                                 print(json.dumps(out))
                                 sys.stdout.flush()
-                    except KeyboardInterrupt:
-                        pass
+                    except KeyboardInterrupt: pass
             else:
                 print(json.dumps(s, indent=2, default=str))
 
