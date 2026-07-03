@@ -313,9 +313,12 @@ class PkgThrottleEngine(BaseEngine):
 
         # Build telemetry bar
         bar_w = 20
+        pl1_raw = safe_read_int(self.domain / "constraint_0_power_limit_uw")
         pl2_raw = safe_read_int(self.domain / "constraint_1_power_limit_uw")
-        pl2_w = pl2_raw // 1_000_000 if pl2_raw else 150
-        dynamic_max = max(pl2_w, 100)
+        pl1_w = pl1_raw // 1_000_000 if pl1_raw else 0
+        pl2_w = pl2_raw // 1_000_000 if pl2_raw else 0
+        dynamic_max = pl1_w or pl2_w or 100
+        dynamic_max = max(dynamic_max, 1)
 
         filled = max(0, min(bar_w, int((pkg_watts / dynamic_max) * bar_w)))
         bar_graph = "█" * filled + "░" * (bar_w - filled)
