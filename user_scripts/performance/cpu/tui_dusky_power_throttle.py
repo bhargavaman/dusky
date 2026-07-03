@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+tui_root = Path(__file__).resolve().parents[2] / "dusky_tui"
+if str(tui_root) not in sys.path:
+    sys.path.insert(0, str(tui_root))
+
 from python.frontend.core_types import ConfigItem
 
 ENGINE_TYPE = "pkg_throttle"
@@ -68,3 +74,18 @@ SCHEMA = {
         )
     ]
 }
+
+if __name__ == "__main__":
+    import sys
+    import subprocess
+    from pathlib import Path
+
+    main_py = Path(__file__).resolve().parents[2] / "dusky_tui" / "python" / "main" / "main.py"
+
+    cmd = [sys.executable, str(main_py), str(Path(__file__).resolve()), *sys.argv[1:]]
+    try:
+        res = subprocess.run(cmd)
+        sys.exit(res.returncode)
+    except Exception as e:
+        print(f"[-] Error delegating to dusky_tui: {e}")
+        sys.exit(1)
