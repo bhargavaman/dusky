@@ -469,6 +469,98 @@ def run_cryptsetup_forensics(mapper_name: str):
         hint_msg("No userspace applications are holding the node. It is likely locked by a kernel subsystem (e.g., LVM, Btrfs async flusher) or udev daemon probing.")
         hint_msg(f"To lock it asynchronously once the kernel is finished, run: `sudo cryptsetup close --deferred {mapper_name}`")
 
+class CPUAccelerator:
+    """Context manager to temporarily enable offline Performance cores on hybrid systems."""
+    def __init__(self):
+        self.enabled_cores = []
+
+    def __enter__(self):
+        try:
+            p_cores, _ = self.get_hybrid_topology()
+            if not p_cores:
+                return self
+
+            offline_p_cores = []
+            for cpu_id in p_cores:
+                online_file = Path(f"/sys/devices/system/cpu/cpu{cpu_id}/online")
+                if online_file.exists():
+                    try:
+                        if online_file.read_text().strip() == "0":
+                            offline_p_cores.append(cpu_id)
+                    except Exception:
+                        pass
+
+            if offline_p_cores:
+                log(f"Offline Performance cores detected (CPUs: {offline_p_cores}).")
+                log("Temporarily enabling Performance cores to accelerate operation...")
+                for cpu_id in offline_p_cores:
+                    cmd = ["sudo", "tee", f"/sys/devices/system/cpu/cpu{cpu_id}/online"]
+                    if run_sudo_cmd(cmd, stdin_data="1"):
+                        self.enabled_cores.append(cpu_id)
+        except Exception as e:
+            err(f"Failed to initiate CPU acceleration: {e}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.enabled_cores:
+            log("Restoring CPU power-saving state (disabling P-cores)...")
+            for cpu_id in self.enabled_cores:
+                cmd = ["sudo", "tee", f"/sys/devices/system/cpu/cpu{cpu_id}/online"]
+                run_sudo_cmd(cmd, stdin_data="0")
+
+    def get_hybrid_topology(self) -> tuple[list[int], list[int]]:
+        p_cores: list[int] = []
+        e_cores: list[int] = []
+        cpu_sysfs = Path("/sys/devices/system/cpu")
+        try:
+            cpu_nodes = sorted([node for node in cpu_sysfs.glob("cpu[0-9]*") if node.is_dir()], key=lambda p: int(p.name[3:]))
+            cppc_perf = {}
+            for node in cpu_nodes:
+                cpu_id = int(node.name[3:])
+                perf_file = node / "acpi_cppc" / "highest_perf"
+                if perf_file.is_file():
+                    try:
+                        perf_str = perf_file.read_text().strip()
+                        if perf_str.isdigit():
+                            cppc_perf[cpu_id] = int(perf_str)
+                    except Exception:
+                        pass
+            if cppc_perf:
+                unique_perfs = sorted(list(set(cppc_perf.values())))
+                if len(unique_perfs) > 1:
+                    min_perf = unique_perfs[0]
+                    max_perf = unique_perfs[-1]
+                    
+                    # Only treat as hybrid if the performance gap is significant (e.g. > 15% difference)
+                    # to prevent misclassifying AMD preferred core / binning variations on symmetric CPUs.
+                    if (max_perf - min_perf) / max_perf > 0.15:
+                        midpoint = (min_perf + max_perf) / 2
+                        
+                        first_e_core_id = None
+                        for cpu_id in sorted(cppc_perf.keys()):
+                            if cppc_perf[cpu_id] < midpoint:
+                                first_e_core_id = cpu_id
+                                break
+                                
+                        if first_e_core_id is not None:
+                            for node in cpu_nodes:
+                                cpu_id = int(node.name[3:])
+                                if cpu_id < first_e_core_id:
+                                    p_cores.append(cpu_id)
+                                else:
+                                    e_cores.append(cpu_id)
+                            return p_cores, e_cores
+                    else:
+                        for cpu_id in sorted(cppc_perf.keys()):
+                            if cppc_perf[cpu_id] > midpoint:
+                                p_cores.append(cpu_id)
+                            else:
+                                e_cores.append(cpu_id)
+        except Exception:
+            pass
+        return p_cores, e_cores
+
+
 # ------------------------------------------------------------------------------
 #  PERSISTENT FAILED PASSWORD STORAGE
 # ------------------------------------------------------------------------------
@@ -1026,27 +1118,29 @@ def main():
                     err(f"Drive '{target}' not found in configuration.")
                     sys.exit(1)
 
+            prime_sudo()
             acquire_lock()
             
             overall_success = True
             
             # Second pass: Process them sequentially and robustly catch failures
-            for idx, target in enumerate(args.targets):
-                if idx > 0:
-                    console.print("\n[dim]" + "-" * 60 + "[/dim]\n")
-                
-                drive = drives[target]
-                if args.action == "unlock":
-                    success_flag = do_unlock(drive)
-                else:
-                    success_flag = do_lock(drive)
+            with CPUAccelerator():
+                for idx, target in enumerate(args.targets):
+                    if idx > 0:
+                        console.print("\n[dim]" + "-" * 60 + "[/dim]\n")
                     
-                if not success_flag:
-                    overall_success = False
-                    if idx < len(args.targets) - 1:
-                        hint_msg(f"Operation on '{target}' failed. Moving to next drive...")
+                    drive = drives[target]
+                    if args.action == "unlock":
+                        success_flag = do_unlock(drive)
                     else:
-                        err(f"Operation on '{target}' failed.")
+                        success_flag = do_lock(drive)
+                        
+                    if not success_flag:
+                        overall_success = False
+                        if idx < len(args.targets) - 1:
+                            hint_msg(f"Operation on '{target}' failed. Moving to next drive...")
+                        else:
+                            err(f"Operation on '{target}' failed.")
             
             # Regression Fix: Hard exit to OS on failure to protect shell chaining
             if not overall_success:
@@ -1058,3 +1152,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         console.print("\n[bold red]\\[ERROR][/] Interrupted by user.")
         sys.exit(130)
+
