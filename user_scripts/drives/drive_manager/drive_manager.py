@@ -332,6 +332,31 @@ def run_sudo_cmd(cmd: list[str], stdin_data: str | None = None) -> bool:
         err(f"Command execution failed: {e}")
         return False
 
+def run_cryptsetup_unlock(cmd: list[str], passphrase: str, timeout: int = 180) -> bool:
+    """Runs a cryptsetup open command with a passphrase piped via stdin.
+
+    Shows a real-time spinner during key derivation (Argon2id/PBKDF2) to prevent
+    the user from thinking the script is frozen during the typically 30-60 second
+    key derivation phase.
+    """
+    try:
+        with console.status("[bold blue]  Deriving encryption key — this typically takes 30-60s...", spinner="dots"):
+            res = subprocess.run(
+                cmd, input=passphrase, text=True,
+                capture_output=True, timeout=timeout
+            )
+        if res.returncode != 0:
+            if res.stderr:
+                err(f"Subprocess kernel error: {res.stderr.strip()}")
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        err(f"Cryptsetup timed out after {timeout} seconds. The system may be under heavy load.")
+        return False
+    except Exception as e:
+        err(f"Command execution failed: {e}")
+        return False
+
 def is_process_alive(pid: str) -> bool:
     """Checks if a process is still alive by sending signal 0 via the kernel."""
     try:
@@ -687,7 +712,7 @@ def do_unlock(drive: Drive) -> bool:
             if pwd:
                 log("Password found in secure keyring. Supplying to cryptsetup...")
                 cmd = base_cmd + ["--tries", "1", "--key-file", "-"]
-                if not run_sudo_cmd(cmd, stdin_data=pwd):
+                if not run_cryptsetup_unlock(cmd, pwd):
                     err("Decryption failed. Keyring password might be incorrect.")
                     return False
             else:
@@ -741,7 +766,7 @@ def do_unlock(drive: Drive) -> bool:
                         
                     cmd = base_cmd + ["--tries", "1", "--key-file", "-"]
                     
-                    if run_sudo_cmd(cmd, stdin_data=pwd_attempt):
+                    if run_cryptsetup_unlock(cmd, pwd_attempt):
                         clear_temp_attempts(drive.name)
                         if set_keyring_password_with_timeout(KEYRING_SERVICE, drive.name, pwd_attempt):
                             success("Password saved to keyring for future use.")
