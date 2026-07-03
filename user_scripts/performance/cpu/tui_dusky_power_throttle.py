@@ -1,4 +1,5 @@
 import sys
+sys.dont_write_bytecode = True
 import json
 from pathlib import Path
 
@@ -44,8 +45,11 @@ REQUIRE_ROOT = True
 
 TABS = [
     "Power Limits",
-    "Time Windows"
+    "Time Windows",
+    "Presets"
 ]
+
+USER_PRESETS_TAB = "Presets"
 
 SCHEMA = {
     0: [

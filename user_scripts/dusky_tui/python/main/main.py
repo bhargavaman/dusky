@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+sys.dont_write_bytecode = True
 import os
 import argparse
 import importlib.util
@@ -436,9 +437,12 @@ EXAMPLES:
         elif e_type == "pkg_throttle":
             from python.engines.pkg_throttle import PkgThrottleEngine
             engine = PkgThrottleEngine(config_path=config_path)
+        elif e_type == "cpu_core":
+            from python.engines.cpu_core import CpuCoreEngine
+            engine = CpuCoreEngine(config_path=config_path)
         else:
             print(f"[-] Fatal: Unknown ENGINE_TYPE '{e_type}' specified in schema '{schema_path.name}'.")
-            print("[i] Supported engines are: 'lua', 'ini', 'bridged_ini', 'systemd', 'hyprlang', 'trackpad', 'monitor', 'cmdline', 'systemd_boot', 'flatdotconfig', 'env', 'waybar', 'network', 'pkg_throttle'")
+            print("[i] Supported engines are: 'lua', 'ini', 'bridged_ini', 'systemd', 'hyprlang', 'trackpad', 'monitor', 'cmdline', 'systemd_boot', 'flatdotconfig', 'env', 'waybar', 'network', 'pkg_throttle', 'cpu_core'")
             sys.exit(1)
 
         engine_pool[key] = engine
