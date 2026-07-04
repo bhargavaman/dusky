@@ -41,6 +41,12 @@ console = Console(force_interactive=True)
 CACHE_FILE = Path("/var/tmp/core_runner_topology.json")
 SETTINGS_FILE = Path(os.path.expanduser("~/.config/dusky/settings/core_runner"))
 
+def flush_input() -> None:
+    try:
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception:
+        pass
+
 def load_settings() -> dict[str, list[int]]:
     if not SETTINGS_FILE.is_file():
         return {}
@@ -392,6 +398,7 @@ def interactive_launcher_menu(topology: dict[int, dict[str, Any]]) -> None:
             run_new_command_flow(topology)
 
 def run_new_command_flow(topology: dict[int, dict[str, Any]]) -> None:
+    flush_input()
     console.print("[bold yellow]Enter command to run: [/bold yellow]", end="")
     try:
         custom_cmd_str = input().strip()
@@ -401,6 +408,7 @@ def run_new_command_flow(topology: dict[int, dict[str, Any]]) -> None:
         console.print("[bold red]Error: No command entered.[/bold red]")
         time.sleep(1)
         return
+        
         
     cmd_args = shlex.split(custom_cmd_str)
     if not cmd_args:
@@ -461,11 +469,13 @@ def run_new_command_flow(topology: dict[int, dict[str, Any]]) -> None:
         should_prompt_save = True
 
     if should_prompt_save:
+        flush_input()
         if Confirm.ask(f"\n[bold yellow]Save cores {target_cores} as default for {executable_name}?[/bold yellow]", default=True):
             settings[executable_name] = target_cores
             save_settings(settings)
             console.print("[bold green]✔ Preference saved.[/bold green]")
 
+    flush_input()
     detach = Confirm.ask("\n[bold yellow]Run detached (background)?[/bold yellow]", default=False)
     
     offline_targets = [c for c in target_cores if not topology[c]["online"]]
@@ -478,7 +488,7 @@ def run_new_command_flow(topology: dict[int, dict[str, Any]]) -> None:
     target_cores_str = ",".join(map(str, target_cores))
     console.print(f"[bold green]🚀 Bounding execution to cores:[/bold green] [white]{target_cores_str}[/white]")
     
-    taskset_cmd = ["taskset", "-c", target_cores_str] + cmd_args
+    taskset_cmd = f"exec taskset -c {target_cores_str} {custom_cmd_str}"
     
     if detach:
         if os.fork() > 0: sys.exit(0)
@@ -507,7 +517,9 @@ def manage_profiles_menu(topology: dict[int, dict[str, Any]]) -> None:
         if not settings:
             console.print(Panel("[bold yellow]No profiles saved yet.[/bold yellow]\nRun a command first to save a default core selection.", expand=False))
             console.print("\nPress Enter to return to main menu...")
-            try: input()
+            try:
+                flush_input()
+                input()
             except (KeyboardInterrupt, EOFError): pass
             return
             
@@ -549,15 +561,16 @@ def manage_profiles_menu(topology: dict[int, dict[str, Any]]) -> None:
         action = action_options[action_idx]
         
         if action.startswith("Launch"):
+            flush_input()
             console.print(f"[bold yellow]Enter optional arguments to append to {app_name} (press Enter to run as is): [/bold yellow]", end="")
             try:
                 args_str = input().strip()
             except (KeyboardInterrupt, EOFError):
                 continue
-            cmd_args = [app_name]
-            if args_str:
-                cmd_args.extend(shlex.split(args_str))
                 
+            custom_cmd_str = f"{app_name} {args_str}" if args_str else app_name
+            
+            flush_input()
             detach = Confirm.ask("\n[bold yellow]Run detached (background)?[/bold yellow]", default=False)
             
             offline_targets = [c for c in saved_cores if not topology[c]["online"]]
@@ -570,7 +583,7 @@ def manage_profiles_menu(topology: dict[int, dict[str, Any]]) -> None:
             target_cores_str = ",".join(map(str, saved_cores))
             console.print(f"[bold green]🚀 Bounding execution to cores:[/bold green] [white]{target_cores_str}[/white]")
             
-            taskset_cmd = ["taskset", "-c", target_cores_str] + cmd_args
+            taskset_cmd = f"exec taskset -c {target_cores_str} {custom_cmd_str}"
             
             if detach:
                 if os.fork() > 0: sys.exit(0)
@@ -632,6 +645,7 @@ def manage_profiles_menu(topology: dict[int, dict[str, Any]]) -> None:
             time.sleep(1)
             
         elif action.startswith("Delete"):
+            flush_input()
             if Confirm.ask(f"[bold red]Are you sure you want to delete the profile for {app_name}?[/bold red]", default=False):
                 del settings[app_name]
                 save_settings(settings)
@@ -661,7 +675,7 @@ def display_status(topology: dict[int, dict[str, Any]]) -> None:
 
     console.print(table)
 
-def run_target_command(taskset_cmd: list[str], offline_targets_to_restore: list[int]) -> int:
+def run_target_command(taskset_cmd: list[str] | str, offline_targets_to_restore: list[int]) -> int:
     proc = None
     original_handlers = {}
     
@@ -675,7 +689,7 @@ def run_target_command(taskset_cmd: list[str], offline_targets_to_restore: list[
             original_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, signal_handler)
 
-        proc = subprocess.Popen(taskset_cmd)
+        proc = subprocess.Popen(taskset_cmd, shell=isinstance(taskset_cmd, str))
         return proc.wait()
     except Exception as e:
         console.print(f"[bold red]Execution Error:[/bold red] {e}")
@@ -697,6 +711,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument("-s", "--status", action="store_true")
+    parser.add_argument("-i", "--interactive", action="store_true")
     parser.add_argument("-t", "--type", choices=["pcores", "ecores", "all"], default=None)
     parser.add_argument("-c", "--custom", type=str)
     parser.add_argument("-d", "--detach", action="store_true")
@@ -739,7 +754,7 @@ def main() -> None:
     else:
         cmd_name = os.path.basename(args.command[0])
         settings = load_settings()
-        if cmd_name in settings:
+        if cmd_name in settings and not args.interactive:
             target_cores = settings[cmd_name]
             target_cores_str = ",".join(map(str, target_cores))
             console.print(f"[bold green]🚀 Loading saved core configuration for {cmd_name}:[/bold green] [white]{target_cores_str}[/white]")
@@ -748,11 +763,13 @@ def main() -> None:
             if not target_cores:
                 console.print("[bold red]Aborted.[/bold red]")
                 sys.exit(130)
+            flush_input()
             if Confirm.ask(f"\n[bold yellow]Save cores {target_cores} as default for {cmd_name}?[/bold yellow]", default=True):
                 settings[cmd_name] = target_cores
                 save_settings(settings)
                 console.print("[bold green]✔ Preference saved.[/bold green]")
             if not args.detach:
+                flush_input()
                 args.detach = Confirm.ask("\n[bold yellow]Run detached (background)?[/bold yellow]", default=False)
         else:
             target_cores = [c for c, d in topology.items() if d["type"] == "P"]
