@@ -103,7 +103,7 @@ mount_game() {
 }
 
 is_mounted() {
-    [ -d "$OVERLAY_DIR" ] && [ -n "$(ls -A "$OVERLAY_DIR" 2>/dev/null)" ]
+    mountpoint -q "$OVERLAY_DIR" 2>/dev/null
 }
 
 if ! is_mounted; then
