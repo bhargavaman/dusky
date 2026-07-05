@@ -1168,8 +1168,9 @@ class DuskyTUI(App):
 
     auto_save = reactive(True)
 
-    def __init__(self, engine_pool: dict[tuple[str, str], BaseEngine], default_engine_key: tuple[str, str], schema: dict[int, list[ConfigItem]], tabs: list[str], title="Dusky Editor", theme_path: str | None = None, default_mode: str = "auto", schema_name: str = "default", enable_user_presets: bool = True, user_presets_tab: str | None = None, global_popup: Any | None = None, tab_notices: dict[int, dict | list[dict]] | None = None, **kwargs):
+    def __init__(self, engine_pool: dict[tuple[str, str], BaseEngine], default_engine_key: tuple[str, str], schema: dict[int, list[ConfigItem]], tabs: list[str], title="Dusky Editor", theme_path: str | None = None, default_mode: str = "auto", schema_name: str = "default", enable_user_presets: bool = True, user_presets_tab: str | None = None, global_popup: Any | None = None, tab_notices: dict[int, dict | list[dict]] | None = None, deferred_load=None, **kwargs):
         super().__init__(**kwargs)
+        self.deferred_load = deferred_load
         self.engine_pool = engine_pool
         self.default_engine_key = default_engine_key
         self.global_popup = global_popup
@@ -1674,7 +1675,26 @@ class DuskyTUI(App):
         except Exception: pass
 
         # Load states securely across all registered backend target configurations
-        states = {ekey: eng.load_state() for ekey, eng in self.engine_pool.items()}
+        if self.deferred_load:
+            # Fast path: use targeted state loading for only the currently populated items
+            user_units = []
+            sys_units = []
+            for tab_items in self.schema.values():
+                for item in tab_items:
+                    if item.type_ in ("action", "preset", "menu"): continue
+                    if item.scope == "user":
+                        user_units.append(item.key)
+                    elif item.scope == "system":
+                        sys_units.append(item.key)
+
+            states = {}
+            for ekey, eng in self.engine_pool.items():
+                if hasattr(eng, 'load_state_for_units'):
+                    states[ekey] = eng.load_state_for_units(user_units, sys_units)
+                else:
+                    states[ekey] = eng.load_state()
+        else:
+            states = {ekey: eng.load_state() for ekey, eng in self.engine_pool.items()}
 
         self._load_user_presets()
         self._rebuild_key_map()
@@ -1727,6 +1747,23 @@ class DuskyTUI(App):
         self.call_after_refresh(self.check_tab_overflow)
         self.call_after_refresh(self._update_scroll_indicators)
         self._update_footer_legend()
+
+        # Kick off deferred loading in a background thread after the initial render is complete
+        if self.deferred_load:
+            import threading
+            def _deferred_worker():
+                try:
+                    updated_tabs = self.deferred_load()
+                    # Load full states for the newly populated items (still in background thread)
+                    deferred_states = {}
+                    for ekey, eng in self.engine_pool.items():
+                        deferred_states[ekey] = eng.load_state()
+                    # Schedule UI update on the main Textual thread
+                    self.call_from_thread(self._apply_deferred_tabs, updated_tabs, deferred_states)
+                except Exception as e:
+                    import sys
+                    print(f"[DuskyTUI] Deferred load error: {e}", file=sys.stderr)
+            threading.Thread(target=_deferred_worker, daemon=True).start()
 
         # Trigger Global Notice Hook if defined in the schema
         if self.global_popup:
@@ -1834,6 +1871,44 @@ class DuskyTUI(App):
 
         ol.scroll_y = scroll_y
         self.call_after_refresh(self._update_scroll_indicators)
+
+    def _apply_deferred_tabs(self, tab_indices: list[int], states: dict) -> None:
+        """
+        Hot-reloads deferred tabs after background data fetch completes.
+        Called on the main Textual thread via call_from_thread.
+        """
+        for tab_idx in tab_indices:
+            for idx, item in enumerate(self.schema.get(tab_idx, [])):
+                engine_key = self._get_item_engine_info(item)
+                state = states.get(engine_key, {})
+                cache_key = f"{item.scope}/{item.key}" if item.scope else item.key
+
+                if item.type_ in ("action", "preset", "menu"):
+                    item.exists_in_target = True
+                elif cache_key in state:
+                    item.exists_in_target = True
+                    item.value = item.deserialize(state[cache_key])
+                else:
+                    item.exists_in_target = (item.default == "nil")
+
+                if not item._initial_loaded:
+                    item.initial_value = item.value
+                    item._initial_loaded = True
+
+            self._populate_option_list(tab_idx)
+
+        self._rebuild_key_map()
+
+        # Update pagination if user is currently viewing one of the hot-reloaded tabs
+        try:
+            switcher = self.query_one(ContentSwitcher)
+            if switcher.current:
+                current_idx = int(switcher.current.split("-")[1])
+                if current_idx in tab_indices:
+                    if ol := self.current_option_list:
+                        self._update_pagination(ol)
+        except Exception:
+            pass
 
     @on(events.Resize)
     def handle_resize(self, event: events.Resize) -> None:

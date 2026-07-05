@@ -310,6 +310,7 @@ EXAMPLES:
         USER_PRESETS_TAB = getattr(schema_module, "USER_PRESETS_TAB", None)
         GLOBAL_POPUP = getattr(schema_module, "GLOBAL_POPUP", None)
         TAB_NOTICES = getattr(schema_module, "TAB_NOTICES", None) 
+        DEFERRED_LOAD = getattr(schema_module, "DEFERRED_LOAD", None)
         
         REQUIRE_ROOT = getattr(schema_module, "REQUIRE_ROOT", False)
         ENGINE_TYPE = schema_module.ENGINE_TYPE.lower()
@@ -496,6 +497,10 @@ EXAMPLES:
 
     # --- 4. HEADLESS OPERATIONS ---
     if is_headless:
+        # Complete deferred schema loading before headless processing
+        if DEFERRED_LOAD:
+            DEFERRED_LOAD()
+
         # Pre-load state caches across all active backend targets
         for eng in engine_pool.values():
             eng.load_state()
@@ -651,7 +656,8 @@ EXAMPLES:
         enable_user_presets=ENABLE_USER_PRESETS,
         user_presets_tab=USER_PRESETS_TAB,
         global_popup=GLOBAL_POPUP,
-        tab_notices=TAB_NOTICES
+        tab_notices=TAB_NOTICES,
+        deferred_load=DEFERRED_LOAD
     )
     
     for engine in engine_pool.values():

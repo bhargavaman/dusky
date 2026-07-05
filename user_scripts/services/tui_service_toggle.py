@@ -120,7 +120,63 @@ CORE_SYSTEM_DEFS = {
 
 import concurrent.futures
 
-# --- HIGH SPEED DISCOVERY ROUTINE ---
+# =============================================================================
+# FAST TARGETED CORE FETCH (Tabs 0-1)
+# Only queries the ~22 hardcoded units instead of enumerating ALL installed units.
+# =============================================================================
+def _fetch_core_installed(scope: str, units: list[str]) -> set:
+    """Checks only specific units for existence via targeted list-unit-files query."""
+    if not units:
+        return set()
+    call = ["systemctl", "list-unit-files", "--no-pager", "--no-legend"] + units
+    if scope == "user":
+        call.insert(1, "--user")
+    try:
+        res = subprocess.run(call, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        installed = set()
+        for line in res.stdout.splitlines():
+            if not line: continue
+            parts = line.split()
+            if parts:
+                installed.add(parts[0])
+        return installed
+    except Exception as e:
+        import sys
+        print(f"[tui_service_toggle] ERROR: _fetch_core_installed({scope}): {e}", file=sys.stderr)
+        return set()
+
+# Fast path: only query the specific hardcoded units (2 subprocess calls, ~22 units)
+_core_user_units = list(CORE_USER_DEFS.keys())
+_core_sys_units = list(CORE_SYSTEM_DEFS.keys())
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _fast_exec:
+    _f_core_user = _fast_exec.submit(_fetch_core_installed, "user", _core_user_units)
+    _f_core_sys = _fast_exec.submit(_fetch_core_installed, "system", _core_sys_units)
+
+    _core_installed_user = _f_core_user.result()
+    _core_installed_sys = _f_core_sys.result()
+
+# --- TAB 0: CORE USER (instant) ---
+for unit, (label, help_text) in CORE_USER_DEFS.items():
+    if unit in _core_installed_user:
+        SCHEMA[0].append(ConfigItem(
+            label=label, key=unit, scope="user", type_="bool", default=False,
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\n{help_text}"
+        ))
+
+# --- TAB 1: CORE SYSTEM (instant) ---
+for unit, (label, help_text) in CORE_SYSTEM_DEFS.items():
+    if unit in _core_installed_sys:
+        SCHEMA[1].append(ConfigItem(
+            label=label, key=unit, scope="system", type_="bool", default=False,
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\n{help_text}"
+        ))
+
+# =============================================================================
+# DEFERRED FULL FETCH (Tabs 2-6)
+# Background threads start immediately (running in parallel with TUI startup).
+# The TUI calls DEFERRED_LOAD() after initial render to complete these tabs.
+# =============================================================================
 def _fetch_all_unit_files(scope: str) -> tuple[set, set, set]:
     """Returns (installed_services, enabled_services, installed_timers) in a single pass."""
     call = ["systemctl", "list-unit-files", "--type=service,timer", "--no-pager", "--no-legend"]
@@ -164,104 +220,98 @@ def _fetch_active_services(scope: str) -> set:
         print(f"[tui_service_toggle] ERROR: _fetch_active_services({scope}): {e}", file=sys.stderr)
         return set()
 
-# 1. Fully Parallelized Subprocess Execution
-with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-    f_user_all = executor.submit(_fetch_all_unit_files, "user")
-    f_sys_all = executor.submit(_fetch_all_unit_files, "system")
-    f_user_act = executor.submit(_fetch_active_services, "user")
-    f_sys_act = executor.submit(_fetch_active_services, "system")
-    
-    installed_user_srv, enabled_user, timers_user = f_user_all.result()
-    installed_sys_srv, enabled_sys, timers_sys = f_sys_all.result()
-    active_user_raw = f_user_act.result()
-    active_sys_raw = f_sys_act.result()
+# Start full fetch in background IMMEDIATELY — these threads run in parallel
+# with TUI startup so they're often already finished by the time DEFERRED_LOAD is called.
+_bg_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+_f_user_all = _bg_executor.submit(_fetch_all_unit_files, "user")
+_f_sys_all = _bg_executor.submit(_fetch_all_unit_files, "system")
+_f_user_act = _bg_executor.submit(_fetch_active_services, "user")
+_f_sys_act = _bg_executor.submit(_fetch_active_services, "system")
 
-installed_user = installed_user_srv | timers_user
-installed_sys = installed_sys_srv | timers_sys
 
-# 2. Compile Active States (Filtered against installed logic)
-active_user = active_user_raw.intersection(installed_user_srv)
-active_sys = active_sys_raw.intersection(installed_sys_srv)
+def DEFERRED_LOAD() -> list[int]:
+    """
+    Completes the deferred tab population for tabs 2-6.
+    Waits on background futures (which have been running since module import),
+    then populates the SCHEMA lists.
+    Returns list of tab indices that were populated.
+    Called by the TUI after its initial render of tabs 0-1.
+    """
+    installed_user_srv, enabled_user, timers_user = _f_user_all.result()
+    installed_sys_srv, enabled_sys, timers_sys = _f_sys_all.result()
+    active_user_raw = _f_user_act.result()
+    active_sys_raw = _f_sys_act.result()
+    _bg_executor.shutdown(wait=False)
 
-# Tracking sets to avoid putting core/timer services into the "All" tabs
-used_user = set()
-used_sys = set()
+    installed_user = installed_user_srv | timers_user
+    installed_sys = installed_sys_srv | timers_sys
 
-# --- TAB 0: CORE USER ---
-for unit, (label, help_text) in CORE_USER_DEFS.items():
-    if unit in installed_user:
-        SCHEMA[0].append(ConfigItem(
-            label=label, key=unit, scope="user", type_="bool", default=False,
-            extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\n{help_text}"
+    active_user = active_user_raw.intersection(installed_user_srv)
+    active_sys = active_sys_raw.intersection(installed_sys_srv)
+
+    # Track used units (core tabs already populated, avoid duplicates in "All" tabs)
+    used_user = {unit for unit in CORE_USER_DEFS if unit in _core_installed_user}
+    used_sys = {unit for unit in CORE_SYSTEM_DEFS if unit in _core_installed_sys}
+
+    # --- TAB 2: ACTIVE SERVICES ---
+    for unit in sorted(active_user):
+        if "@" in unit: continue
+        SCHEMA[2].append(ConfigItem(
+            label=unit, key=unit, scope="user", type_="bool", default=False, group="User Services",
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nCurrently active user-level service."
+        ))
+
+    for unit in sorted(active_sys):
+        if "@" in unit: continue
+        SCHEMA[2].append(ConfigItem(
+            label=unit, key=unit, scope="system", type_="bool", default=False, group="System Services",
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nCurrently active system-level service."
+        ))
+
+    # --- TAB 3: ENABLED SERVICES ---
+    for unit in sorted(enabled_user):
+        if "@" in unit: continue
+        SCHEMA[3].append(ConfigItem(
+            label=unit, key=unit, scope="user", type_="bool", default=False, group="User Services",
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nEnabled to start automatically on boot."
+        ))
+
+    for unit in sorted(enabled_sys):
+        if "@" in unit: continue
+        SCHEMA[3].append(ConfigItem(
+            label=unit, key=unit, scope="system", type_="bool", default=False, group="System Services",
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nEnabled to start automatically on boot."
+        ))
+
+    # --- TAB 4: TIMERS ---
+    for unit in sorted(timers_user):
+        SCHEMA[4].append(ConfigItem(
+            label=unit, key=unit, scope="user", type_="bool", default=False, group="User Timers",
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nSystemd timer unit (Cron alternative)."
         ))
         used_user.add(unit)
 
-# --- TAB 1: CORE SYSTEM ---
-for unit, (label, help_text) in CORE_SYSTEM_DEFS.items():
-    if unit in installed_sys:
-        SCHEMA[1].append(ConfigItem(
-            label=label, key=unit, scope="system", type_="bool", default=False,
-            extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\n{help_text}"
+    for unit in sorted(timers_sys):
+        SCHEMA[4].append(ConfigItem(
+            label=unit, key=unit, scope="system", type_="bool", default=False, group="System Timers",
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nSystemd timer unit (Cron alternative)."
         ))
         used_sys.add(unit)
 
-# --- TAB 2: ACTIVE SERVICES ---
-for unit in sorted(active_user):
-    if "@" in unit: continue
-    SCHEMA[2].append(ConfigItem(
-        label=unit, key=unit, scope="user", type_="bool", default=False, group="User Services",
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nCurrently active user-level service."
-    ))
+    # --- TAB 5: ALL USER ---
+    for unit in sorted(installed_user - used_user):
+        if "@" in unit or not unit.endswith(".service"): continue
+        SCHEMA[5].append(ConfigItem(
+            label=unit, key=unit, scope="user", type_="bool", default=False, group=unit[0].upper(),
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nAuto-discovered service."
+        ))
 
-for unit in sorted(active_sys):
-    if "@" in unit: continue
-    SCHEMA[2].append(ConfigItem(
-        label=unit, key=unit, scope="system", type_="bool", default=False, group="System Services",
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nCurrently active system-level service."
-    ))
+    # --- TAB 6: ALL SYSTEM ---
+    for unit in sorted(installed_sys - used_sys):
+        if "@" in unit or not unit.endswith(".service"): continue
+        SCHEMA[6].append(ConfigItem(
+            label=unit, key=unit, scope="system", type_="bool", default=False, group=unit[0].upper(),
+            extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nAuto-discovered service."
+        ))
 
-# --- TAB 3: ENABLED SERVICES ---
-for unit in sorted(enabled_user):
-    if "@" in unit: continue
-    SCHEMA[3].append(ConfigItem(
-        label=unit, key=unit, scope="user", type_="bool", default=False, group="User Services",
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nEnabled to start automatically on boot."
-    ))
-
-for unit in sorted(enabled_sys):
-    if "@" in unit: continue
-    SCHEMA[3].append(ConfigItem(
-        label=unit, key=unit, scope="system", type_="bool", default=False, group="System Services",
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nEnabled to start automatically on boot."
-    ))
-
-# --- TAB 4: TIMERS ---
-for unit in sorted(timers_user):
-    SCHEMA[4].append(ConfigItem(
-        label=unit, key=unit, scope="user", type_="bool", default=False, group="User Timers",
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nSystemd timer unit (Cron alternative)."
-    ))
-    used_user.add(unit)
-
-for unit in sorted(timers_sys):
-    SCHEMA[4].append(ConfigItem(
-        label=unit, key=unit, scope="system", type_="bool", default=False, group="System Timers",
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nSystemd timer unit (Cron alternative)."
-    ))
-    used_sys.add(unit)
-
-# --- TAB 5: ALL USER ---
-for unit in sorted(installed_user - used_user):
-    if "@" in unit or not unit.endswith(".service"): continue
-    SCHEMA[5].append(ConfigItem(
-        label=unit, key=unit, scope="user", type_="bool", default=False, group=unit[0].upper(),
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** User\n\nAuto-discovered service."
-    ))
-
-# --- TAB 6: ALL SYSTEM ---
-for unit in sorted(installed_sys - used_sys):
-    if "@" in unit or not unit.endswith(".service"): continue
-    SCHEMA[6].append(ConfigItem(
-        label=unit, key=unit, scope="system", type_="bool", default=False, group=unit[0].upper(),
-        extended_help=f"**Unit:** `{unit}`\n**Scope:** System\n\nAuto-discovered service."
-    ))
+    return [2, 3, 4, 5, 6]
