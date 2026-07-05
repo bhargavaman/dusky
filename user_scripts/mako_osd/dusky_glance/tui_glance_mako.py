@@ -136,7 +136,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
     border_size_map = {
         "ram-temp": 0,
         "network": 0,
-        "hud": 1
+        "hud": 0
     }
 
     width_val = width_map.get(suffix, 170)
@@ -324,7 +324,7 @@ def build_standard_glance(suffix, label_name, group_name="Modules"):
             key="background-color",
             scope=scope,
             type_="color",
-            default="{{colors.on_primary.default.hex}}b3",
+            default="#00000033" if suffix == "hud" else "{{colors.on_primary.default.hex}}b3",
             options=COLOR_OPTIONS,
             hints=COLOR_HINTS,
             parent_ref=uid,
