@@ -298,11 +298,13 @@ If it prints your file back in a neat, organized way, it's valid. If it prints a
 1. **Launch Factorio** normally.
 2. On the main menu, click **Mods**. You should see "Someone's LUA-Console" in the list with a check mark next to it.
 3. Click back to the main menu. Load any save (or start a new game).
-4. Once inside the game, press and hold **Ctrl**, then press the **]** key (the right square bracket key, usually two keys to the left of Enter). A console window should appear at the bottom of the screen.
+4. Once inside the game, press and hold **Ctrl**, then press the **]** key (the right square bracket key). A console window should appear at the bottom of the screen.
 5. Type this test command: `game.print("Hello from Lua!")`
 6. Press **Ctrl+Enter** (hold Ctrl, press Enter) to run the command.
 7. You should see "Hello from Lua!" printed in the chat area in the top-left.
 8. Press **Ctrl+]** again to close the console.
+
+> **IMPORTANT: Do NOT use the `/c` prefix.** The mod console (opened with Ctrl+]) expects **raw Lua code only**. Typing `/c game.print("hi")` will cause an error and may behave unexpectedly. The `/c` prefix is for Factorio's **built-in** console (opened with the tilde `~` key), which always disables achievements. The two consoles are separate.
 
 **If the console doesn't appear**, go to **Settings → Controls**, scroll down to the "some-luaconsole" section, and check if the key bindings are set. If they show `---` (unbound), click on them and press the key combination you want to use.
 
@@ -338,6 +340,26 @@ All of these can be changed in **Settings → Controls → some-luaconsole**.
 - The console **remembers what you typed** even after you close the game.
 - If you get an error, the error message appears in the console — read it to see what went wrong.
 - For multi-line scripts, press **Shift+Enter** to add a new line without running the code yet.
+
+### WARNING: What disables achievements
+
+The mod itself is safe, but **the commands you run through it can still disable achievements**. Here is the rule:
+
+| Command type | Disables achievements? | Example |
+|---|---|---|
+| Reading info (printing, counting, inspecting) | **No** | `game.print("hi")`, counting entities |
+| Spawning items in single-player | **No** | `game.players[1].insert{name="iron-plate"}` |
+| Changing visuals (LUTs, colors) | **No** | (only affects how things look) |
+| Changing game mechanics | **YES** | `game.player.surface.always_day=true` |
+| Changing player stats or research | **YES** | Any tech unlock, god mode, etc. |
+| Using Factorio's built-in `/c` console | **YES** | The tilde `~` key console always marks the save as cheated |
+
+**`always_day=true` is a game mechanic change** — it stops the day/night cycle, which affects solar panel output. Factorio treats this the same as editing recipes or technologies: achievements off.
+
+**To keep achievements:**
+- Only run commands that **read** game state, not **change** it.
+- Never use Factorio's built-in `/c` console (tilde key).
+- If you need to test whether a command is safe, check the save-load screen for the trophy-with-slash icon before saving.
 
 ---
 
@@ -416,20 +438,40 @@ Some systems use Ctrl+] as a system shortcut. Either:
 
 Click inside the console's input box first to give it keyboard focus, then press Ctrl+Enter.
 
+### I ran a command and now achievements are disabled!
+
+If you ran something like `game.player.surface.always_day=true` or used Factorio's built-in `/c` console, achievements are off for that save. There is **no way to re-enable them** on an existing save — you must load a backup save from before the command, or start a new game.
+
+**Common commands that disable achievements:**
+
+| Command | Why it disables achievements |
+|---|---|
+| `game.player.surface.always_day=true` | Changes the day/night cycle (affects solar) |
+| `/c anything` | Built-in console always marks save as cheated |
+| `game.player.cheat_mode=true` | Enables god mode / cheating |
+| `game.player.force.research_all_technologies()` | Unlocks all tech |
+
+**Safe alternatives that do the same thing visually:**
+
+Instead of `always_day=true` (which changes mechanics), use the **Bright Universe mod** (`afraid-of-the-dark`) which makes the world look like daytime by swapping color LUTs only — the day/night cycle still runs underneath, so achievements stay on.
+
 ---
 
 ## Why Achievements Stay Enabled
 
-The mod is safe for achievements because:
+The mod itself does not disable achievements because:
 
-1. Factorio only turns off achievements when a mod changes **game content** (recipes, items, technologies, etc.).
-2. This mod adds **no new content** — its data file is empty, and the main code only adds a console window and listens for key presses.
-3. The Lua code you type into the console runs in the **same way** as the built-in `/c` command. Factorio does not disable achievements for that.
-4. The mod's own description says: *"Run lua commands without losing achievements."*
+1. Factorio only turns off achievements permanently when a mod changes **prototypes** during loading (recipes, items, technologies, entities, etc.).
+2. This mod adds **no new prototypes** — its `data.lua` is empty, and `control.lua` only registers a console window.
+3. The mod's description says: *"Run lua commands without losing achievements"* — meaning the **act of using the mod's console** does not flag your save as cheated. This is unlike Factorio's built-in `/c` console, which always marks the save as cheated regardless of what you type.
+4. **However**, the specific Lua commands you run *through* the console can still disable achievements if they change game mechanics (see the warning above).
 
 ### How to tell if any mod is safe
 
-Look at the mod's files. If you see a `data.lua` or `data-updates.lua` that contains lines like `data:extend(...)` or `data.raw.recipe[...] = ...`, the mod changes game content and **will** disable achievements. Mods that only add UI, console, or map features are usually safe.
+Look at the mod's files:
+- `data.lua`, `data-updates.lua`, `data-final-fixes.lua` — if these contain `data:extend(...)` or `data.raw.recipe[...] = ...`, the mod changes game content and **will** disable achievements.
+- Mods that only add UI, console, or map features are usually safe.
+- Commands you type at runtime that change mechanics (day cycle, player stats, etc.) disable achievements **per save**, not permanently.
 
 ---
 

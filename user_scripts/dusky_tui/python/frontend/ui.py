@@ -1692,7 +1692,7 @@ class DuskyTUI(App):
                     item.exists_in_target = True
                     item.value = item.deserialize(state[cache_key])
                 else:
-                    item.exists_in_target = False
+                    item.exists_in_target = (item.default == "nil")
 
                 if not item._initial_loaded:
                     item.initial_value = item.value
@@ -1935,8 +1935,12 @@ class DuskyTUI(App):
                                     item.exists_in_target = True
                                     changed_any = True
                             else:
-                                if item.exists_in_target:
-                                    item.exists_in_target = False
+                                expected_exists = (item.default == "nil")
+                                expected_val = item.default if expected_exists else item.value
+                                if item.exists_in_target != expected_exists or str(item.value) != str(expected_val):
+                                    item.exists_in_target = expected_exists
+                                    if expected_exists:
+                                        item.value = expected_val
                                     changed_any = True
             except OSError: 
                 pass
