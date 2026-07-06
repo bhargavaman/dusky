@@ -584,6 +584,16 @@ hl.window_rule({
     center = true
 })
 
+--- Clipbard_interface ---
+hl.window_rule({
+    name = "460_switch_clipboard.sh",
+    match = { class = "^(460_switch_clipboard\\.sh)$" },
+    float = true,
+    size = {805, 323},
+    center = true
+})
+
+
 --- Cache_purge ---
 hl.window_rule({
     name = "cache_purge",
