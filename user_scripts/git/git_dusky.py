@@ -129,9 +129,34 @@ def fzf_select(choices: list[str], prompt: str = "Select", multi: bool = False, 
     return [line for line in proc.stdout.decode('utf-8').split("\0") if line]
 
 # --- 4. EXECUTION PAYLOADS ---
+def get_list_pathspecs() -> list[str] | None:
+    if not DOTFILES_LIST.is_file():
+        return None
+    raw_lines = DOTFILES_LIST.read_text(encoding="utf-8").splitlines()
+    valid_paths: list[str] = []
+    for line in raw_lines:
+        clean = line.strip()
+        if not clean or clean.startswith("#"):
+            continue
+        try:
+            target = Path(clean).expanduser()
+            if not target.is_absolute():
+                target = WORK_TREE / target
+            normalized_abs = Path(os.path.normpath(target))
+            if normalized_abs.is_relative_to(WORK_TREE):
+                rel_path = normalized_abs.relative_to(WORK_TREE)
+                valid_paths.append(str(rel_path))
+            else:
+                console.print(f"[bold red]✖ Security Block:[/bold red] Path escaped work-tree -> {clean}")
+        except ValueError:
+            continue
+    return valid_paths
+
 def sync_all() -> None:
     """Smart-stages paths with strict lexical boundary checks."""
-    if not DOTFILES_LIST.is_file():
+    valid_paths = get_list_pathspecs()
+    
+    if valid_paths is None:
         console.print(f"[bold yellow]⚠ Warn:[/bold yellow] {DOTFILES_LIST} missing. Executing blanket tracked update (-u).")
         try:
             run_git("add", "-u", check=True)
@@ -140,40 +165,41 @@ def sync_all() -> None:
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Blanket stage aborted due to Git error.[/bold red]")
         return
-
-    raw_lines = DOTFILES_LIST.read_text(encoding="utf-8").splitlines()
-    valid_paths: list[str] = []
-    
-    for line in raw_lines:
-        clean = line.strip()
-        if not clean or clean.startswith("#"):
-            continue
-            
-        try:
-            # 1. Expand ~ to home directory.
-            target = Path(clean).expanduser()
-            
-            # 2. Make absolute (lexically) if it isn't already.
-            if not target.is_absolute():
-                target = WORK_TREE / target
-                
-            # 3. Lexical normalization guarantees '..' evaluates strictly without resolving symlinks.
-            # This isolates the git repository to the defined WORK_TREE boundary.
-            normalized_abs = Path(os.path.normpath(target))
-            
-            if normalized_abs.is_relative_to(WORK_TREE):
-                rel_path = normalized_abs.relative_to(WORK_TREE)
-                valid_paths.append(str(rel_path))
-            else:
-                console.print(f"[bold red]✖ Security Block:[/bold red] Path escaped work-tree -> {clean}")
-        except ValueError:
-            continue
-            
+        
     if not valid_paths:
         console.print("[bold red]✖ Error:[/bold red] Zero valid file paths parsed.")
         return
 
-    payload = "\0".join(valid_paths) + "\0"
+    _, status_out, _ = run_git("status", "--porcelain=v1", "-z")
+    if not status_out:
+        console.print("[bold green]✔[/bold green] Working tree immaculate. No divergence detected.")
+        return
+        
+    changed_paths = []
+    entries = status_out.split('\0')[:-1]
+    it = iter(entries)
+    for entry in it:
+        if len(entry) < 3:
+            continue
+        status_code = entry[:2]
+        path = entry[3:]
+        if "R" in status_code or "C" in status_code:
+            next(it, None)
+        changed_paths.append(path)
+
+    paths_to_stage = []
+    for cp in changed_paths:
+        for vp in valid_paths:
+            vp_clean = vp.rstrip("/")
+            if cp == vp_clean or cp.startswith(vp_clean + "/"):
+                paths_to_stage.append(cp)
+                break
+                
+    if not paths_to_stage:
+        console.print("[bold green]✔[/bold green] Working tree immaculate (no matching files changed).")
+        return
+
+    payload = "\0".join(paths_to_stage) + "\0"
     
     try:
         run_git(
@@ -185,26 +211,11 @@ def sync_all() -> None:
             literal_pathspecs=True
         )
         
-        # Get actual staged files matching the list
-        _, staged_out, _ = run_git("diff", "--cached", "--name-only", "-z")
-        staged_list = [f for f in staged_out.split("\0") if f]
-        
-        matched_files = []
-        for f in staged_list:
-            for spec in valid_paths:
-                clean_spec = spec.rstrip("/")
-                if f == clean_spec or f.startswith(clean_spec + "/"):
-                    matched_files.append(f)
-                    break
-        
-        if matched_files:
-            console.print("[bold green]✔[/bold green] Payload staged successfully:")
-            for path in matched_files:
-                console.print(f"  - [dim]{path}[/dim]")
-        else:
-            console.print("[bold green]✔[/bold green] Payload staged successfully (no changes detected).")
+        console.print("[bold green]✔[/bold green] Payload staged successfully:")
+        for path in paths_to_stage:
+            console.print(f"  - [dim]{path}[/dim]")
             
-        commit_and_push(valid_paths)
+        commit_and_push(paths_to_stage)
     except subprocess.CalledProcessError:
         console.print("[bold red]✖ Stage operation aborted due to Git bounds error.[/bold red]")
 
@@ -215,10 +226,9 @@ def sync_single() -> None:
         console.print("[bold green]✔[/bold green] Working tree immaculate. No divergence detected.")
         return
 
+    valid_paths = get_list_pathspecs()
     entries = status_out.split('\0')[:-1]
     
-    # The map maintains the absolute truth of the filesystem path, 
-    # detached from the UI string representation to prevent substring corruption.
     path_map: PathMap = {}
     it = iter(entries)
     
@@ -229,15 +239,33 @@ def sync_single() -> None:
         status_code = entry[:2]
         path = entry[3:]
         
+        orig_path = None
         # PEP 634 Pattern Matching
         match status_code:
             case s if "R" in s or "C" in s:
                 orig_path = next(it, None)
-                display = f"{status_code} {path} (from {orig_path})"
-                path_map[display] = path
             case _:
-                display = f"{status_code} {path}"
-                path_map[display] = path
+                pass
+                
+        if valid_paths is not None:
+            matched = False
+            for vp in valid_paths:
+                vp_clean = vp.rstrip("/")
+                if path == vp_clean or path.startswith(vp_clean + "/"):
+                    matched = True
+                    break
+            if not matched:
+                continue
+
+        if orig_path:
+            display = f"{status_code} {path} (from {orig_path})"
+        else:
+            display = f"{status_code} {path}"
+        path_map[display] = path
+
+    if not path_map:
+        console.print("[bold yellow]⚠[/bold yellow] No changed files match .git_dusky_list.")
+        return
 
     selected_lines = fzf_select(list(path_map.keys()), prompt="Stage Files (TAB to multi-select)", multi=True)
     if not selected_lines:

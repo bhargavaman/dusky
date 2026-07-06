@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# auto detects gpu layout and configures the environment variables
 # -----------------------------------------------------------------------------
 # Arch / Hyprland / UWSM GPU Configurator (v2026.08-Golden)
 # -----------------------------------------------------------------------------
