@@ -1040,6 +1040,7 @@ This is extremely useful for revisiting recent edit locations.
 | Command | Action |
 | :--- | :--- |
 | `:ls` or `:buffers` | List all open buffers (number, status, filename) |
+| `:enew` | Open a new empty buffer |
 | `:b <number>` or `:buffer <number>` | Switch directly to buffer by its number |
 | `:b <name>` or `:buffer <name>` | Switch directly to buffer by typing part of the filename (supports `<Tab>` autocomplete) |
 | `:bn` or `:bnext` | Go to the next buffer |
@@ -1049,6 +1050,8 @@ This is extremely useful for revisiting recent edit locations.
 | `:bd` or `:bdelete` | Unload the current buffer (closes the file) |
 | `:bd <number>` | Close buffer number `<number>` |
 | `:bd!` or `:bdelete!` | Close the current buffer, discarding unsaved changes |
+| `:file <new_name>` | Rename the active buffer name (requires `:w` to write to disk) |
+| `:saveas <new_path>` | Save current buffer as a new file and switch editing to it |
 | `:bw` or `:bwipeout` | Wipe out the buffer completely (removes history/marks) |
 
 ### Your Custom Buffer Shortcuts (Bufferline.nvim & Mappings)
@@ -1060,12 +1063,20 @@ Your active configuration installs **Bufferline.nvim** to show open files as vis
 | `<Tab>` | `BufferLineCycleNext` | Cycle forward to the next buffer |
 | `<S-Tab>` | `BufferLineCyclePrev` | Cycle backward to the previous buffer |
 | `<C-^>` | Toggle Alternate | Instantly toggle between the current and last-active buffer |
+| `<leader>fn` | `enew` | Open a new empty buffer (File New) |
+| `<leader>bd` | `bdelete` | Delete/close the current active buffer |
 | `<leader>bp` | `BufferLineTogglePin` | Pin the current buffer tab so it stays at the front |
 | `<leader>bc` | `BufferLinePickClose` | Enter "Pick Close" mode; press the letter shown on a tab to close it |
 
 > [!note]
 > - `<C-^>` is one of the most powerful built-in navigation shortcuts in Neovim. It performs a rapid toggle between your current file and your previous file.
 > - When using `<Tab>` or `<S-Tab>` with Bufferline, the tabs correspond directly to open buffers in memory.
+
+> [!tip]
+> **How to Rename a Buffer or File:**
+> 1. **Rename buffer name:** Type `:file new_name.txt` and then `:w` to save the new file to disk. (Note: this does not delete the old file from disk, it just renames the active buffer and writes a new file).
+> 2. **Save under a new name:** Type `:saveas new_path.txt`. This writes the file to the new path and switches your active editor window to it.
+> 3. **Rename the file on disk:** The easiest way in your environment is to open your sidebar file explorer with **`<leader>e`**, highlight the file, and press **`r`** to rename it cleanly.
 
 ## 14.2 Windows (splits)
 

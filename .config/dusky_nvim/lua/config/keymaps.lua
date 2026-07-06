@@ -49,5 +49,9 @@ vim.keymap.set("n", "<leader>rc", "<Cmd>e ~/.config/nvim/init.lua<CR>", { desc =
 vim.keymap.set("n", "<leader>m", "<Cmd>NvimTreeFocus<CR>", { desc = "Focus on File Explorer" })
 vim.keymap.set("n", "<leader>e", "<Cmd>NvimTreeToggle<CR>", { desc = "Toggle File Explorer" })
 
+-- Buffer Management
+vim.keymap.set("n", "<leader>fn", "<Cmd>enew<CR>", { desc = "New Empty Buffer" })
+vim.keymap.set("n", "<leader>bd", "<Cmd>bdelete<CR>", { desc = "Delete/Close Buffer" })
+
 -- Toggle Color Hightlighter
 vim.keymap.set("n", "<leader>hc", "<cmd>HighlightColorsToggle<CR>", { desc = "Toggle highlight colors" })
