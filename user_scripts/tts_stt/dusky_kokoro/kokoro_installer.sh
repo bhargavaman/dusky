@@ -47,11 +47,17 @@ echo "Select your installation target:"
 echo "  1) NVIDIA (CUDA) - Best for GeForce/RTX cards"
 echo "  2) AMD (ROCm)    - Best for Radeon/Instinct cards (Linux only)"
 echo "  3) CPU Only      - Works everywhere, no GPU required (Lightweight)"
+echo "  4) Skip          - Skip Kokoro installation entirely"
 echo ""
 
 # Fix: Initialize variable to prevent 'unbound variable' error on Ctrl+D
 HW_CHOICE=""
-read -p "Enter choice [1-3]: " HW_CHOICE || true
+read -p "Enter choice [1-4]: " HW_CHOICE || true
+
+if [[ "$HW_CHOICE" == "4" ]]; then
+    echo ":: Skipping Kokoro Setup. Exiting cleanly..."
+    exit 0
+fi
 
 MODE="cpu"
 if [[ "$HW_CHOICE" == "1" ]]; then
