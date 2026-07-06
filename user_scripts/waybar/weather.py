@@ -50,6 +50,59 @@ WEATHER_CODES: dict[int, tuple[str, str]] = {
     99: ("", "Thunderstorm with heavy hail"),
 }
 
+# Mapping World Weather Online (WWO) weather codes (used by wttr.in) to standard WMO codes.
+WWO_TO_WMO: dict[int, int] = {
+    113: 0,   # Clear/Sunny -> Clear sky
+    116: 2,   # Partly Cloudy -> Partly cloudy
+    119: 2,   # Cloudy -> Partly cloudy
+    122: 3,   # Overcast -> Overcast
+    143: 45,  # Mist -> Fog
+    176: 80,  # Patchy rain nearby -> Slight rain showers
+    179: 85,  # Patchy snow nearby -> Slight snow showers
+    182: 85,  # Patchy sleet nearby -> Slight snow showers
+    185: 56,  # Patchy freezing drizzle nearby -> Light freezing drizzle
+    200: 95,  # Thundery outbreaks nearby -> Thunderstorm
+    227: 71,  # Blowing snow -> Slight snow
+    230: 75,  # Blizzard -> Heavy snow
+    248: 45,  # Fog -> Fog
+    260: 48,  # Freezing fog -> Depositing rime fog
+    263: 51,  # Patchy light drizzle -> Light drizzle
+    266: 51,  # Light drizzle -> Light drizzle
+    281: 56,  # Freezing drizzle -> Light freezing drizzle
+    284: 57,  # Heavy freezing drizzle -> Dense freezing drizzle
+    293: 61,  # Patchy light rain -> Slight rain
+    296: 61,  # Light rain -> Slight rain
+    299: 63,  # Moderate rain at times -> Moderate rain
+    302: 63,  # Moderate rain -> Moderate rain
+    305: 65,  # Heavy rain at times -> Heavy rain
+    308: 65,  # Heavy rain -> Heavy rain
+    311: 66,  # Light freezing rain -> Light freezing rain
+    314: 67,  # Moderate or heavy freezing rain -> Heavy freezing rain
+    317: 71,  # Light sleet -> Slight snow
+    320: 73,  # Moderate or heavy sleet -> Moderate snow
+    323: 71,  # Patchy light snow -> Slight snow
+    326: 71,  # Light snow -> Slight snow
+    329: 73,  # Moderate snow -> Moderate snow
+    332: 73,  # Moderate snow -> Moderate snow
+    335: 75,  # Heavy snow -> Heavy snow
+    338: 75,  # Heavy snow -> Heavy snow
+    350: 77,  # Ice pellets -> Snow grains
+    353: 80,  # Light rain shower -> Slight rain showers
+    356: 81,  # Moderate or heavy rain shower -> Moderate rain showers
+    359: 82,  # Torrential rain shower -> Violent rain showers
+    362: 85,  # Light sleet showers -> Slight snow showers
+    365: 86,  # Moderate or heavy sleet showers -> Heavy snow showers
+    368: 85,  # Light snow showers -> Slight snow showers
+    371: 86,  # Moderate or heavy snow showers -> Heavy snow showers
+    374: 85,  # Light showers of ice pellets -> Slight snow showers
+    377: 86,  # Moderate or heavy showers of ice pellets -> Heavy snow showers
+    386: 95,  # Patchy light rain in area with thunder -> Thunderstorm
+    389: 99,  # Moderate or heavy rain in area with thunder -> Thunderstorm with heavy hail
+    392: 95,  # Patchy light snow in area with thunder -> Thunderstorm
+    395: 99,  # Moderate or heavy snow in area with thunder -> Thunderstorm with heavy hail
+}
+
+
 IMPERIAL_COUNTRIES = {"US", "LR", "MM"}
 STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather"
 TIME_STATE_FILE = Path.home() / ".config" / "dusky" / "settings" / "waybar_weather_time"
@@ -425,7 +478,7 @@ def fetch_json(url: str, params: dict[str, object] | None = None, timeout: float
             if response.status != 200:
                 return None
             data = json.loads(response.read())
-    except (URLError, TimeoutError, OSError, http.client.HTTPException, json.JSONDecodeError, UnicodeDecodeError):
+    except Exception:
         return None
 
     return data if isinstance(data, dict) else None
@@ -684,6 +737,56 @@ def parse_weather_data(weather_data: JsonDict) -> tuple[int, int, int, int, int]
     return temp, weather_code, temp_max, temp_min, precip_prob
 
 
+def parse_wttr_data(wttr_data: JsonDict, unit: str) -> tuple[int, int, int, int, int]:
+    current_cond = wttr_data.get("current_condition")
+    weather_list = wttr_data.get("weather")
+    if not isinstance(current_cond, list) or not current_cond or not isinstance(weather_list, list) or not weather_list:
+        raise TypeError("Missing wttr.in condition or weather data.")
+
+    current = current_cond[0]
+    today = weather_list[0]
+
+    # Get current temperature
+    temp_key = "temp_F" if unit == "imperial" else "temp_C"
+    temp_val = current.get(temp_key)
+    if temp_val is None:
+        raise TypeError(f"Missing {temp_key} in wttr.in condition.")
+    temp = round_half_away_from_zero(float(temp_val))
+
+    # Get weather code
+    wwo_code_str = current.get("weatherCode")
+    wwo_code = int(wwo_code_str) if wwo_code_str is not None else 0
+    weather_code = WWO_TO_WMO.get(wwo_code, 0) # Fallback to 0 (Clear)
+
+    # Get max/min temps
+    max_key = "maxtempF" if unit == "imperial" else "maxtempC"
+    min_key = "mintempF" if unit == "imperial" else "mintempC"
+    max_val = today.get(max_key)
+    min_val = today.get(min_key)
+    if max_val is None or min_val is None:
+        raise TypeError("Missing maxtemp or mintemp in wttr.in weather.")
+    temp_max = round_half_away_from_zero(float(max_val))
+    temp_min = round_half_away_from_zero(float(min_val))
+
+    # Compute max precipitation probability from hourly forecast
+    hourly = today.get("hourly")
+    precip_prob = 0
+    if isinstance(hourly, list) and hourly:
+        probs = []
+        for h in hourly:
+            prob_str = h.get("chanceofrain")
+            if prob_str is not None:
+                try:
+                    probs.append(int(prob_str))
+                except ValueError:
+                    pass
+        if probs:
+            precip_prob = max(probs)
+
+    return temp, weather_code, temp_max, temp_min, precip_prob
+
+
+
 def build_weather_payload(
     temp: int,
     weather_code: int,
@@ -796,15 +899,37 @@ def main() -> None:
             timeout=10.0,
         )
 
-        if not weather_data or weather_data.get("error"):
-            reason = weather_data.get("reason") if isinstance(weather_data, dict) else None
-            error_tooltip = str(reason) if reason else "Failed to fetch weather and no cached weather is available."
-            emit_cached_or_fail(state, error_tooltip)
+        success = False
+        reason = None
+        if weather_data and not weather_data.get("error"):
+            try:
+                temp, weather_code, temp_max, temp_min, precip_prob = parse_weather_data(weather_data)
+                success = True
+            except (TypeError, ValueError, IndexError, AttributeError):
+                reason = "Malformed response from Open-Meteo."
+        else:
+            reason = weather_data.get("reason") if isinstance(weather_data, dict) else "Failed to fetch weather from Open-Meteo."
 
-        try:
-            temp, weather_code, temp_max, temp_min, precip_prob = parse_weather_data(weather_data)
-        except (TypeError, ValueError, IndexError, AttributeError):
-            emit_cached_or_fail(state, "Malformed response from the weather service.")
+        if not success:
+            # Try wttr.in fallback
+            wttr_data = fetch_json(
+                f"https://wttr.in/{lat},{lon}",
+                params={"format": "j1"},
+                timeout=10.0,
+            )
+            if wttr_data and not wttr_data.get("error"):
+                try:
+                    temp, weather_code, temp_max, temp_min, precip_prob = parse_wttr_data(wttr_data, unit)
+                    success = True
+                except (TypeError, ValueError, IndexError, AttributeError) as exc:
+                    reason = f"Malformed response from wttr.in: {exc}"
+            else:
+                wttr_reason = wttr_data.get("reason") if isinstance(wttr_data, dict) else "Failed to fetch weather from wttr.in."
+                reason = f"Open-Meteo failed ({reason}) and wttr.in failed ({wttr_reason})"
+
+        if not success:
+            emit_cached_or_fail(state, reason or "Failed to fetch weather and no cached weather is available.")
+
 
         payload = build_weather_payload(
             temp=temp,
