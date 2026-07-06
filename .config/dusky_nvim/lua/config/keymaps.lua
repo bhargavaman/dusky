@@ -74,6 +74,14 @@ vim.api.nvim_create_user_command("DuskyPush", function()
     return
   end
 
+  -- Check if file has any changes compared to the git repository
+  local status_cmd = string.format("git --git-dir=%s/dusky --work-tree=%s status --porcelain %q", home, home, relative_file)
+  local status_out = vim.fn.system(status_cmd):gsub("%s+", "") -- strip whitespaces
+  if status_out == "" then
+    vim.notify("No changes detected for " .. relative_file, vim.log.levels.INFO)
+    return
+  end
+
   -- Ask for commit message
   vim.ui.input({ prompt = "Commit message for " .. relative_file .. ": " }, function(msg)
     if not msg or msg == "" then
@@ -89,13 +97,33 @@ vim.api.nvim_create_user_command("DuskyPush", function()
     
     vim.notify("Pushing " .. relative_file .. "...", vim.log.levels.INFO)
     
+    local stderr_data = {}
+    local stdout_data = {}
+    
     -- Run asynchronously to prevent UI lockup
     vim.fn.jobstart(cmd, {
       stdout_buffered = true,
       stderr_buffered = true,
+      on_stdout = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= "" then table.insert(stdout_data, line) end
+        end
+      end,
+      on_stderr = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= "" then table.insert(stderr_data, line) end
+        end
+      end,
       on_exit = function(_, exit_code, _)
         if exit_code ~= 0 then
-          vim.notify("Push failed! Check console or git status.", vim.log.levels.ERROR)
+          local err_msg = table.concat(stderr_data, "\n")
+          if err_msg == "" then
+            err_msg = table.concat(stdout_data, "\n")
+          end
+          if err_msg == "" then
+            err_msg = "Unknown error (exit code " .. exit_code .. ")"
+          end
+          vim.notify("Push failed:\n" .. err_msg, vim.log.levels.ERROR)
         else
           vim.notify("Successfully pushed " .. relative_file .. "!", vim.log.levels.INFO)
         end
