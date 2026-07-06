@@ -47,6 +47,3 @@ vim.keymap.set("n", "<leader>e", "<Cmd>NvimTreeToggle<CR>", { desc = "Toggle Fil
 
 -- Toggle Color Hightlighter
 vim.keymap.set("n", "<leader>hc", "<cmd>HighlightColorsToggle<CR>", { desc = "Toggle highlight colors" })
-
--- lua/config/keymaps.lua (add somewhere inside)
--- manual completion trigger (insert mode)
