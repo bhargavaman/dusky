@@ -436,28 +436,32 @@ hl.bind(
 
 
 -- --- Clipboard & Screenshot ---
--- hl.bind(
---     "SUPER + V",
---     hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. dusky_scripts .. "rofi/rofi_clipboard.sh\" -show clipboard"),
---     { description = "Clipboard History" }
--- )
+local clipboard_state_file = os.getenv("HOME") .. "/.config/dusky/settings/clipboard_state"
+local use_terminal_clipboard = true
+local f_state = io.open(clipboard_state_file, "r")
+if f_state then
+    local content = f_state:read("*all")
+    f_state:close()
+    if content:match("False") then
+        use_terminal_clipboard = false
+    end
+end
 
-hl.bind("SUPER + V", function()
-    -- Kill any existing clipboard foot instance with SIGTERM (-15).
-    -- The '^foot' anchor is critical: it means only processes whose
-    -- cmdline STARTS with 'foot' are matched. The sh subprocess spawned
-    -- by os.execute starts with 'sh', so it can never self-match.
-    -- This eliminates the self-terminating sh -c wrapper bug.
-    os.execute("pkill -15 -f '^foot.*terminal_clipboard'")
-
-    -- Dispatch the fresh instance. hl.dispatch + exec_cmd spawns
-    -- foot directly without a sh -c wrapper, so there are no shell
-    -- chain issues here. os.getenv() expands $HOME safely in Lua.
-    hl.dispatch(hl.dsp.exec_cmd(
-        "foot --app-id=terminal_clipboard.sh " ..
-        os.getenv("HOME") .. "/user_scripts/clipboard/terminal_clipboard.sh"
-    ))
-end, { description = "Clipboard History" })
+if use_terminal_clipboard then
+    hl.bind("SUPER + V", function()
+        os.execute("pkill -15 -f '^foot.*terminal_clipboard'")
+        hl.dispatch(hl.dsp.exec_cmd(
+            "foot --app-id=terminal_clipboard.sh " ..
+            os.getenv("HOME") .. "/user_scripts/clipboard/terminal_clipboard.sh"
+        ))
+    end, { description = "Clipboard History (Terminal)" })
+else
+    hl.bind(
+        "SUPER + V",
+        hl.dsp.exec_cmd("pkill rofi; rofi -modi \"clipboard:" .. dusky_scripts .. "rofi/rofi_clipboard.sh\" -show clipboard"),
+        { description = "Clipboard History (Rofi)" }
+    )
+end
 
 
 hl.bind(
