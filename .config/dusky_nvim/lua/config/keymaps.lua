@@ -13,9 +13,13 @@ vim.keymap.set("n", "<C-u>", "<C-u>zz", { desc = "Half page up (centered)" })
 -- Press <leader>z to jump to the next error and open the suggestion list instantly
 vim.keymap.set("n", "<leader>z", "]sz=", { desc = "Next Spell Suggestion" })
 
--- Buffer navigation
-vim.keymap.set("n", "<leader>bn", "<Cmd>bnext<CR>", { desc = "Next buffer" })
-vim.keymap.set("n", "<leader>bp", "<Cmd>bprevious<CR>", { desc = "Previous buffer" })
+-- Clear search highlights and dismiss notifications on Esc
+vim.keymap.set("n", "<Esc>", function()
+  vim.cmd("nohlsearch")
+  pcall(function()
+    require("notify").dismiss()
+  end)
+end, { desc = "Clear search highlight and notifications" })
 
 -- Better window navigation
 vim.keymap.set("n", "<C-h>", "<C-w>h", { desc = "Move to left window" })
