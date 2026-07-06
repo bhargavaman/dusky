@@ -646,7 +646,6 @@ hl.window_rule({
     match = { class = "^(dusky_snapshot_manager.py)$" },
     float = true,
     size = {"(monitor_w*0.95)", "(monitor_h*0.9)"},
-    move = {"(monitor_w*0.05)", "(monitor_h*0.05)"},
     center = true
 })
 
@@ -1452,8 +1451,8 @@ hl.window_rule({
         class = "^(waybar_tui)$",
     },
     float = true,
-    size = {709, 760},
-    -- size = {"monitor_w * 0.4616", "monitor_h * 0.8796"},
+    size = {720, 690},
+    -- size = {"monitor_w * 0.5523", "monitor_h * 0.9583"},
 })
 
 --- Zathura (PDF Viewer) ---
