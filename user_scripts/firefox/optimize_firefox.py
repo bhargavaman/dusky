@@ -272,6 +272,9 @@ def find_firefox_profiles() -> list[Path]:
         # Fallback: scan folders directly in case profiles.ini is corrupt/missing
         for sub in base_dir.iterdir():
             if sub.is_dir() and (sub.suffix == ".default" or "default-release" in sub.name):
+                # Ignore profile-sync-daemon (PSD) backup and overlayfs mount folders
+                if any(x in sub.name for x in ["-backup", "-back-ovfs"]):
+                    continue
                 if sub not in profiles:
                     profiles.append(sub)
 
@@ -827,6 +830,27 @@ def main() -> None:
 
     # 4. Find Firefox Profiles
     profiles = find_firefox_profiles()
+    if not profiles:
+        logger.info("No Firefox profiles located. Attempting to auto-initialize default profile...")
+        try:
+            # Run Firefox in headless mode with -no-remote to safely create the default profile
+            subprocess.run(
+                ["firefox", "-headless", "-no-remote", "-CreateProfile", "default-release"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15
+            )
+            # Re-try finding profiles
+            profiles = find_firefox_profiles()
+        except subprocess.TimeoutExpired:
+            logger.warning("Firefox profile initialization timed out.")
+        except FileNotFoundError:
+            logger.error("Firefox executable not found. Please install Firefox first.")
+            sys.exit(1)
+        except Exception as e:
+            logger.warning(f"Error during profile initialization: {e}")
+
     if not profiles:
         logger.error("No Firefox profiles located. Make sure Firefox has been run at least once.")
         sys.exit(1)
