@@ -433,6 +433,35 @@ def discard_local_changes() -> None:
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Reset operation failed.[/bold red]")
 
+def reset_local_to_remote() -> None:
+    """Hard resets the local repository to match the remote branch tracking state."""
+    console.print(Panel(
+        "[bold red]⚠ RESET LOCAL STATE TO MATCH GITHUB ⚠[/bold red]\n"
+        "This will discard all local commits that haven't been pushed to GitHub\n"
+        "AND erase all uncommitted edits on your disk, resetting everything to match the remote.",
+        border_style="red"
+    ))
+    
+    # Get current branch name
+    _, branch_out, _ = run_git("branch", "--show-current")
+    branch_out = branch_out.strip()
+    if not branch_out:
+        console.print("[bold red]✖ Error: Detached HEAD state detected.[/bold red]")
+        return
+        
+    console.print(f"[bold red]Reset local state and overwrite all files to match origin/{branch_out}? (y/N)[/bold red]")
+    ans = input(" ❯ ").strip().lower()
+    if ans in ("y", "yes"):
+        try:
+            console.print("[bold blue]Fetching latest state from GitHub...[/bold blue]")
+            run_git("fetch", "origin", capture=False, check=True)
+            
+            console.print(f"[bold blue]Hard resetting to origin/{branch_out}...[/bold blue]")
+            run_git("reset", "--hard", f"origin/{branch_out}", capture=False, check=True)
+            console.print("[bold green]✔[/bold green] Local state successfully synced with GitHub remote.")
+        except subprocess.CalledProcessError:
+            console.print("[bold red]✖ Sync operation failed.[/bold red]")
+
 def quick_step_back() -> None:
     """Rolls back the repository by exactly 1 commit on both local and remote."""
     console.print(Panel(
@@ -655,7 +684,8 @@ def main() -> Never:
         console.print(Panel(
             "[bold yellow]7[/bold yellow]  │ Undo Local Commits to a Specific Commit (Safe - uncommits but keeps edits on disk)\n"
             "[bold yellow]8[/bold yellow]  │ [bold red]Delete[/bold red] Local Commits since a Specific Commit (Destructive - discards all edits)\n"
-            "[bold yellow]10[/bold yellow] │ [bold red]Discard[/bold red] All Uncommitted Local Changes (Destructive - wipes unstaged edits)",
+            "[bold yellow]10[/bold yellow] │ [bold red]Discard[/bold red] All Uncommitted Local Changes (Destructive - wipes unstaged edits)\n"
+            "[bold yellow]11[/bold yellow] │ [bold red]Reset[/bold red] Local State to Match GitHub (Destructive - discards local commits & edits)",
             title="[bold yellow]  LOCAL HISTORY ROLLBACK (Changes Stay on Local PC Only)[/bold yellow]",
             border_style="yellow",
             title_align="left",
@@ -666,7 +696,7 @@ def main() -> Never:
         console.print(Panel(
             "[bold red]6[/bold red]  │ Undo Last Commit Safely (Creates new revert commit on Local & Remote)\n"
             "[bold red]9[/bold red]  │ [bold red]Delete[/bold red] Last Commit from Remote (Destructive - rewrites local & remote)\n"
-            "[bold red]11[/bold red] │ [bold red]Delete[/bold red] Commits since a Specific Commit from Remote (Destructive - rewrites local & remote)",
+            "[bold red]12[/bold red] │ [bold red]Delete[/bold red] Commits since a Specific Commit from Remote (Destructive - rewrites local & remote)",
             title="[bold red]  FORCE REWRITING (Alters Both Local & GitHub Remote History)[/bold red]",
             border_style="red",
             title_align="left",
@@ -675,7 +705,7 @@ def main() -> Never:
         
         # 5. Advanced Toolbox (Magenta)
         console.print(Panel(
-            "[bold magenta]12[/bold magenta] │ Engage Ephemeral Time Machine (TUI)\n"
+            "[bold magenta]13[/bold magenta] │ Engage Ephemeral Time Machine (TUI)\n"
             "[bold red]q[/bold red]  │ Quit Dashboard",
             title="[bold magenta]  ADVANCED TOOLBOX[/bold magenta]",
             border_style="magenta",
@@ -683,9 +713,9 @@ def main() -> Never:
             box=box.ROUNDED
         ))
         
-        console.print("\n[bold blue]Awaiting Directive [1-12/q] [default: 1][/bold blue]")
+        console.print("\n[bold blue]Awaiting Directive [1-13/q] [default: 1][/bold blue]")
         choice = input(" ❯ ").strip() or "1"
-        while choice not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "q"):
+        while choice not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "q"):
             console.print("[bold red]✖ Invalid choice. Please select a valid key.[/bold red]")
             choice = input(" ❯ ").strip() or "1"
         
@@ -705,8 +735,9 @@ def main() -> Never:
             case "8": delete_local_commits_to_commit()
             case "9": quick_step_back()
             case "10": discard_local_changes()
-            case "11": nuclear_revert()
-            case "12": run_time_machine()
+            case "11": reset_local_to_remote()
+            case "12": nuclear_revert()
+            case "13": run_time_machine()
             case "q": raise SystemExit(0)
             
         console.print("\n[dim]Press [Enter] to return to dashboard...[/dim]")
