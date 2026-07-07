@@ -242,7 +242,7 @@ declare -ra UPDATE_SEQUENCE=(
 #    "U | 165_qtct_config.sh"
     "S | 180_udev_usb_notify.sh"
 #    "U | 185_terminal_default.sh"
-#    "S | 190_dusk_fstab.sh"
+#    "S | 190_dusk_fstab.py"
 #    "S | 195_firefox_symlink_parition.sh"
 #    "S | 200_tlp_config.sh"
 #    "S | 205_zram_configuration.sh"
