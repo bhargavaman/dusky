@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Never
 
 # Modern Rich UI components
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
@@ -435,10 +436,10 @@ def discard_local_changes() -> None:
 def quick_step_back() -> None:
     """Rolls back the repository by exactly 1 commit on both local and remote."""
     console.print(Panel(
-        "[bold yellow]⚠ DELETE LAST COMMIT COMPLETELY (Local & Remote Reset) ⚠[/bold yellow]\n"
+        "[bold red]⚠ DELETE LAST COMMIT FROM REMOTE ⚠[/bold red]\n"
         "This will hard-reset the local repository to HEAD~1 and force-push to origin,\n"
         "permanently deleting the last commit from both local and remote history.",
-        border_style="yellow"
+        border_style="red"
     ))
     
     code, log_out, _ = run_git("log", "--format=%h", "-n", "2")
@@ -465,6 +466,73 @@ def quick_step_back() -> None:
             console.print("[bold green]✔[/bold green] Step back 1 commit complete on remote.")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Step back operation failed.[/bold red]")
+
+def undo_local_commits_to_commit() -> None:
+    """Safe mixed reset to a selected past commit (uncommits files, keeping disk modifications)."""
+    console.print(Panel(
+        "[bold yellow]⚠ UNDO LOCAL COMMITS TO A SPECIFIC COMMIT ⚠[/bold yellow]\n"
+        "This will reset your local HEAD to a selected past commit,\n"
+        "returning all files changed since that commit to your unstaged area.\n"
+        "All edits on disk will be safely preserved.",
+        border_style="yellow"
+    ))
+    
+    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "30")
+    if not log_out:
+        console.print("[bold red]✖ Error:[/bold red] No commit history found.")
+        return
+        
+    commits = log_out.splitlines()
+    preview_cmd = "git --no-advice show --color=always {1}"
+    
+    target = fzf_select(commits, prompt="Select Target Commit", preview=preview_cmd)
+    if not target:
+        return
+        
+    commit_hash = target[0].split()[0]
+    console.print(f"\n[bold yellow]Target Commit:[/bold yellow] {target[0]}")
+    
+    console.print(f"[bold cyan]Reset local HEAD to {commit_hash} and preserve edits? (y/N)[/bold cyan]")
+    ans = input(" ❯ ").strip().lower()
+    if ans in ("y", "yes"):
+        try:
+            run_git("reset", commit_hash, capture=False, check=True)
+            console.print(f"[bold green]✔[/bold green] Local HEAD reset to {commit_hash}. Changes preserved in working tree.")
+        except subprocess.CalledProcessError:
+            console.print("[bold red]✖ Reset operation failed.[/bold red]")
+
+def delete_local_commits_to_commit() -> None:
+    """Destructive hard reset to a selected past commit (uncommits files and wipes edits)."""
+    console.print(Panel(
+        "[bold red]⚠ DELETE LOCAL COMMITS SINCE A SPECIFIC COMMIT ⚠[/bold red]\n"
+        "This will permanently delete commits from your local history up to the selected past commit,\n"
+        "AND erase all changes associated with those commits from your disk.",
+        border_style="red"
+    ))
+    
+    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "30")
+    if not log_out:
+        console.print("[bold red]✖ Error:[/bold red] No commit history found.")
+        return
+        
+    commits = log_out.splitlines()
+    preview_cmd = "git --no-advice show --color=always {1}"
+    
+    target = fzf_select(commits, prompt="Select Target Commit", preview=preview_cmd)
+    if not target:
+        return
+        
+    commit_hash = target[0].split()[0]
+    console.print(f"\n[bold yellow]Target Commit:[/bold yellow] {target[0]}")
+    
+    console.print(f"[bold red]Delete all local commits since {commit_hash} and discard all their edits? (y/N)[/bold red]")
+    ans = input(" ❯ ").strip().lower()
+    if ans in ("y", "yes"):
+        try:
+            run_git("reset", "--hard", commit_hash, capture=False, check=True)
+            console.print(f"[bold green]✔[/bold green] Local state reset to {commit_hash}. Changes discarded.")
+        except subprocess.CalledProcessError:
+            console.print("[bold red]✖ Reset operation failed.[/bold red]")
 
 def safe_revert_last_commit() -> None:
     """Safe non-destructive revert that appends a new commit undoing the last commit."""
@@ -504,9 +572,9 @@ def show_delta() -> None:
 def nuclear_revert() -> None:
     """Absolute destructive timeline sync. Hard resets local tree and force-pushes."""
     console.print(Panel(
-        "[bold red]!!! TIMELINE OBLITERATION !!![/bold red]\n"
-        "This will permanently erase local tracking changes and physically overwrite the GitHub remote.\n"
-        "This operation matches the remote strictly to HEAD.",
+        "[bold red]⚠ DELETE COMMITS FROM REMOTE ⚠[/bold red]\n"
+        "This will permanently delete commits since the selected commit from local history\n"
+        "AND force-push to overwrite the remote history on GitHub.",
         border_style="red"
     ))
     
@@ -517,12 +585,12 @@ def nuclear_revert() -> None:
     commits = log_out.splitlines()
     preview_cmd = "git --no-advice show --color=always {1}"
     
-    target = fzf_select(commits, prompt="Select Anchor Commit", preview=preview_cmd)
+    target = fzf_select(commits, prompt="Select Target Commit", preview=preview_cmd)
     if not target:
         return
         
     commit_hash = target[0].split()[0]
-    console.print(f"\n[bold yellow]Target Anchor:[/bold yellow] {target[0]}")
+    console.print(f"\n[bold yellow]Target Commit:[/bold yellow] {target[0]}")
     
     console.print(f"[bold red]Execute HARD RESET to {commit_hash}? (Wipes local tracked changes) (y/N)[/bold red]")
     ans = input(" ❯ ").strip().lower()
@@ -544,7 +612,7 @@ def nuclear_revert() -> None:
                 run_git("push", "origin", f"+{branch_out}", capture=False, check=True)
                 console.print(f"[bold green]✔[/bold green] Remote repository obliteration complete.")
         except subprocess.CalledProcessError:
-            console.print("[bold red]✖ Nuclear operation interrupted by fatal error.[/bold red]")
+            console.print("[bold red]✖ Force reset operation interrupted by error.[/bold red]")
 
 def run_time_machine() -> None:
     """Handoff execution to the highly-optimized Ephemeral Bash TUI."""
@@ -560,36 +628,64 @@ def main() -> Never:
     
     while True:
         console.clear()
-        table = Table(title="󰏖 Dusky Dotfiles Manager", show_header=False, box=None, title_style="bold blue")
-        table.add_column("Key", style="bold cyan", width=4, justify="right")
-        table.add_column("Action", style="bold white")
+        console.print("[bold blue]󰏖 Dusky Dotfiles Manager[/bold blue]\n")
         
-        table.add_row("", "[bold cyan]⚡ DAILY WORKFLOWS[/bold cyan]")
-        table.add_row("1", "Sync All (via .git_dusky_list)")
-        table.add_row("2", "Sync Specific File(s)")
-        table.add_row("3", "Commit Staged Changes (Local Only)")
-        table.add_row("4", "Push Existing Local Commits")
-        table.add_row("5", "View Delta Differential")
+        # 1. Working Tree & Staging (Cyan)
+        console.print(Panel(
+            "[bold cyan]1[/bold cyan] │ Sync All (via .git_dusky_list)\n"
+            "[bold cyan]2[/bold cyan] │ Sync Specific File(s)\n"
+            "[bold cyan]5[/bold cyan] │ View Delta Differential",
+            title="[bold cyan]  WORKING TREE & STATUS (Local File Operations)[/bold cyan]",
+            border_style="cyan",
+            title_align="left",
+            box=box.ROUNDED
+        ))
         
-        table.add_row("", "")
-        table.add_row("", "[bold yellow]🛡 RECOVERY & TIMELINE[/bold yellow]")
-        table.add_row("6", "Undo Last Commit Safely (Creates new revert commit)")
-        table.add_row("7", "Delete Last Commit Completely (Rewrites local & remote history)")
-        table.add_row("8", "Discard All Uncommitted Local Changes")
-        table.add_row("9", "Nuclear Revert (Local & Remote Sync)")
+        # 2. Commits & Sync (Green)
+        console.print(Panel(
+            "[bold green]3[/bold green] │ Commit Staged Changes (Local Only)\n"
+            "[bold green]4[/bold green] │ Push Existing Local Commits to Remote",
+            title="[bold green]  COMMITS & SYNC (Save to Local / Remote)[/bold green]",
+            border_style="green",
+            title_align="left",
+            box=box.ROUNDED
+        ))
         
-        table.add_row("", "")
-        table.add_row("", "[bold magenta]⚙ ADVANCED SYSTEMS[/bold magenta]")
-        table.add_row("10", "Engage Ephemeral Time Machine (TUI)")
+        # 3. Local History Rollback (Yellow)
+        console.print(Panel(
+            "[bold yellow]7[/bold yellow]  │ Undo Local Commits to a Specific Commit (Safe - uncommits but keeps edits on disk)\n"
+            "[bold yellow]8[/bold yellow]  │ [bold red]Delete[/bold red] Local Commits since a Specific Commit (Destructive - discards all edits)\n"
+            "[bold yellow]10[/bold yellow] │ [bold red]Discard[/bold red] All Uncommitted Local Changes (Destructive - wipes unstaged edits)",
+            title="[bold yellow]  LOCAL HISTORY ROLLBACK (Changes Stay on Local PC Only)[/bold yellow]",
+            border_style="yellow",
+            title_align="left",
+            box=box.ROUNDED
+        ))
         
-        table.add_row("", "")
-        table.add_row("q", "[bold red]Quit Dashboard[/bold red]")
-
-        console.print(table)
+        # 4. Force Rewriting (Red)
+        console.print(Panel(
+            "[bold red]6[/bold red]  │ Undo Last Commit Safely (Creates new revert commit on Local & Remote)\n"
+            "[bold red]9[/bold red]  │ [bold red]Delete[/bold red] Last Commit from Remote (Destructive - rewrites local & remote)\n"
+            "[bold red]11[/bold red] │ [bold red]Delete[/bold red] Commits since a Specific Commit from Remote (Destructive - rewrites local & remote)",
+            title="[bold red]  FORCE REWRITING (Alters Both Local & GitHub Remote History)[/bold red]",
+            border_style="red",
+            title_align="left",
+            box=box.ROUNDED
+        ))
         
-        console.print("\n[bold blue]Awaiting Directive [1-10/q] [default: 1][/bold blue]")
+        # 5. Advanced Toolbox (Magenta)
+        console.print(Panel(
+            "[bold magenta]12[/bold magenta] │ Engage Ephemeral Time Machine (TUI)\n"
+            "[bold red]q[/bold red]  │ Quit Dashboard",
+            title="[bold magenta]  ADVANCED TOOLBOX[/bold magenta]",
+            border_style="magenta",
+            title_align="left",
+            box=box.ROUNDED
+        ))
+        
+        console.print("\n[bold blue]Awaiting Directive [1-12/q] [default: 1][/bold blue]")
         choice = input(" ❯ ").strip() or "1"
-        while choice not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "q"):
+        while choice not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "q"):
             console.print("[bold red]✖ Invalid choice. Please select a valid key.[/bold red]")
             choice = input(" ❯ ").strip() or "1"
         
@@ -605,10 +701,12 @@ def main() -> Never:
                     pass
             case "5": show_delta()
             case "6": safe_revert_last_commit()
-            case "7": quick_step_back()
-            case "8": discard_local_changes()
-            case "9": nuclear_revert()
-            case "10": run_time_machine()
+            case "7": undo_local_commits_to_commit()
+            case "8": delete_local_commits_to_commit()
+            case "9": quick_step_back()
+            case "10": discard_local_changes()
+            case "11": nuclear_revert()
+            case "12": run_time_machine()
             case "q": raise SystemExit(0)
             
         console.print("\n[dim]Press [Enter] to return to dashboard...[/dim]")
