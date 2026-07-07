@@ -76,15 +76,15 @@ def run_git(
     
     if check and proc.returncode != 0:
         if capture and proc.stderr:
-            console.print(f"[bold red]Git Internal Error:[/bold red]\n{proc.stderr.decode('utf-8').strip()}")
+            console.print(f"[bold red]Git Internal Error:[/bold red]\n{proc.stderr.decode('utf-8', errors='replace').strip()}")
         raise subprocess.CalledProcessError(
             proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
         )
         
     return (
         proc.returncode, 
-        proc.stdout.decode('utf-8') if proc.stdout else "", 
-        proc.stderr.decode('utf-8') if proc.stderr else ""
+        proc.stdout.decode('utf-8', errors='replace') if proc.stdout else "", 
+        proc.stderr.decode('utf-8', errors='replace') if proc.stderr else ""
     )
 
 def check_dependencies() -> None:
@@ -341,21 +341,36 @@ def sync_single() -> None:
         
     commit_and_push(list(paths_to_stage))
 
-def commit_and_push(files: list[str] | None = None) -> None:
+def commit_and_push(files: list[str] | None = None, local_only: bool = False) -> None:
     """Atomic transaction logic enforcing strict ARG_MAX bounds via sets."""
     commit_files: list[str] | None = None
     
     if files:
-        _, staged_out, _ = run_git("diff", "--cached", "--name-only", "-z")
-        staged_list = [f for f in staged_out.split("\0") if f]
+        _, staged_out, _ = run_git("diff", "--cached", "--name-status", "-z")
+        staged_entries = staged_out.split("\0")[:-1]
         
-        # Deduplicate paths safely using set comprehension logic
-        matched_set = {f for f in staged_list if matches_pathspec(f, files)}
-        
-        if not matched_set:
+        staged_paths: set[str] = set()
+        it = iter(staged_entries)
+        for status in it:
+            if not status:
+                continue
+            if status.startswith("R") or status.startswith("C"):
+                src = next(it, None)
+                dst = next(it, None)
+                if src and dst:
+                    if matches_pathspec(src, files) or matches_pathspec(dst, files):
+                        staged_paths.add(src)
+                        staged_paths.add(dst)
+            else:
+                path = next(it, None)
+                if path:
+                    if matches_pathspec(path, files):
+                        staged_paths.add(path)
+                        
+        if not staged_paths:
             console.print("[bold yellow]⚠[/bold yellow] Index empty for specified files. Nothing to commit.")
             return
-        commit_files = list(matched_set)
+        commit_files = list(staged_paths)
     else:
         code, _, _ = run_git("diff", "--cached", "--quiet")
         if code == 0:
@@ -384,6 +399,10 @@ def commit_and_push(files: list[str] | None = None) -> None:
         console.print("[bold red]✖ Commit failed (Hooks/Formatting block).[/bold red]")
         return
     
+    if local_only:
+        console.print("[bold green]✔[/bold green] Committed changes locally.")
+        return
+        
     if Confirm.ask("[bold cyan]Execute push to remote origin?[/bold cyan]", default=True):
         console.print("[bold blue]Establishing connection...[/bold blue]")
         try:
@@ -391,6 +410,78 @@ def commit_and_push(files: list[str] | None = None) -> None:
             console.print("[bold green]✔[/bold green] Synchronization successful.")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Push failed. Resolve remote conflicts and try again.[/bold red]")
+
+def discard_local_changes() -> None:
+    """Discards all uncommitted changes (both staged and unstaged) in the working tree."""
+    console.print(Panel(
+        "[bold red]!!! DISCARD LOCAL CHANGES !!![/bold red]\n"
+        "This will permanently erase all uncommitted modifications (both staged and unstaged) in the tracked files.",
+        border_style="red"
+    ))
+    if Confirm.ask("[bold red]Are you absolutely sure you want to discard all uncommitted changes?[/bold red]", default=False):
+        try:
+            run_git("reset", "--hard", "HEAD", capture=False, check=True)
+            console.print("[bold green]✔[/bold green] Successfully discarded all local changes (hard reset to HEAD).")
+        except subprocess.CalledProcessError:
+            console.print("[bold red]✖ Reset operation failed.[/bold red]")
+
+def quick_step_back() -> None:
+    """Rolls back the repository by exactly 1 commit on both local and remote."""
+    console.print(Panel(
+        "[bold yellow]⚠ QUICK STEP BACK 1 COMMIT (Local & Remote) ⚠[/bold yellow]\n"
+        "This will hard-reset the local repository to HEAD~1 and force-push to origin,\n"
+        "permanently deleting the last commit from both local and remote history.",
+        border_style="yellow"
+    ))
+    
+    code, log_out, _ = run_git("log", "--format=%h", "-n", "2")
+    if code != 0 or not log_out or len(log_out.splitlines()) < 2:
+        console.print("[bold red]✖ Error:[/bold red] Cannot step back. Must have at least two commits in history.")
+        return
+        
+    if Confirm.ask("[bold red]Step back 1 commit on both local and remote?[/bold red]", default=False):
+        try:
+            run_git("reset", "--hard", "HEAD~1", capture=False, check=True)
+            console.print("[bold green]✔[/bold green] Local repository reset to HEAD~1.")
+            
+            _, branch_out, _ = run_git("branch", "--show-current")
+            branch_out = branch_out.strip()
+            
+            if not branch_out:
+                console.print("[bold red]✖ Error: Detached HEAD state detected.[/bold red] Aborting remote push.")
+                return
+                
+            console.print(f"[bold blue]Force-pushing to origin/{branch_out}...[/bold blue]")
+            run_git("push", "origin", f"+{branch_out}", capture=False, check=True)
+            console.print("[bold green]✔[/bold green] Step back 1 commit complete on remote.")
+        except subprocess.CalledProcessError:
+            console.print("[bold red]✖ Step back operation failed.[/bold red]")
+
+def safe_revert_last_commit() -> None:
+    """Safe non-destructive revert that appends a new commit undoing the last commit."""
+    console.print(Panel(
+        "[bold green]✔ SAFE REVERT LAST COMMIT (Local & Remote) ✔[/bold green]\n"
+        "This will create a new commit that undoes the changes of the last commit,\n"
+        "preserving the commit history without rewriting it.",
+        border_style="green"
+    ))
+    
+    code, log_out, _ = run_git("log", "-n", "1")
+    if code != 0 or not log_out:
+        console.print("[bold red]✖ Error:[/bold red] No history found to revert.")
+        return
+        
+    if Confirm.ask("[bold cyan]Execute safe revert of the last commit?[/bold cyan]", default=True):
+        try:
+            run_git("revert", "--no-edit", "HEAD", capture=False, check=True)
+            console.print("[bold green]✔[/bold green] Safe revert commit created locally.")
+            
+            if Confirm.ask("[bold cyan]Push the revert commit to remote?[/bold cyan]", default=True):
+                console.print("[bold blue]Pushing changes...[/bold blue]")
+                run_git("push", capture=False, check=True)
+                console.print("[bold green]✔[/bold green] Revert commit pushed successfully.")
+        except subprocess.CalledProcessError:
+            console.print("[bold red]✖ Safe revert operation aborted or failed.[/bold red]")
 
 def show_delta() -> None:
     """Pipes differential directly through Delta."""
@@ -458,28 +549,41 @@ def main() -> Never:
         
         table.add_row("1", "Sync All (via .git_dusky_list)")
         table.add_row("2", "Sync Specific File(s)")
-        table.add_row("3", "View Delta Differential")
+        table.add_row("3", "Commit Staged Changes (Local Only)")
         table.add_row("4", "Push Existing Local Commits")
-        table.add_row("5", "Nuclear Revert (Local & Remote Sync)")
-        table.add_row("6", "Engage Ephemeral Time Machine (TUI)")
+        table.add_row("5", "View Delta Differential")
+        table.add_row("6", "Safe Revert Last Commit (Appends Undo Commit)")
+        table.add_row("7", "Quick Step Back 1 Commit (Local & Remote Reset)")
+        table.add_row("8", "Discard All Uncommitted Local Changes")
+        table.add_row("9", "Nuclear Revert (Local & Remote Sync)")
+        table.add_row("10", "Engage Ephemeral Time Machine (TUI)")
         table.add_row("q", "Quit Dashboard")
 
         console.print(table)
         
-        choice = Prompt.ask("\n[bold blue]Awaiting Directive[/bold blue]", choices=["1", "2", "3", "4", "5", "6", "q"], default="1", show_default=False)
+        choice = Prompt.ask(
+            "\n[bold blue]Awaiting Directive[/bold blue]", 
+            choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "q"], 
+            default="1", 
+            show_default=False
+        )
         
         match choice:
             case "1": sync_all()
             case "2": sync_single()
-            case "3": show_delta()
+            case "3": commit_and_push(local_only=True)
             case "4": 
                 console.print("[bold blue]Establishing connection...[/bold blue]")
                 try:
                     run_git("push", capture=False, check=True)
                 except subprocess.CalledProcessError:
                     pass
-            case "5": nuclear_revert()
-            case "6": run_time_machine()
+            case "5": show_delta()
+            case "6": safe_revert_last_commit()
+            case "7": quick_step_back()
+            case "8": discard_local_changes()
+            case "9": nuclear_revert()
+            case "10": run_time_machine()
             case "q": raise SystemExit(0)
             
         Prompt.ask("\n[dim]Press [Enter] to return to dashboard...[/dim]", default="")
