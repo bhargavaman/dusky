@@ -131,7 +131,6 @@ INSTALL_SEQUENCE=(
 #    "U | 255_tldr_update.sh"
 #    "U | 260_spotify.sh"
 #    "U | 265_mouse_button_reverse.sh --right"
-    "U | 280_dusk_clipboard_errands_delete.sh --delete"
     "S | 290_system_services.sh"
 #    "S | 295_initramfs_optimization.py"
     "U | 300_git_config.sh"
