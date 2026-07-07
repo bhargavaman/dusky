@@ -745,8 +745,8 @@ def main() -> Never:
         
         # 1. Working Tree & Staging (Cyan)
         console.print(Panel(
-            "[bold cyan]1[/bold cyan] │ Sync All (via .git_dusky_list)\n"
-            "[bold cyan]2[/bold cyan] │ Sync Specific File(s)\n"
+            "[bold cyan]1[/bold cyan] │ Commit All (Local & Remote)\n"
+            "[bold cyan]2[/bold cyan] │ Commit Specific File(s) (Local & Remote)\n"
             "[bold cyan]5[/bold cyan] │ View Delta Differential",
             title="[bold cyan]  WORKING TREE & STATUS (Local File Operations)[/bold cyan]",
             border_style="cyan",
@@ -756,7 +756,7 @@ def main() -> Never:
         
         # 2. Commits & Sync (Green)
         console.print(Panel(
-            "[bold green]3[/bold green] │ Sync All (Local Only)\n"
+            "[bold green]3[/bold green] │ Commit All (Local Only)\n"
             "[bold green]4[/bold green] │ Push Existing Local Commits to Remote",
             title="[bold green]  COMMITS & SYNC (Save to Local / Remote)[/bold green]",
             border_style="green",
