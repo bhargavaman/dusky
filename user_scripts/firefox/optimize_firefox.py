@@ -407,20 +407,20 @@ def get_optimization_prefs(ram_gb: float, cache_mode: CacheMode) -> dict[str, st
     shared_ipc = 8
     isolated_ipc = 32
     ext_ipc = 1
-    unload_low_mem = "true"
+    unload_low_mem = True
 
     if ram_gb > 30.0:
         logger.info(f"System has [bold cyan]{ram_gb:.1f} GB[/] RAM (> 30 GB). Enabling [bold green]Ultra high-performance[/] profile.")
         capacity_kb = 4194304  # 4 GB
         shared_ipc = 32
         isolated_ipc = 99
-        unload_low_mem = "false"
+        unload_low_mem = False
     elif ram_gb >= 16.0:
         logger.info(f"System has [cyan]{ram_gb:.1f} GB[/] RAM. Enabling [green]High-performance[/] profile.")
         capacity_kb = 2097152  # 2 GB
         shared_ipc = 16
         isolated_ipc = 64
-        unload_low_mem = "false"
+        unload_low_mem = False
     else:
         logger.info(f"System has [cyan]{ram_gb:.1f} GB[/] RAM (< 16 GB). Scaling to Moderate-performance profile.")
 
