@@ -79,7 +79,7 @@
 #     "U | ignore-fail | 150_wallpapers_download.sh --quiet"
 #
 #  5. Sudo script allowed to fail:
-#     "S | ignore-fail | 085_warp.sh --connect"
+#     "S | ignore-fail | 085_warp.py --connect"
 #
 #  6. Legacy format (still supported by the parser):
 #     "U | true 150_wallpapers_download.sh"
@@ -221,7 +221,7 @@ declare -ra UPDATE_SEQUENCE=(
 #    "S | 070_openssh_setup.sh"
 #    "U | 075_changing_shell_zsh.sh"
 #    "S | 080_aur_paru_fallback_yay.sh"
-#    "S | 085_warp.sh"
+#    "S | 085_warp.py"
 #    "U | 090_paru_packages_optional.sh"
 #    "S | 095_battery_limiter_again_dusk.sh"
 #    "U | 100_paru_packages.sh"

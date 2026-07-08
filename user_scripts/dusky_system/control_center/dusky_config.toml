@@ -2676,7 +2676,7 @@ icon = "network-vpn-symbolic"
 button_text = "Setup"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class 085_warp.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/085_warp.sh\""
+command = "kitty --class 085_warp.py --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/085_warp.py\""
 terminal = false
 
 [[pages.layout.items]]

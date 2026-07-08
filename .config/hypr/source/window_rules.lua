@@ -1304,10 +1304,10 @@ hl.window_rule({
     center = true
 })
 
---- 085_warp.sh script ---
+--- 085_warp.py script ---
 hl.window_rule({
-    name = "085_warp.sh",
-    match = { class = "^(085_warp.sh)$" },
+    name = "085_warp.py",
+    match = { class = "^(085_warp.py)$" },
     float = true,
     size = {567, 658},
     center = true
