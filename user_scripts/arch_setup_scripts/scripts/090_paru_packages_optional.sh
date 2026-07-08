@@ -681,7 +681,7 @@ detect_aur_helper() {
 
 run_pkg_cmd() {
     # If not connected to a TTY (like when run via orchestrator), use 'script' to trick paru/pacman into showing the progress bar
-    if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1; then
+    if ! [[ -t 1 ]] && command -v script >/dev/null 2>&1 && script -q -e -c "sudo -n -v" /dev/null &>/dev/null; then
         local cmd_str
         printf -v cmd_str '%q ' "$@"
         script -q -e -c "$cmd_str" /dev/null
