@@ -1,430 +1,372 @@
 #!/usr/bin/env python3
-# -----------------------------------------------------------------------------
-# Arch / Hyprland / UWSM GPU Configurator (v2026.08-Golden-Python-V2)
-# -----------------------------------------------------------------------------
-# Role:       System Architect
-# Objective:  Topology selection + Active Dependency Management + Safe AQ mapping.
-# Constraint: Safe for both Live/Chroot environments and active Host sessions.
-# Standards:  Python 3.14+, Sysfs Parsing, Atomic Writes, Idempotency.
-# -----------------------------------------------------------------------------
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+"""
+133_uwsm_gpu_env.py
+Arch / Hyprland GPU Configurator -> ~/.config/hypr/gpu.lua
+v2026.07-Offline-ISO | Python 3.14.6 | systemd 261 | Hyprland 0.55.4+
 
-import argparse
-import dataclasses
-import os
-import pwd
-import re
-import shlex
-import shutil
-import subprocess
-import sys
-import tempfile
+Adapts 035_configure_hyprland_gpu.py for offline ISO installation environment.
+- Writes to ~/.config/hypr/gpu.lua (pure Lua hl.env format)
+- Autodetects target users (chroot / live environment compatible)
+- Idempotent atomic writes with correct system user ownership (chown)
+- Handles --user and --auto arguments for zero-touch installer sequence
+"""
+
+# ── 1. Rich bootstrap ──
+import os, sys, shutil, subprocess
+try:
+    import rich # noqa: F401
+except ImportError:
+    pm = shutil.which("pacman")
+    if not pm:
+        print("pacman not found, install python-rich manually"); sys.exit(1)
+    cmd = [pm, "-S", "--needed", "--noconfirm", "python-rich"]
+    if os.geteuid() != 0 and shutil.which("sudo"):
+        subprocess.run(["sudo", "-v"], check=False)
+        cmd = ["sudo"] + cmd
+    print(f"[BOOTSTRAP] Installing python-rich: {' '.join(cmd)}")
+    subprocess.run(cmd, check=True)
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+import argparse, glob, pwd, re, tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
-# ANSI Escape Sequences for terminal styling
-class Log:
-    BOLD = '\033[1m'
-    BLUE = '\033[34m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    RED = '\033[31m'
-    RESET = '\033[0m'
+from rich.console import Console
+from rich.table import Table
+from rich.prompt import Prompt
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
-    @classmethod
-    def info(cls, msg: str): print(f"{cls.BLUE}{cls.BOLD}[INFO]{cls.RESET} {msg}")
-    @classmethod
-    def ok(cls, msg: str):   print(f"{cls.GREEN}{cls.BOLD}[OK]{cls.RESET} {msg}")
-    @classmethod
-    def warn(cls, msg: str): print(f"{cls.YELLOW}{cls.BOLD}[WARN]{cls.RESET} {msg}", file=sys.stderr)
-    @classmethod
-    def err(cls, msg: str):  print(f"{cls.RED}{cls.BOLD}[ERROR]{cls.RESET} {msg}", file=sys.stderr)
+console = Console()
+try:
+    import pyudev
+    HAS_PYUDEV = True
+except ImportError:
+    HAS_PYUDEV = False
 
-@dataclasses.dataclass
-class GPUCard:
-    dev_node: Path
-    vendor_id: str
-    vendor_label: str
-    name: str
-    pci_address: str
-    by_path: Path
-    boot_vga: bool
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Configure UWSM GPU environment variables.")
-    parser.add_argument("--auto", action="store_true", help="Automatically select the best primary GPU")
-    parser.add_argument("--user", type=str, help="Specific target username (optional, defaults to auto-discovering all human users)")
-    return parser.parse_args()
-
-def check_deps():
-    if shutil.which("lspci"):
-        return
-
-    Log.warn("Missing dependency detected: pciutils")
-    Log.info("Attempting to install via pacman...")
-
+# ── 2. Privilege & package helpers ──
+def ensure_sudo() -> bool:
+    if os.geteuid() == 0: return True
+    if not shutil.which("sudo"): return False
     try:
-        if os.geteuid() == 0:
-            subprocess.run(['pacman', '-S', '--needed', '--noconfirm', 'pciutils'], check=True)
-        else:
-            if not shutil.which("sudo"):
-                Log.err("sudo is required to install missing packages.")
-                sys.exit(1)
-            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'pciutils'], check=True)
-        Log.ok("Dependencies installed successfully.")
+        subprocess.run(["sudo", "-v"], check=True)
+        return True
     except subprocess.CalledProcessError:
-        Log.err("Failed to install required dependencies. Aborting.")
-        sys.exit(1)
+        return False
 
-def get_vendor_label(vendor_id: str) -> str:
-    match vendor_id.lower():
-        case "0x8086": return "Intel"
-        case "0x1002": return "AMD"
-        case "0x10de": return "NVIDIA"
-        case _: return f"Vendor {vendor_id}"
-
-def get_pci_name(pci_address: str) -> str:
-    try:
-        result = subprocess.run(['lspci', '-s', pci_address], capture_output=True, text=True, check=True)
-        # Matches the textual description after the PCI bus address
-        match = re.search(r'^[0-9a-fA-F:\.]+ [^:]+: (.*)', result.stdout)
-        if match:
-            return match.group(1).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-    return "Unknown PCI Device"
-
-def find_by_path_link(card_node: Path, pci_address: str) -> Path:
-    by_path_dir = Path("/dev/dri/by-path")
-    if by_path_dir.is_dir():
-        for link in by_path_dir.iterdir():
-            if link.name.startswith(f"pci-{pci_address}") and link.name.endswith("card"):
-                try:
-                    if link.resolve() == card_node:
-                        return link
-                except OSError:
-                    continue
-    return Path(f"/dev/dri/by-path/pci-{pci_address}-card")
-
-def detect_topology() -> list[GPUCard]:
-    Log.info("Scanning GPU topology via sysfs...")
-    drm_path = Path("/sys/class/drm")
-    cards: list[GPUCard] = []
-
-    if not drm_path.exists():
-        Log.err("No /sys/class/drm directory found. Is sysfs mounted? (Are you outside arch-chroot without mounts?)")
-        sys.exit(1)
-
-    for card_dir in drm_path.iterdir():
-        if not re.match(r'^card\d+$', card_dir.name):
-            continue
-
-        dev_node = Path(f"/dev/dri/{card_dir.name}")
-        if not dev_node.exists():
-            continue
-
-        try:
-            sys_device_path = (card_dir / "device").resolve(strict=True)
-        except OSError:
-            Log.warn(f"Skipping unreadable DRM device path: {card_dir}")
-            continue
-
-        # Walk up device path to find a directory containing the PCI 'vendor' file
-        pci_dir: Optional[Path] = None
-        current = sys_device_path
-        while current != current.parent:
-            if (current / "vendor").is_file():
-                pci_dir = current
-                break
-            current = current.parent
-
-        if pci_dir is None:
-            Log.warn(f"Skipping card with no vendor info: {card_dir}")
-            continue
-
-        try:
-            vendor_id = (pci_dir / "vendor").read_text().strip().lower()
-        except OSError:
-            Log.warn(f"Skipping card with unreadable vendor file: {card_dir}")
-            continue
-
-        pci_address = pci_dir.name
-
-        boot_vga = False
-        boot_vga_file = pci_dir / "boot_vga"
-        if boot_vga_file.is_file():
-            try:
-                boot_vga = boot_vga_file.read_text().strip() == "1"
-            except OSError:
-                pass
-        else:
-            boot_vga_file = sys_device_path / "boot_vga"
-            if boot_vga_file.is_file():
-                try:
-                    boot_vga = boot_vga_file.read_text().strip() == "1"
-                except OSError:
-                    pass
-
-        by_path = find_by_path_link(dev_node, pci_address)
-        human_name = get_pci_name(pci_address)
-        vendor_label = get_vendor_label(vendor_id)
-
-        cards.append(GPUCard(
-            dev_node=dev_node,
-            vendor_id=vendor_id,
-            vendor_label=vendor_label,
-            name=human_name,
-            pci_address=pci_address,
-            by_path=by_path,
-            boot_vga=boot_vga
-        ))
-
-    if not cards:
-        Log.err("No usable GPUs detected in /sys/class/drm.")
-        sys.exit(1)
-    
-    # Guarantee consistent PCI sorting ordering exactly mimicking bash `sort`
-    cards.sort(key=lambda c: c.pci_address)
-    return cards
-
-def determine_default_primary(cards: list[GPUCard]) -> tuple[GPUCard, str]:
-    boot_cards = [c for c in cards if c.boot_vga]
-    
-    match len(boot_cards):
-        case 0:
-            return cards[0], "No boot_vga GPU reported; defaulting to lowest PCI address"
-        case 1:
-            return boot_cards[0], "Primary boot_vga hardware mapping"
-        case _:
-            # Returns [0] here because `cards` (and therefore `boot_cards`) is pre-sorted by PCI Address
-            return boot_cards[0], "Multiple boot_vga GPUs reported; defaulting to lowest PCI address"
-
-def print_topology(cards: list[GPUCard], default_card: GPUCard):
-    print(f"\n{Log.BOLD}--- GPU Topology Detected ---{Log.RESET}")
-    for card in cards:
-        markers = []
-        if card.boot_vga:
-            markers.append(f"{Log.YELLOW}[boot_vga]{Log.RESET}")
-        if card is default_card:
-            markers.append(f"{Log.GREEN}[default]{Log.RESET}")
-        
-        marker_str = " ".join(markers)
-        if marker_str:
-            marker_str = " " + marker_str
-
-        print(f"  • {Log.BOLD}{card.dev_node}{Log.RESET}{marker_str}")
-        print(f"      ├─ Name: {card.name}")
-        print(f"      ├─ PCI : {card.pci_address}")
-        print(f"      └─ Link: {card.by_path if card.by_path.exists() else 'unavailable'}")
-    print()
-
-def select_primary_gpu(cards: list[GPUCard], auto_mode: bool) -> tuple[GPUCard, str]:
-    default_card, default_reason = determine_default_primary(cards)
-    
-    if len(cards) == 1:
-        Log.info(f"Single GPU detected; using {default_card.dev_node}.")
-        return default_card, "single"
-        
-    print_topology(cards, default_card)
-    
-    if auto_mode:
-        Log.info(f"Auto-selected primary GPU based on: {default_reason}.")
-        return default_card, "auto"
-
-    default_index = cards.index(default_card) + 1
-    
-    print("Select the GPU that should drive Hyprland.\n")
-    for idx, card in enumerate(cards, start=1):
-        marker = f" {Log.GREEN}[default]{Log.RESET}" if card is default_card else ""
-        print(f"  {idx}) {card.dev_node} ({card.vendor_label}){marker}")
-        print(f"      {card.name}")
-    print()
-
-    try:
-        choice_str = input(f"Enter choice [{default_index}]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        Log.warn("Input closed; using default selection.")
-        choice_str = ""
-
-    if not choice_str:
-        choice_idx = default_index
-    elif choice_str.isdigit() and 1 <= int(choice_str) <= len(cards):
-        choice_idx = int(choice_str)
+def pacman_install(pkgs: List[str]) -> bool:
+    if not pkgs: return True
+    pm = shutil.which("pacman")
+    if not pm:
+        console.print("[red]pacman not found[/]"); return False
+    if os.geteuid() != 0:
+        if not ensure_sudo(): return False
+        cmd = ["sudo", pm, "-S", "--needed", "--noconfirm"] + pkgs
     else:
-        Log.warn("Invalid selection. Using default.")
-        choice_idx = default_index
+        cmd = [pm, "-S", "--needed", "--noconfirm"] + pkgs
+    console.print(f"[yellow]Installing {', '.join(pkgs)}...[/]")
+    try: subprocess.run(cmd, check=True); return True
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]pacman failed: {e}[/]"); return False
 
-    selected = cards[choice_idx - 1]
-    Log.info(f"Selected primary GPU: {selected.dev_node} ({selected.name}).")
-    return selected, "manual"
+def ensure_bin(bin_name: str, pkg: str) -> bool:
+    if shutil.which(bin_name): return True
+    return pacman_install([pkg])
 
-def build_aq_runtime_string(primary: GPUCard, all_cards: list[GPUCard]) -> str:
-    # Ordered array where Primary is evaluated first by Aquamarine
-    ordered_cards = [primary] + [c for c in all_cards if c is not primary]
-    parts = []
-    
-    for card in ordered_cards:
-        pci_address = card.pci_address
-        fallback = f"'{card.dev_node}'"
-        # Generates a dynamic shell expansion that resolves the by-path link at runtime
-        # with a fallback to the static node path if no by-path link exists.
-        parts.append(
-            f'$(for dev in /dev/dri/by-path/pci-{pci_address}*card; do '
-            f'[ -e "$dev" ] && readlink -f "$dev" && break; '
-            f'done || echo {fallback})'
-        )
-            
-    return ":".join(parts)
+def ensure_py_module(mod: str, pkg: str) -> bool:
+    try: __import__(mod); return True
+    except ImportError:
+        if pacman_install([pkg]):
+            try: __import__(mod); return True
+            except ImportError: return False
+        return False
 
 def get_target_users(target_user: Optional[str]) -> list[pwd.struct_passwd]:
     if target_user:
         try:
             return [pwd.getpwnam(target_user)]
         except KeyError:
-            Log.err(f"Target user '{target_user}' not found on the system.")
+            console.print(f"[red]Target user '{target_user}' not found on the system.[/]")
             sys.exit(1)
     
     if os.geteuid() != 0:
-        # Running as a normal user (outside chroot), configure just for the current user
         return [pwd.getpwuid(os.getuid())]
         
-    # Running as root without a specific user: target all human users (UID >= 1000)
     users = []
     for p in pwd.getpwall():
-        # Standard Arch Linux human users are 1000-59999, exclude system/nobody accounts
-        if 1000 <= p.pw_uid < 60000 and Path(p.pw_dir).is_dir():
+        if 1000 <= p.pw_uid < 60000 and Path(p.pw_dir).is_dir() and p.pw_name not in ("nobody", "greeter"):
             users.append(p)
             
     if not users:
-        Log.warn("No regular human users (UID >= 1000) found. Falling back to root configuration.")
+        console.print("[yellow]No regular human users (UID >= 1000) found. Falling back to root.[/]")
         return [pwd.getpwuid(0)]
         
     return users
 
-def ensure_dir_with_ownership(path: Path, uid: int, gid: int):
-    # Generates only missing directories up the tree and enforces exact system user ownership
-    dirs_to_chown = []
-    current = path
-    while not current.exists():
-        dirs_to_chown.append(current)
-        current = current.parent
-        
-    path.mkdir(parents=True, exist_ok=True)
-    for d in reversed(dirs_to_chown):
-        os.chown(d, uid, gid)
+# ── 3. Data model ──
+VENDOR_MAP = {
+    "0x8086":"Intel","0x1002":"AMD","0x10de":"NVIDIA",
+    "0x1af4":"RedHat VirtIO","0x15ad":"VMware","0x80ee":"VirtualBox",
+    "0x1234":"QEMU Bochs","0x1414":"Hyper-V","0x1b36":"RedHat QXL","0x1013":"Cirrus",
+}
+@dataclass(slots=True)
+class Gpu:
+    dev_node: str; pci: str; vendor_id: str; vendor_label: str
+    name: str; boot_vga: int; driver: str; by_path: str; is_real: bool
 
-def generate_config(primary: GPUCard, all_cards: list[GPUCard], mode: str, args: argparse.Namespace):
-    aq_runtime_string = build_aq_runtime_string(primary, all_cards)
-    
-    dri_dir = Path("/usr/lib/dri")
-    vaapi_lines = []
-    
-    match primary.vendor_id:
-        case "0x8086":
-            vaapi_lines.append("# Intel Media Session")
-            if (dri_dir / "iHD_drv_video.so").exists():
-                vaapi_lines.append("export LIBVA_DRIVER_NAME=iHD")
-            elif (dri_dir / "i965_drv_video.so").exists():
-                vaapi_lines.append("export LIBVA_DRIVER_NAME=i965")
-        case "0x1002":
-            vaapi_lines.append("# AMD Media Session")
-            if (dri_dir / "radeonsi_drv_video.so").exists():
-                vaapi_lines.append("export LIBVA_DRIVER_NAME=radeonsi")
-        case "0x10de":
-            # Chroot execution means we check for installed user-space libraries directly
-            # rather than querying sysfs/lsmod which only map the host's kernel status.
-            if Path("/usr/lib/gbm/nvidia-drm_gbm.so").exists():
-                vaapi_lines.append("# NVIDIA Primary Session (Proprietary)")
-                vaapi_lines.append("export GBM_BACKEND=nvidia-drm")
-                vaapi_lines.append("export __GLX_VENDOR_LIBRARY_NAME=nvidia")
-                if (dri_dir / "nvidia_drv_video.so").exists():
-                    vaapi_lines.append("export LIBVA_DRIVER_NAME=nvidia")
-            else:
-                vaapi_lines.append("# NVIDIA Primary Session (Nouveau)")
-                vaapi_lines.append("export MESA_LOADER_DRIVER_OVERRIDE=nouveau")
-                if (dri_dir / "nouveau_drv_video.so").exists():
-                    vaapi_lines.append("export LIBVA_DRIVER_NAME=nouveau")
+def sh(cmd: List[str]) -> str:
+    try: return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+    except: return ""
 
-    config_content = [
-        "# -----------------------------------------------------------------",
-        f"# UWSM GPU Config | Mode: {mode.upper()}",
-        f"# Primary DRM node: {primary.dev_node}",
-        f"# Primary GPU: {primary.vendor_label} | {primary.name} | {primary.pci_address}",
-        "# -----------------------------------------------------------------",
-        "export ELECTRON_OZONE_PLATFORM_HINT=wayland",
-        "export MOZ_ENABLE_WAYLAND=1",
-        "",
-        "# Hyprland / Aquamarine GPU priority",
-        "# Resolved dynamically at session start to avoid colon-parsing bugs.",
-        f'export AQ_DRM_DEVICES="{aq_runtime_string}"',
-        ""
-    ]
-    
-    if vaapi_lines:
-        config_content.extend(vaapi_lines)
-        config_content.append("")
-        
-    config_text = "\n".join(config_content)
-    
-    target_users = get_target_users(args.user)
-    output_files = []
+def vendor_label(v: str) -> str:
+    return VENDOR_MAP.get(v.lower(), f"Vendor {v}")
 
-    for user in target_users:
-        uwsm_dir = Path(user.pw_dir) / ".config" / "uwsm"
-        env_dir = uwsm_dir / "env.d"
-        output_file = env_dir / "gpu"
-        
-        ensure_dir_with_ownership(env_dir, user.pw_uid, user.pw_gid)
-        
-        # Atomic write pattern mapping 1-to-1 against bash standard tmp generation rules
-        fd, tmp_path_str = tempfile.mkstemp(dir=env_dir, prefix=".gpu.")
-        tmp_path = Path(tmp_path_str)
-        
+def pci_name(pci: str) -> str:
+    if shutil.which("lspci"):
+        out=sh(["lspci","-s",pci])
+        if out:
+            m=re.match(r"^[0-9a-fA-F:.]+ [^:]+: (.+)$", out)
+            return m.group(1) if m else out
+    lp=Path(f"/sys/bus/pci/devices/{pci}/label")
+    if lp.exists():
+        try: return lp.read_text().strip()
+        except: pass
+    return "Unknown PCI Device"
+
+def find_vendor_dir(start: Path) -> Optional[Path]:
+    cur=start.resolve()
+    for _ in range(10):
+        if (cur/"vendor").exists(): return cur
+        if cur==cur.parent: break
+        cur=cur.parent
+    return None
+
+# ── 4. Topology discovery ──
+def detect() -> List[Gpu]:
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as prog:
+        prog.add_task("Scanning /sys/class/drm/card* + udev", total=None)
+        raw=[]
+        for s in glob.glob("/sys/class/drm/card[0-9]*"):
+            p=Path(s)
+            if not re.fullmatch(r"card\d+", p.name): continue
+            dev=f"/dev/dri/{p.name}"
+            if not Path(dev).exists(): continue
+            try: sys_dev=Path(os.path.realpath(p/"device"))
+            except: continue
+            vdir=find_vendor_dir(sys_dev)
+            if not vdir:
+                drv="unknown"
+                try: drv=Path(os.path.realpath(sys_dev/"driver")).name
+                except: pass
+                raw.append(Gpu(dev,f"platform:{p.name}","0x0000","Platform",f"Platform {p.name}",0,drv,"unavailable",drv!="simpledrm"))
+                continue
+            try: vid=vdir.joinpath("vendor").read_text().strip().lower()
+            except: continue
+            pci=vdir.name
+            boot=0
+            for bp in [vdir/"boot_vga", sys_dev/"boot_vga"]:
+                if bp.exists():
+                    try: boot=int(bp.read_text().strip())
+                    except: boot=0
+                    break
+            drv="unknown"
+            for d in [vdir/"driver", sys_dev/"driver"]:
+                if d.exists():
+                    try: drv=Path(os.path.realpath(d)).name
+                    except: pass
+                    break
+            by="unavailable"
+            for l in glob.glob(f"/dev/dri/by-path/pci-{pci}*card"):
+                if Path(l).exists(): by=l; break
+            raw.append(Gpu(dev,pci,vid,vendor_label(vid),pci_name(pci),boot,drv,by,drv!="simpledrm"))
+
+    if not raw:
+        console.print("[red]No DRM nodes - check KMS or run after first boot[/]"); raise SystemExit(1)
+
+    if HAS_PYUDEV:
         try:
-            with os.fdopen(fd, 'w') as f:
-                f.write(config_text)
-                
-            os.chmod(tmp_path, 0o644)
-            os.chown(tmp_path, user.pw_uid, user.pw_gid)
-            
-            # Matches idempotent cmp testing
-            if output_file.exists() and output_file.read_text() == config_text:
-                tmp_path.unlink()
-                Log.ok(f"Config is strictly optimal and up to date for {user.pw_name}: {output_file}")
-            else:
-                shutil.move(tmp_path, output_file)
-                Log.ok(f"Config generated and securely written for {user.pw_name}: {output_file}")
-                
-            output_files.append(output_file)
-        except Exception as e:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            Log.err(f"Failed writing configuration for {user.pw_name}: {e}")
-            
-    if not output_files:
-        Log.err("No configuration files were written.")
-        sys.exit(1)
-        
-    return output_files[0]
+            ctx=pyudev.Context()
+            for d in ctx.list_devices(subsystem='drm', DEVTYPE='drm_minor'):
+                if not d.sys_name.startswith("card"): continue
+                node=d.device_node
+                idp=d.get("ID_PATH")
+                if idp and node:
+                    cand=f"/dev/dri/by-path/{idp}-card"
+                    for c in raw:
+                        if c.dev_node==node and Path(cand).exists(): c.by_path=cand
+        except Exception: pass
 
-def preview_config(output_file: Path):
-    Log.info("Previewing active config parameters:")
-    print("-------------------------------------")
-    if output_file.exists():
-        for line in output_file.read_text().splitlines():
-            if any(key in line for key in ["AQ_DRM_DEVICES", "GBM_BACKEND", "__GLX_VENDOR_LIBRARY_NAME", "MESA_LOADER_DRIVER_OVERRIDE", "LIBVA_DRIVER_NAME", "Mode:", "Primary DRM node:", "Primary GPU:"]):
-                print(line)
-    print("-------------------------------------")
+    real=[c for c in raw if c.is_real]
+    return sorted(real if real else raw, key=lambda c: c.pci)
+
+def default_gpu(cards: List[Gpu]):
+    boots=[c for c in cards if c.boot_vga==1]
+    if not boots: return cards[0], "No boot_vga, lowest PCI"
+    if len(boots)==1: return boots[0], "boot_vga"
+    return sorted(boots, key=lambda c: c.pci)[0], "Multiple boot_vga, lowest PCI"
+
+def select_gpu(cards: List[Gpu], auto: bool):
+    def_card, reason = default_gpu(cards)
+    tbl=Table(title=f"GPU Topology - default {def_card.dev_node} ({reason})", show_header=True, header_style="bold magenta")
+    for h in ["#","Node","Vendor","Name","PCI","Driver","Flags"]: tbl.add_column(h)
+    for i,c in enumerate(cards,1):
+        flags=[]
+        if c.boot_vga: flags.append("[yellow]boot_vga[/]")
+        if c.dev_node==def_card.dev_node: flags.append("[green]default[/]")
+        if not c.is_real: flags.append("[dim]simpledrm/virt[/]")
+        tbl.add_row(str(i),c.dev_node,c.vendor_label,c.name[:50],c.pci,c.driver," ".join(flags))
+    console.print(tbl)
+    if len(cards)==1 or auto or not os.isatty(0):
+        return def_card, "auto" if auto else "single"
+    idx=str(cards.index(def_card)+1)
+    ans=Prompt.ask("Primary GPU", choices=[str(i) for i in range(1,len(cards)+1)], default=idx)
+    try: return cards[int(ans)-1], "manual"
+    except: return def_card, "manual"
+
+# ── 5. VA-API probe ──
+def probe_drivers():
+    found={}
+    DRI_DIRS = [Path("/usr/lib/dri"), Path("/usr/lib64/dri")]
+    for k in ["nvidia","nouveau","iHD","i965","radeonsi"]:
+        name = f"{k}_drv_video.so" if k in ("iHD","i965") else f"{k}_drv_video.so" if k!="radeonsi" else "radeonsi_drv_video.so"
+        if k=="radeonsi": name="radeonsi_drv_video.so"
+        found[k]=any((d/name).exists() for d in DRI_DIRS)
+    return found
+
+# ── 6. Lua generation ──
+def gen_lua(primary: Gpu, ordered: List[Gpu], mode: str) -> str:
+    pr=probe_drivers()
+    L=[]
+    L.append("-- -----------------------------------------------------------------")
+    L.append(f"-- Hyprland GPU | Mode: {mode.upper()} | Primary: {primary.dev_node}")
+    L.append(f"-- GPU: {primary.vendor_label} | {primary.name} | {primary.pci} | drv:{primary.driver}")
+    L.append("-- Gen: Python 3.14.6 + Rich + pyudev | systemd 261 | Hyprland 0.55.4+ Lua")
+    L.append("-- DRM nodes shift per reboot - resolved via stable by-path")
+    L.append("-- -----------------------------------------------------------------")
+    L.append("local function resolve_card(pci_address, fallback)")
+    L.append(" local cmd = \"for d in /dev/dri/by-path/pci-\"..pci_address..\"*card; do [ -e \\\"$d\\\" ] && readlink -f \\\"$d\\\" 2>/dev/null && break; done\"")
+    L.append(" local h = io.popen(cmd)")
+    L.append(" if h then")
+    L.append(" local path = h:read(\"*l\")")
+    L.append(" h:close()")
+    L.append(" if path and path ~= \"\" then return path end")
+    L.append(" end")
+    L.append(" return fallback")
+    L.append("end")
+    L.append("")
+    parts=[]
+    for c in ordered:
+        if c.pci.startswith("platform:"): parts.append(f'"{c.dev_node}"')
+        else: parts.append(f'resolve_card("{c.pci}", "{c.dev_node}")')
+    L.append(f'hl.env("AQ_DRM_DEVICES", { ".. \":\".. ".join(parts) })')
+    L.append("")
+    vid=primary.vendor_id.lower(); drv=primary.driver.lower(); vlabel=primary.vendor_label.lower()
+    match vid:
+        case "0x8086" | _ if "intel" in vlabel:
+            L.append("-- Intel")
+            if pr["iHD"]: L.append('hl.env("LIBVA_DRIVER_NAME", "iHD")')
+            elif pr["i965"]: L.append('hl.env("LIBVA_DRIVER_NAME", "i965")')
+        case "0x1002" | _ if "amd" in vlabel or "radeon" in primary.name.lower() or "amd" in primary.name.lower():
+            L.append("-- AMD")
+            if pr["radeonsi"]: L.append('hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
+        case "0x10de":
+            tgt=drv
+            if tgt not in ("nvidia","nouveau") and Path("/usr/lib/gbm/nvidia-drm_gbm.so").exists():
+                tgt="nvidia"
+            if tgt=="nvidia":
+                L.append("-- NVIDIA Proprietary")
+                L.append('hl.env("GBM_BACKEND", "nvidia-drm")')
+                L.append('hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")')
+                if pr["nvidia"]: L.append('hl.env("LIBVA_DRIVER_NAME", "nvidia")')
+            elif tgt=="nouveau":
+                L.append("-- NVIDIA Nouveau")
+                L.append('hl.env("MESA_LOADER_DRIVER_OVERRIDE", "nouveau")')
+                if pr["nouveau"]: L.append('hl.env("LIBVA_DRIVER_NAME", "nouveau")')
+            else:
+                L.append(f"-- NVIDIA unknown driver {drv}")
+        case _:
+            if pr["radeonsi"] and "amd" in primary.name.lower():
+                L.append('hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
+            L.append(f"-- Generic/VM ({primary.vendor_label}) - by-path only")
+    L.append("")
+    return "\n".join(L)
+
+def atomic_write(p: Path, data: str, uid: int = -1, gid: int = -1):
+    # Ensure all parent directories exist and are owned by target user
+    if uid >= 0 and gid >= 0:
+        dirs = []
+        cur = p.parent
+        while not cur.exists():
+            dirs.append(cur)
+            cur = cur.parent
+        p.parent.mkdir(parents=True, exist_ok=True)
+        for d in reversed(dirs):
+            try: os.chown(d, uid, gid)
+            except: pass
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        
+    if p.exists():
+        try:
+            if p.read_text(encoding="utf-8") == data:
+                if uid >= 0 and gid >= 0:
+                    try: os.chown(p, uid, gid)
+                    except: pass
+                console.print(f"[green][OK] Up to date: {p}[/]"); return
+        except: pass
+        
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".gpu.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)
+        if uid >= 0 and gid >= 0:
+            try: os.chown(tmp, uid, gid)
+            except: pass
+        Path(tmp).replace(p)
+        console.print(f"[green][OK] Atomically written {p}[/]")
+    finally:
+        try: Path(tmp).unlink(missing_ok=True)
+        except: pass
 
 def main():
-    args = parse_args()
-    Log.info("Starting Elite DevOps GPU Configuration (Python V2)...")
-    check_deps()
-    cards = detect_topology()
-    primary_card, mode = select_primary_gpu(cards, args.auto)
-    output_file = generate_config(primary_card, cards, mode, args)
-    preview_config(output_file)
-    Log.ok("Done. Please restart your UWSM session (or complete installation).")
+    ap = argparse.ArgumentParser(description="Generate config.lua for user environments")
+    ap.add_argument("--auto", action="store_true", help="Non-interactive")
+    ap.add_argument("--user", type=str, default=None, help="Target username (optional)")
+    ap.add_argument("--output", type=Path, default=None, help="Specific output file path")
+    args = ap.parse_args()
+
+    # Ensure binary + python deps
+    ensure_bin("lspci", "pciutils")
+    if not HAS_PYUDEV:
+        ensure_py_module("pyudev", "python-pyudev")
+
+    console.print(Panel.fit(f"Hyprland GPU Configurator (ISO Mode)\nPython {'.'.join(map(str, sys.version_info[:3]))} | Arch | Hyprland 0.55.4+", style="bold cyan"))
+
+    cards = detect()
+    primary, mode = select_gpu(cards, args.auto)
+    ordered = [primary] + [c for c in cards if c.dev_node != primary.dev_node]
+    lua = gen_lua(primary, ordered, mode)
+
+    if args.output:
+        atomic_write(args.output, lua)
+    else:
+        target_users = get_target_users(args.user)
+        for user in target_users:
+            out = Path(user.pw_dir) / ".config" / "hypr" / "gpu.lua"
+            atomic_write(out, lua, uid=user.pw_uid, gid=user.pw_gid)
+
+    console.print("\n[bold]Preview:[/]")
+    for l in lua.splitlines():
+        if any(k in l for k in ("AQ_DRM", "LIBVA", "GBM_", "__GLX", "MESA_")):
+            console.print(f" {l}")
 
 if __name__ == "__main__":
-    main()
+    try: main()
+    except KeyboardInterrupt:
+        console.print("\n[red]Aborted[/]"); raise SystemExit(130)
