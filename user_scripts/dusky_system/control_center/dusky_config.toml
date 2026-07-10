@@ -1999,13 +1999,13 @@ title = "Environment Variables"
 type = "button"
 [pages.layout.items.layout.items.properties]
 title = "Auto Configure GPU"
-description = "Detect and set GPU vars (UWSM)"
+description = "Detect and set GPU vars (Hyprland)"
 icon = "preferences-desktop-display-symbolic"
 style = "suggested"
 button_text = "Run"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "kitty --class 000_configure_uwsm_gpu.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/035_configure_uwsm_gpu.sh\""
+command = "kitty --class 035_configure_hyprland_gpu.py --hold sh -c \"python3 $HOME/user_scripts/arch_setup_scripts/scripts/035_configure_hyprland_gpu.py\""
 
 [[pages.layout.items.layout]]
 type = "section"

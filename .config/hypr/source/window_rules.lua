@@ -750,9 +750,9 @@ hl.window_rule({
 
 --- dusky gpu env setter ---
 hl.window_rule({
-    name = "000_configure_uwsm_gpu.sh",
+    name = "035_configure_hyprland_gpu.py",
     match = {
-        class = "^(000_configure_uwsm_gpu\\.sh)$"
+        class = "^(035_configure_hyprland_gpu\\.py)$"
         -- title = "^(sh)$"
     },
     float = true,
