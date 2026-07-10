@@ -316,3 +316,6 @@ require("source.window_rules")
 -- and rules are already available. Uses globals from default_apps.lua.
 require("source.keybinds")
 
+
+-- gpu 
+pcall(require, "gpu")
