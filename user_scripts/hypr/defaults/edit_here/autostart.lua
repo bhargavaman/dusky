@@ -60,11 +60,15 @@ hl.on("hyprland.start", function()
     -- hl.exec_cmd("$HOME/user_scripts/waybar/toggle_timer_waybar.sh")
     -- hl.exec_cmd("nm-applet")
 
-    -- --- Slow app launch fix -- set systemd vars
+    -- --- Sync variables with D-Bus and Systemd ---
+    -- Must be first, services like mako/hypridle/localsearch live outside Hyprland tree
     hl.exec_cmd("dbus-update-activation-environment --systemd --all")
 
     -- --- Start graphical session target ---
     hl.exec_cmd("systemctl --user start hyprland-session.target")
+
+    -- --- Protect Compositor from OOM Killer ---
+    hl.exec_cmd("sudo choom -n -250 -p $(pgrep -x Hyprland)")
 
     -- EG: dusky glance (uncomment only one at a time)
     -- hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu")
