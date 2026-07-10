@@ -265,19 +265,19 @@ switch_text_editor() {
     if [[ "$t_type" == "1" ]]; then
         local term_lower="${CURRENT_TERMINAL,,}"
         if [[ "$term_lower" == *"kitty"* ]]; then
-            exec_cmd='terminal .. " --class " .. textEditor .. " " .. textEditor'
+            exec_cmd='"dusky-run " .. terminal .. " --class " .. textEditor .. " " .. textEditor'
         elif [[ "$term_lower" == *"foot"* ]]; then
-            exec_cmd='terminal .. " --app-id=" .. textEditor .. " " .. textEditor'
+            exec_cmd='"dusky-run " .. terminal .. " --app-id=" .. textEditor .. " " .. textEditor'
         elif [[ "$term_lower" == *"alacritty"* ]]; then
-            exec_cmd='terminal .. " --class " .. textEditor .. " -e " .. textEditor'
+            exec_cmd='"dusky-run " .. terminal .. " --class " .. textEditor .. " -e " .. textEditor'
         elif [[ "$term_lower" == *"wezterm"* ]]; then
-            exec_cmd='terminal .. " start --class " .. textEditor .. " -- " .. textEditor'
+            exec_cmd='"dusky-run " .. terminal .. " start --class " .. textEditor .. " -- " .. textEditor'
         else
             # Fallback for unknown terminals
-            exec_cmd='terminal .. " " .. textEditor'
+            exec_cmd='"dusky-run " .. terminal .. " " .. textEditor'
         fi
     else 
-        exec_cmd='textEditor'
+        exec_cmd='"dusky-run " .. textEditor'
     fi
 
     new_binds=$(awk -v new_cmd="$exec_cmd" '
