@@ -247,6 +247,7 @@ declare -ra UPDATE_SEQUENCE=(
 #    "S | 200_tlp_config.py"
 #    "S | 205_zram_configuration.sh"
 #    "S | 210_zram_optimize_swappiness.sh"
+    "S | 211_systemd_oomd_zram.py"
 #    "S | 215_powerkey_lid_close_behaviour.sh"
 #    "S | 220_logrotate_optimization.sh"
 #    "S | 225_faillock_timeout.sh"
