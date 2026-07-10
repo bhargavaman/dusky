@@ -85,7 +85,7 @@ INSTALL_SEQUENCE=(
     "S | 110_aur_packages_sudo_services.sh"
     "U | 115_aur_packages_user_services.sh"
     "S | 120_create_mount_directories.sh"
-    "S | 127_pam_keyring_greetd.sh --mode auto"
+    "S | 127_pam_keyring_greetd.py --mode auto"
     "U | 130_copy_service_files.sh"
     "U | 131_dbus_copy_service_files.sh"
     "U | 132_copy_system_services.sh"
