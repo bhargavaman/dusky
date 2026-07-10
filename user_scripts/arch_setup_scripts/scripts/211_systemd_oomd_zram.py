@@ -103,13 +103,13 @@ CRITICAL_USER: Final[tuple[str,...]] = (
     "xdg-desktop-portal-gtk.service","dbus-broker.service","mako.service",
 )
 
-HYPR_APP_WRAPPER: Final[str] = """#!/bin/bash
-# hypr-app - native replacement for `uwsm app` without UWSM
+DUSKY_RUN_WRAPPER: Final[str] = """#!/bin/bash
+# dusky-run - native replacement for `uwsm app` without UWSM
 # Launches apps in app.slice so systemd-oomd can see them, not in session-*.scope
 # NOTE: OOMScoreAdjust is NOT valid for scope units in systemd 261,
 #       so we use choom post-launch to raise the OOM score of spawned apps.
 set -euo pipefail
-if [ $# -eq 0 ]; then echo "usage: hypr-app <cmd> [args...]" >&2; exit 1; fi
+if [ $# -eq 0 ]; then echo "usage: dusky-run <cmd> [args...]" >&2; exit 1; fi
 # Ensure env is imported (idempotent)
 systemctl --user import-environment WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP 2>/dev/null || true
 systemd-run --user --scope \\
@@ -150,7 +150,7 @@ def specs() -> list[FileSpec]:
         FileSpec(dest=Path("/etc/systemd/system/user@.service.d/10-oom-score.conf"), content=USER_MANAGER_SCORE, desc="user@.service -100"),
         FileSpec(dest=Path("/etc/systemd/user.conf.d/10-oom-default.conf"), content=USER_CONF, desc="DefaultOOMScoreAdjust=100"),
         # wrapper
-        FileSpec(dest=Path("/usr/local/bin/hypr-app"), content=HYPR_APP_WRAPPER, mode=0o755, desc="hypr-app launcher"),
+        FileSpec(dest=Path("/usr/local/bin/dusky-run"), content=DUSKY_RUN_WRAPPER, mode=0o755, desc="dusky-run launcher"),
         # NOTE: choom NOPASSWD sudoers rule is managed by 485_sudoers_nopassword.sh
     ]
     for svc in CRITICAL_USER:
@@ -191,6 +191,6 @@ def main() -> None:
     # enable oomd
     for cmd in [["systemctl","unmask","systemd-oomd"],["systemctl","enable","--now","systemd-oomd"],["systemctl","daemon-reload"]]:
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    console.print(Panel.fit(f"[bold green]✔ {upd} files deployed\n✔ hypr-app ready\n✔ Next: re-login, then use: hypr-app kitty[/]", box=box.ROUNDED))
+    console.print(Panel.fit(f"[bold green]✔ {upd} files deployed\n✔ dusky-run ready\n✔ Next: re-login, then use: dusky-run kitty[/]", box=box.ROUNDED))
 
 if __name__=="__main__": main()

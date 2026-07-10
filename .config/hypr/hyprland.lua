@@ -89,7 +89,7 @@ require("source.window_rules")
 require("source.keybinds")
 
 -- 8. AUTOSTART
--- Uses hypr-app wrapper: ensure autostarted apps are run under app.slice
+-- Uses dusky-run wrapper: ensure autostarted apps are run under app.slice
 -- so they can be monitored properly by systemd-oomd.
 require("source.autostart")
 

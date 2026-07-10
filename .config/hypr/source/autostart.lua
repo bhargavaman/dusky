@@ -18,35 +18,35 @@
 --      -- --- SYSTEM ESSENTIALS ---
 --  
 --      -- Gnome Keyring: Stores passwords for apps (VSCode, Chrome, etc.). (recommanded to enable systemd service instead of auto starting with exec-once)
---      -- hl.exec_cmd("hypr-app /usr/bin/gnome-keyring-daemon --start --components=secrets")
+--      -- hl.exec_cmd("dusky-run /usr/bin/gnome-keyring-daemon --start --components=secrets")
 --      -- OR
 --      -- replace the exec-once line with:
---      -- hl.exec_cmd("hypr-app systemctl --user start gnome-keyring-daemon.service")
+--      -- hl.exec_cmd("dusky-run systemctl --user start gnome-keyring-daemon.service")
 --  
 --      -- XHost: Grants root access to the display (needed for GParted/Synaptic to run).
 --      -- make sure to install xorg-xhost beofre uncommenting the following line, sudo pacman -S xorg-xhost
---      -- hl.exec_cmd("hypr-app xhost +si:localuser:root")
+--      -- hl.exec_cmd("dusky-run xhost +si:localuser:root")
 --  
 --      -- --- BACKGROUND SERVICES ---
---      hl.exec_cmd("hypr-app awww-daemon")           -- Wallpaper engine
+--      hl.exec_cmd("dusky-run awww-daemon")           -- Wallpaper engine
 --  
 --      -- hypridle has systemd service
---      -- hl.exec_cmd("hypr-app hypridle")              -- Idle manager
---      -- hl.exec_cmd("hypr-app $HOME/user_scripts/hypr/layout_notify.sh") -- Keyboard Layout Notify
+--      -- hl.exec_cmd("dusky-run hypridle")              -- Idle manager
+--      -- hl.exec_cmd("dusky-run $HOME/user_scripts/hypr/layout_notify.sh") -- Keyboard Layout Notify
 --  
 --      -- --- CLIPBOARD MANAGER ---
---      hl.exec_cmd("hypr-app wl-paste --type text --watch cliphist store")
---      hl.exec_cmd("hypr-app wl-paste --type image --watch cliphist store")
+--      hl.exec_cmd("dusky-run wl-paste --type text --watch cliphist store")
+--      hl.exec_cmd("dusky-run wl-paste --type image --watch cliphist store")
 --
---      hl.exec_cmd("hypr-app sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store'")
---      hl.exec_cmd("hypr-app sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store'")
+--      hl.exec_cmd("dusky-run sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type text --watch cliphist store'")
+--      hl.exec_cmd("dusky-run sh -c '. $HOME/.config/dusky/settings/cliphist_db_env && exec wl-paste --type image --watch cliphist store'")
 --
---      hl.exec_cmd("hypr-app wl-clip-persist --clipboard regular")
+--      hl.exec_cmd("dusky-run wl-clip-persist --clipboard regular")
 --  
 --      -- --- OPTIONAL / USER INTERFACE ---
---      hl.exec_cmd("hypr-app $HOME/user_scripts/waybar/waybar_autostart.sh")
---      -- hl.exec_cmd("hypr-app $HOME/user_scripts/waybar/toggle_timer_waybar.sh")
---      -- hl.exec_cmd("hypr-app nm-applet")
+--      hl.exec_cmd("dusky-run $HOME/user_scripts/waybar/waybar_autostart.sh")
+--      -- hl.exec_cmd("dusky-run $HOME/user_scripts/waybar/toggle_timer_waybar.sh")
+--      -- hl.exec_cmd("dusky-run nm-applet")
 --  
 --      -- --- Slow app launch fix -- set systemd vars
 --      -- The subshell evaluating $(env | cut -d'=' -f 1) is passed directly as a string 
