@@ -1382,7 +1382,7 @@ class WallpaperApp:
         theme_mode = state.get('THEME_MODE', 'dark')
         self.update_trackers(rel_path, theme_mode)
 
-        awww_cmd = ["uwsm-app", "--", "awww", "img"]
+        awww_cmd = ["awww", "img"]
 
         def add_opt(key, flag):
             val = state.get(key, 'disable')
@@ -1498,7 +1498,7 @@ def apply_fav_wallpaper(rel_path: str):
     atomic_write(track_file, f"{basename}\n")
     atomic_write(FAV_STATE_FILE, f"{basename}\n")
 
-    awww_cmd = ["uwsm-app", "--", "awww", "img"]
+    awww_cmd = ["awww", "img"]
     def add_opt(key, flag):
         val = state.get(key, 'disable')
         if val and val != 'disable':
