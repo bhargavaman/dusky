@@ -11,6 +11,9 @@ CLIP_UI="$HOME/user_scripts/clipboard/terminal_clipboard.sh"
 PASS=0
 FAIL=0
 
+# Clear databases before running tests to prevent false matches from old runs
+rm -f "$RAM_DB" "$DISK_DB"
+
 ok()   { echo "  PASS: $*"; PASS=$((PASS+1)); }
 bad()  { echo "  FAIL: $*"; FAIL=$((FAIL+1)); }
 say()  { echo; echo "=== $* ==="; }
