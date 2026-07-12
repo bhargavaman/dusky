@@ -51,8 +51,6 @@ console = Console()
 # ==========================================
 USER_JS_BEGIN: Final[str] = "// === BEGIN FIREFOX OPTIMIZATION SUITE ==="
 USER_JS_END: Final[str] = "// === END FIREFOX OPTIMIZATION SUITE ==="
-
-
 MAX_BACKUPS_PER_PROFILE: Final[int] = 3
 
 type CacheMode = Literal["tmpfs", "memory", "default"]
@@ -580,44 +578,6 @@ def remove_user_js_optimizations(profile_dir: Path, dry_run: bool) -> None:
                 logger.info(f"Cleaned baked-in optimization preferences from [cyan]{prefs_js_path}[/]")
         except Exception as e:
             logger.error(f"Failed to clean {prefs_js_path}: {e}")
-
-
-def configure_uwsm_env(dry_run: bool, remove: bool = False) -> None:
-    legacy_env = Path.home() / ".config" / "uwsm" / "env.d" / "firefox"
-    if legacy_env.exists():
-        if dry_run:
-            logger.info(f"[dim][Dry Run] Would remove legacy env file: {legacy_env}[/]")
-        else:
-            try:
-                legacy_env.unlink()
-                logger.info(f"Removed legacy env file: {legacy_env}")
-            except Exception as e:
-                logger.warning(f"Could not remove legacy env file {legacy_env}: {e}")
-    elif remove:
-        return
-
-    env_file = Path.home() / ".config" / "hypr" / "source" / "environment_variables.lua"
-    env_content = f"""-- Firefox environment variables
-hl.env("MOZ_ENABLE_WAYLAND", "1")
-hl.env("MOZ_USE_XINPUT2", "1")
-"""
-
-    if dry_run:
-        logger.info(f"[dim][Dry Run] Would ensure Firefox env vars in {env_file}[/]")
-    else:
-        try:
-            env_file.parent.mkdir(parents=True, exist_ok=True)
-            current = env_file.read_text() if env_file.exists() else ""
-            if "Firefox environment variables" not in current:
-                with open(env_file, "a") as f:
-                    f.write(env_content)
-                logger.info(f"Appended Firefox environment variables to [cyan]{env_file}[/]")
-            else:
-                logger.info(f"Firefox environment variables already present in {env_file}")
-        except Exception as e:
-            logger.error(f"Failed to write Firefox environment variables: {e}")
-
-
 def configure_psd_service(dry_run: bool) -> None:
     psd_conf_dir = Path.home() / ".config" / "psd"
     psd_conf_path = psd_conf_dir / "psd.conf"
@@ -748,8 +708,6 @@ def disable_optimizations(dry_run: bool) -> None:
     for profile in profiles:
         remove_user_js_optimizations(profile, dry_run)
 
-    configure_uwsm_env(dry_run, remove=True)
-
     user_systemd_dir = Path.home() / ".config" / "systemd" / "user"
     pc_service = user_systemd_dir / "profile-cleaner.service"
     pc_timer = user_systemd_dir / "profile-cleaner.timer"
@@ -870,8 +828,6 @@ def main() -> None:
     prefs = get_optimization_prefs(ram_gb, args.cache_mode)
     for profile in profiles:
         update_user_js(profile, prefs, args.dry_run)
-
-    configure_uwsm_env(args.dry_run)
 
     is_luks = False
     for profile in profiles:

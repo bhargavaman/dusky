@@ -29,9 +29,8 @@ hl.on("hyprland.start", function()
 
     -- --- Sync variables with D-Bus and Systemd - FIXED 2026-07-11 ---
     -- Must be first, ensures CLIPHIST_DB_PATH from environment_variables.lua reaches systemd/dbus for live switches
-    hl.exec_cmd("systemctl --user import-environment CLIPHIST_DB_PATH XDG_RUNTIME_DIR XDG_CACHE_HOME")
+    hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP CLIPHIST_DB_PATH")
     hl.exec_cmd("dbus-update-activation-environment --systemd --all")
-
     -- --- SYSTEM ESSENTIALS ---
 
     -- Gnome Keyring: Stores passwords for apps (VSCode, Chrome, etc.). (recommanded to enable systemd service instead of auto starting with exec-once)
