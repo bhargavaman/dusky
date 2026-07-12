@@ -434,7 +434,7 @@ capture_menu() {
             "  Back") return 0 ;;
             "󰣖  FPS"*)
                 local new_fps
-                new_fps=$(run_menu "Select FPS" "30" "60" "120" "144") || continue
+                new_fps=$(run_menu "Select FPS" "5" "10" "15" "23" "30" "60" "120" "144") || continue
                 [[ -n "$new_fps" ]] && { fps="$new_fps"; update_config "fps" "$fps"; }
                 ;;
             "󰇀  Cursor"*)
