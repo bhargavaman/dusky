@@ -11,11 +11,11 @@ return {
   lazy = vim.fn.argc(-1) == 0, 
   config = function()
     -- 1. Parser Management (The only remaining role of nvim-treesitter on the main branch)
-    require("nvim-treesitter").install({
-      "bash", "c", "cpp", "css", "dockerfile", "go", "html", "javascript",
-      "json", "lua", "markdown", "markdown_inline", "python", "query",
-      "regex", "rust", "svelte", "typescript", "vim", "vimdoc", "vue", "yaml",
-    })
+    -- require("nvim-treesitter").install({
+    --   "bash", "c", "cpp", "css", "dockerfile", "go", "html", "javascript",
+    --   "json", "lua", "markdown", "markdown_inline", "python", "query",
+    --   "regex", "rust", "svelte", "typescript", "vim", "vimdoc", "vue", "yaml",
+    -- })
 
     -- NOTE: Folding is already correctly configured natively in options.lua!
   end,
