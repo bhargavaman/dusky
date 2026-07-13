@@ -34,6 +34,7 @@ RestartMode=direct
 RestartSec=250ms
 RestartSteps=5
 RestartMaxDelaySec=4s
+RestartPreventExitStatus=5
 
 # --- [ANTI-HANG PROTECTION] ---
 # If a subprocess inside the Python script hangs, wait 2 seconds.

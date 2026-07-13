@@ -1924,7 +1924,7 @@ icon = "preferences-system-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/hyprland.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/hyprland.lua\""
 terminal = false
 
 [[pages.layout.items]]
@@ -1951,7 +1951,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/keybinds.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/keybinds.lua\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "input-keyboard-symbolic"
@@ -1973,7 +1973,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/input.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/input.lua\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "input-mouse-symbolic"
@@ -2021,7 +2021,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/environment_variables.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/environment_variables.lua\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2032,7 +2032,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/conf/environment.conf\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/conf/environment.conf\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2043,7 +2043,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/conf/environment-hyprland.conf\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/conf/environment-hyprland.conf\""
 
 [[pages.layout.items]]
 type = "navigation"
@@ -2069,7 +2069,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/monitors.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/monitors.lua\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "video-display-symbolic"
@@ -2091,7 +2091,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/window_rules.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/window_rules.lua\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "application-x-addon-symbolic"
@@ -2125,7 +2125,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/appearance.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/appearance.lua\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "applications-graphics-symbolic"
@@ -2147,7 +2147,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/edit_here/source/workspace_rules.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/edit_here/source/workspace_rules.lua\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "applications-graphics-symbolic"
@@ -2169,7 +2169,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/hypridle.conf\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/hypridle.conf\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "preferences-system-time-symbolic"
@@ -2251,7 +2251,7 @@ icon = "preferences-system-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"{path}/config.jsonc\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/config.jsonc\""
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -2263,7 +2263,7 @@ icon = "document-edit-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"{path}/style.css\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/style.css\""
 terminal = false
 
 [[pages.layout.items]]
@@ -2302,7 +2302,7 @@ icon = "preferences-system-symbolic"
 button_text = "Config"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/mako/config\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/mako/config\""
 
 [[pages.layout.items.layout]]
 type = "section"
@@ -2332,7 +2332,7 @@ icon = "preferences-system-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"{path}/config.json\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/config.json\""
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -2344,7 +2344,7 @@ icon = "document-edit-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"{path}/style.css\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/style.css\""
 terminal = false
 
 [[pages.layout.items]]
@@ -2366,7 +2366,7 @@ title = "Matugen Config.toml"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/matugen/config.toml\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/matugen/config.toml\""
 
 [[pages.layout.items]]
 type = "navigation"
@@ -2420,7 +2420,7 @@ icon = "preferences-system-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"{path}/hyprlock.conf\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/hyprlock.conf\""
 terminal = false
 
 [[pages.layout.items.layout.items.item_template.items]]
@@ -2432,7 +2432,7 @@ icon = "document-edit-symbolic"
 button_text = "Edit"
 [pages.layout.items.layout.items.item_template.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"{path}/theme.json\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"{path}/theme.json\""
 terminal = false
 
 [[pages.layout.items]]
@@ -2455,7 +2455,7 @@ title = "Hyprland.lua"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/hyprland.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/hyprland.lua\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2464,7 +2464,7 @@ title = "Environment Variables"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/source/environment_variables.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/source/environment_variables.lua\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2473,7 +2473,7 @@ title = "Appearance"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/source/appearance.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/source/appearance.lua\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2482,7 +2482,7 @@ title = "Autostart"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/source/autostart.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/source/autostart.lua\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2491,7 +2491,7 @@ title = "Keybinds"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/source/keybinds.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/source/keybinds.lua\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2500,7 +2500,7 @@ title = "Window Rules"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/source/window_rules.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/source/window_rules.lua\""
 
 [[pages.layout.items.layout.items]]
 type = "button"
@@ -2509,7 +2509,7 @@ title = "Input"
 button_text = "View"
 [pages.layout.items.layout.items.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/.config/hypr/source/input.lua\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/.config/hypr/source/input.lua\""
 
 
 [[pages]]
@@ -2938,7 +2938,7 @@ icon = "document-edit-symbolic"
 button_text = "File"
 [pages.layout.items.layout.items.properties.buttons.on_press]
 type = "exec"
-command = "gnome-text-editor \"$HOME/user_scripts/wayclick/dusky_wayclick.sh\""
+command = "$HOME/user_scripts/dusky_system/control_center/dusky_text_editor.py \"$HOME/user_scripts/wayclick/dusky_wayclick.sh\""
 
 [[pages.layout.items.layout.items.properties.buttons]]
 icon = "input-keyboard-symbolic"

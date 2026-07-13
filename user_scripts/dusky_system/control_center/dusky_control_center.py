@@ -41,6 +41,12 @@ from typing import (
 # =============================================================================
 # VERSION CHECK
 # =============================================================================
+# Safe check to prevent systemd service restart loops when running headless
+import os
+if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+    sys.stderr.write("dusky-control-center: error: WAYLAND_DISPLAY and DISPLAY are not set. Cannot run GUI application.\n")
+    sys.exit(5)
+
 if sys.version_info < (3, 14, 5):
     sys.exit("[FATAL] Python 3.14.5+ is required.")
 
