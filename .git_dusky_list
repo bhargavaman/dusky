@@ -35,7 +35,6 @@
 .config/pacman/makepkg.conf
 .config/pacseek/
 .config/swappy/
-.config/uwsm/
 .config/waybar/01_mechabar_h
 .config/waybar/02_reminiscent_h
 .config/waybar/03_float_pacman_h
