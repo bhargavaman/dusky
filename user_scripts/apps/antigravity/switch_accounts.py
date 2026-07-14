@@ -13,29 +13,27 @@ from pathlib import Path
 # 1. AUTONOMOUS FAIL-SAFE DEPENDENCY RESOLVER
 # ==========================================
 def resolve_dependencies() -> None:
-    """Bulletproof, iterative dependency resolver with PIP/AUR fallbacks."""
+    """Iterative dependency resolver with TTY awareness and PIP/AUR fallbacks."""
     requirements = {
         "rich": {"pac": "python-rich", "pip": "rich"},
         "keyring": {"pac": "python-keyring", "pip": "keyring"},
-        "secretstorage": {"pac": "python-secretstorage", "pip": "SecretStorage"},
-        "dbus": {"pac": "python-dbus", "pip": "dbus-python"},
         "questionary": {"pac": "python-questionary", "pip": "questionary"},
         "psutil": {"pac": "python-psutil", "pip": "psutil"}
     }
 
-    # Execute at C-speed to dynamically map missing modules
     missing = [mod for mod in requirements if importlib.util.find_spec(mod) is None]
-    
     if not missing:
         return
+
+    if not sys.stdout.isatty():
+        print(f"\n[✖] FATAL: Missing dependencies ({', '.join(missing)}) in non-interactive shell.")
+        print("[✖] Cannot invoke pacman/sudo. Please run interactively to bootstrap.")
+        sys.exit(1)
 
     print(f"\n[*] Missing dependencies detected: {', '.join(missing)}")
     print("[*] Engaging autonomous fail-safe resolver...\n")
 
-    # Force sudo cache refresh to prevent hidden hangs in subprocesses
     subprocess.run(["sudo", "-v"], check=False)
-
-    # Auto-detect common Arch AUR helpers
     aur_helper = next((h for h in ["paru", "yay"] if shutil.which(h)), None)
 
     for mod in missing:
@@ -45,29 +43,23 @@ def resolve_dependencies() -> None:
         
         success = False
 
-        # Try 1: AUR Helper (Best for Arch ecosystem)
         if aur_helper:
             res = subprocess.run([aur_helper, "-S", "--needed", "--noconfirm", pkg_pac], 
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if res.returncode == 0:
-                success = True
+            success = (res.returncode == 0)
 
-        # Try 2: Standard Pacman
         if not success:
             res = subprocess.run(["sudo", "pacman", "-S", "--needed", "--noconfirm", pkg_pac], 
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if res.returncode == 0:
-                success = True
+            success = (res.returncode == 0)
 
-        # Try 3: PEP-668 Pip Injection (Bleeding Edge Fallback)
         if not success:
             print(f"    [!] '{pkg_pac}' absent from repos. Injecting via pip bypass...")
             res = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", pkg_pip],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
-            if res.returncode == 0:
-                success = True
+            success = (res.returncode == 0)
 
         if not success:
             print(f"\n[✖] FATAL: Absolute failure resolving '{mod}'.")
@@ -78,15 +70,6 @@ def resolve_dependencies() -> None:
 
 resolve_dependencies()
 
-# ==========================================
-# 2. HYPRLAND / D-BUS PRE-FLIGHT CHECK
-# ==========================================
-if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
-    print("\n[!] FATAL: DBUS_SESSION_BUS_ADDRESS is not exposed in this environment.")
-    print("[!] Keyring requires a valid D-Bus session under Wayland/Hyprland.")
-    print("[!] Ensure you are executing this within a proper terminal session.\n")
-    sys.exit(1)
-
 from rich.console import Console
 from rich.theme import Theme
 from rich.panel import Panel
@@ -95,12 +78,11 @@ from rich.align import Align
 from rich.text import Text
 from rich.rule import Rule
 import keyring
-import keyring.errors
 import questionary
 import psutil
 
 # ==========================================
-# 3. UI THEMING
+# 2. UI THEMING & GLOBAL INIT
 # ==========================================
 custom_theme = Theme({
     "info": "dim cyan",
@@ -113,26 +95,29 @@ custom_theme = Theme({
 
 console = Console(theme=custom_theme)
 
+if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+    console.print("[warning]⚠ DBUS_SESSION_BUS_ADDRESS not found. Keyring auth operations may fail.[/warning]")
+
 # ==========================================
-# 4. MODERN TYPE ALIASES (Python 3.12+)
+# 3. MODERN TYPE ALIASES (Python 3.12+)
 # ==========================================
 type ProcList = list[psutil.Process]
 type ProfileList = list[str]
 
 # ==========================================
-# 5. CORE MANAGER CLASS
+# 4. CORE MANAGER CLASS
 # ==========================================
 class ProfileManager:
-    def __init__(self) -> None:
-        # The exclusive, XDG-compliant storage directory for the profile manager
+    def __init__(self, force_mode: bool = False) -> None:
+        self.force_mode = force_mode
         self.storage_dir = Path.home() / ".config" / "dusky" / "settings" / "apps" / "antigravity"
         self.profiles_dir = self.storage_dir / "profiles"
         self.active_profile_file = self.profiles_dir / "active_profile.txt"
         
         try:
             self.profiles_dir.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
-            console.print(f"[error]✖ Fatal: Insufficient permissions to create directory in {self.storage_dir}[/error]")
+        except OSError as e:
+            console.print(f"[error]✖ Fatal: Filesystem constraint preventing directory creation in {self.storage_dir}: {e}[/error]")
             sys.exit(1)
 
     @staticmethod
@@ -141,127 +126,156 @@ class ProfileManager:
         return bool(re.match(r"^[a-zA-Z0-9_-]+$", name))
 
     def get_active(self) -> str | None:
-        """Retrieve the verified active profile name using strict pathlib logic."""
         if self.active_profile_file.is_file():
             try:
                 name = self.active_profile_file.read_text(encoding="utf-8").strip()
-                if name and (self.profiles_dir / name).is_dir():
+                # Security: Prevent path traversal by validating the string
+                if name and self.is_valid_name(name) and (self.profiles_dir / name).is_dir():
                     return name
             except IOError as e:
                 console.print(f"[warning]⚠ State read error: {e}[/warning]")
         return None
 
     def get_all(self) -> ProfileList:
-        """Return a sorted array of all valid profile directories."""
         try:
-            return sorted(p.name for p in self.profiles_dir.iterdir() if p.is_dir())
+            # Security: Filter out invalid directories (e.g. backup folders)
+            return sorted(p.name for p in self.profiles_dir.iterdir() if p.is_dir() and self.is_valid_name(p.name))
         except IOError:
             return []
 
+    def _get_token_path(self, profile_name: str) -> Path:
+        """Resolve token path and silently migrate legacy .json extensions to .txt"""
+        legacy = self.profiles_dir / profile_name / "keyring_token.json"
+        txt = self.profiles_dir / profile_name / "keyring_token.txt"
+        if legacy.exists() and not txt.exists():
+            try:
+                legacy.rename(txt)
+            except OSError:
+                pass
+        return txt
+
     def check_running_processes(self) -> ProcList:
-        """Kernel-level mapping of running Antigravity processes."""
+        """Kernel-level mapping with exact basename precision and lineage exclusions."""
         procs: ProcList = []
-        current_pid, parent_pid = os.getpid(), os.getppid()
+        current_pid = os.getpid()
+        parent_pid = os.getppid()
+        
+        try:
+            grandparent_pid = psutil.Process(parent_pid).ppid()
+        except psutil.Error:
+            grandparent_pid = -1
+            
+        exclude_pids = {current_pid, parent_pid, grandparent_pid}
+        target_bins = {"antigravity", "agy", "antigravity-cli", "antigravity-ide"}
         
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                if proc.info['pid'] in (current_pid, parent_pid):
+                if proc.info['pid'] in exclude_pids:
                     continue
                     
-                name = proc.info['name'] or ""
-                cmdline = " ".join(proc.info['cmdline'] or []).lower()
+                name = (proc.info['name'] or "").lower()
+                cmdline = proc.info['cmdline'] or []
                 
-                if "antigravity" in name.lower() or "agy" in name.lower() or "antigravity" in cmdline:
+                is_match = False
+                
+                if name in target_bins:
+                    is_match = True
+                else:
+                    for arg in cmdline:
+                        base = Path(arg).name.lower()
+                        if base in target_bins and "switch_accounts" not in base:
+                            is_match = True
+                            break
+                            
+                if is_match:
                     procs.append(proc)
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            except psutil.Error:
                 pass
         return procs
 
     def kill_processes(self, processes: ProcList) -> None:
-        """Forcibly terminate blocking processes."""
+        """Safely terminate blocking processes with broad exception handling."""
         for proc in processes:
             try:
                 proc.terminate()
-            except psutil.NoSuchProcess:
+            except psutil.Error:
                 continue
         
-        # Await graceful SIGTERM exit, escalate to SIGKILL if blocked
         gone, alive = psutil.wait_procs(processes, timeout=3.0)
         for proc in alive:
             try:
                 proc.kill() 
-            except psutil.NoSuchProcess:
+            except psutil.Error:
                 pass
                 
-        console.print("[success]✔ Conflicting processes successfully eradicated.[/success]")
+        console.print("[success]✔ Conflicting processes resolved.[/success]")
 
     def stash_keyring(self, profile_name: str) -> None:
-        """Extract and securely stash the auth token with 0o600 permissions."""
         try:
             token = keyring.get_password("gemini", "antigravity")
-            token_file = self.profiles_dir / profile_name / "keyring_token.json"
+            token_file = self._get_token_path(profile_name)
             if token:
-                # Security Override: Ensure file is exclusively readable/writable by the owner
-                token_file.touch(mode=0o600, exist_ok=True)
                 token_file.write_text(token, encoding="utf-8")
+                # Security Override: Force UNIX permissions regardless of existing file state
+                token_file.chmod(0o600)
                 console.print(f"[info]ℹ Secured auth token to '{profile_name}'.[/info]")
-        except keyring.errors.KeyringError as e:
-            console.print(f"[warning]⚠ Keyring subsystem failure during stash: {e}[/warning]")
-        except IOError as e:
-            console.print(f"[warning]⚠ Filesystem IO error during credential save: {e}[/warning]")
+        except Exception as e:
+            console.print(f"[warning]⚠ Credential stash failure: {e}[/warning]")
 
     def restore_keyring(self, profile_name: str) -> None:
-        """Restore stashed keyring token or securely purge the global state."""
-        token_file = self.profiles_dir / profile_name / "keyring_token.json"
+        token_file = self._get_token_path(profile_name)
         if token_file.is_file():
             try:
                 token = token_file.read_text(encoding="utf-8").strip()
                 if token:
                     keyring.set_password("gemini", "antigravity", token)
                     console.print(f"[info]ℹ Restored auth credentials from '{profile_name}'.[/info]")
-            except keyring.errors.KeyringError as e:
-                console.print(f"[error]✖ Keyring subsystem failure during restore: {e}[/error]")
-            except IOError as e:
-                console.print(f"[error]✖ Filesystem IO error during credential read: {e}[/error]")
+            except Exception as e:
+                console.print(f"[error]✖ Credential restore failure: {e}[/error]")
         else:
             try:
                 keyring.delete_password("gemini", "antigravity")
                 console.print("[info]ℹ Purged global auth state (profile initialized fresh).[/info]")
-            except keyring.errors.PasswordDeleteError:
+            except Exception:
                 pass 
 
-    def switch(self, target_profile: str) -> None:
-        """Execute atomic context switch."""
+    def switch(self, target_profile: str) -> bool:
         if not self.is_valid_name(target_profile):
-            console.print(f"[error]✖ Fatal: Invalid profile syntax '{target_profile}'.[/error]")
-            sys.exit(1)
-
-        running_procs = self.check_running_processes()
-        if running_procs:
-            console.print(f"\n[warning]⚠ {len(running_procs)} Active Antigravity process(es) detected![/warning]")
-            action = questionary.select(
-                "Resolve collision:",
-                choices=[
-                    questionary.Choice("Abort (Safe)", value="cancel"),
-                    questionary.Choice("SIGKILL & Proceed", value="kill"),
-                    questionary.Choice("Ignore & Proceed (Risky)", value="ignore")
-                ],
-                style=questionary.Style([('pointer', 'fg:ansiyellow bold')])
-            ).ask()
-            
-            match action:
-                case "cancel" | None:
-                    console.print("[error]Operation aborted.[/error]")
-                    return
-                case "kill":
-                    self.kill_processes(running_procs)
-                case "ignore":
-                    console.print("[warning]Proceeding with collision risk...[/warning]")
+            console.print(f"[error]✖ Error: Invalid profile syntax '{target_profile}'.[/error]")
+            return False
 
         current_profile = self.get_active()
         if current_profile == target_profile:
             console.print(f"[info]ℹ State unchanged. Already on '{target_profile}'.[/info]")
-            return
+            return True
+
+        running_procs = self.check_running_processes()
+        if running_procs:
+            if self.force_mode:
+                console.print("[warning]⚠ Force override active: Bypassing process collision checks.[/warning]")
+            elif not sys.stdout.isatty():
+                console.print(f"\n[error]✖ Active Antigravity processes detected in non-interactive mode. Aborting switch to prevent background hang. Use -f/--force to override.[/error]")
+                return False
+            else:
+                console.print(f"\n[warning]⚠ {len(running_procs)} Active Antigravity process(es) detected![/warning]")
+                action = questionary.select(
+                    "Resolve collision:",
+                    choices=[
+                        questionary.Choice("Abort (Safe)", value="cancel"),
+                        questionary.Choice("SIGKILL & Proceed", value="kill"),
+                        questionary.Choice("Ignore & Proceed (Risky)", value="ignore")
+                    ],
+                    style=questionary.Style([('pointer', 'fg:ansiyellow bold')])
+                ).ask()
+                
+                match action:
+                    case "cancel" | None:
+                        console.print("[error]Operation aborted.[/error]")
+                        return False
+                    case "kill":
+                        self.kill_processes(running_procs)
+                    case "ignore":
+                        console.print("[warning]Proceeding with collision risk...[/warning]")
 
         if current_profile:
             self.stash_keyring(current_profile)
@@ -272,26 +286,25 @@ class ProfileManager:
             self.restore_keyring(target_profile)
             self.active_profile_file.write_text(target_profile, encoding="utf-8")
         except IOError as e:
-            console.print(f"[error]✖ Fatal IO fault during state switch: {e}[/error]")
-            sys.exit(1)
+            console.print(f"[error]✖ IO fault during state switch: {e}[/error]")
+            return False
             
         console.print(f"\n[success]✔ Switched to isolated profile: '{target_profile}'.[/success]")
+        return True
 
-    def cycle_next(self) -> None:
-        """Math-based array indexing for sequential cycling."""
+    def cycle_next(self) -> bool:
         profiles = self.get_all()
         if not profiles:
             console.print("[error]✖ Error: Array is empty. No profiles to cycle.[/error]")
-            return
+            return False
             
         active = self.get_active()
         next_profile = profiles[0] if active not in profiles else profiles[(profiles.index(active) + 1) % len(profiles)]
             
         console.print(f"\n[info]⟳ Iterating to next sequential profile...[/info]")
-        self.switch(next_profile)
+        return self.switch(next_profile)
 
     def create(self, name: str) -> None:
-        """Mint a new profile structure."""
         if not self.is_valid_name(name):
             console.print("[error]✖ Syntax Error: Alphanumeric, dash, and underscores exclusively.[/error]")
             return
@@ -306,11 +319,10 @@ class ProfileManager:
             console.print(f"[success]✔ Initialized isolated context: '{name}'.[/success]")
             if questionary.confirm("Execute context switch to new profile now?").ask():
                 self.switch(name)
-        except IOError as e:
+        except OSError as e:
             console.print(f"[error]✖ IO Error during initialization: {e}[/error]")
 
     def delete(self, name: str) -> None:
-        """Recursively eradicate a profile and its local state."""
         if name == self.get_active():
             console.print("[error]✖ State lock: Cannot wipe the active profile. Cycle first.[/error]")
             return
@@ -324,11 +336,10 @@ class ProfileManager:
             try:
                 shutil.rmtree(profile_path)
                 console.print(f"[success]✔ Profile '{name}' successfully eradicated.[/success]")
-            except IOError as e:
+            except OSError as e:
                 console.print(f"[error]✖ IO Fault during deletion: {e}[/error]")
 
     def render_dashboard(self) -> None:
-        """Render the primary matrix via Rich."""
         active = self.get_active()
         profiles = self.get_all()
         
@@ -342,7 +353,7 @@ class ProfileManager:
             is_active = p == active
             status_text = Text("● ACTIVE", style="bold green") if is_active else Text("○ STANDBY", style="dim white")
             
-            token_file = self.profiles_dir / p / "keyring_token.json"
+            token_file = self._get_token_path(p)
             auth_state = Text("Secured", style="bold cyan") if (token_file.is_file() and token_file.stat().st_size > 0) else Text("Void", style="dim yellow")
             
             table.add_row(str(idx), status_text, p, auth_state)
@@ -354,18 +365,20 @@ class ProfileManager:
             console.print(table)
         console.print(Rule(style="dim magenta"))
 
-
 # ==========================================
-# 6. ROUTER & EVENT LOOP
+# 5. ROUTER & EVENT LOOP
 # ==========================================
-def build_profile_choices(profiles: ProfileList) -> list[questionary.Choice]:
-    """Helper to generate questionary choices with a dedicated back button."""
-    choices = [questionary.Choice(p, value=p) for p in profiles]
+def build_profile_choices(profiles: ProfileList, active_profile: str | None = None, lock_active: bool = False) -> list[questionary.Choice]:
+    choices = []
+    for p in profiles:
+        if lock_active and p == active_profile:
+            choices.append(questionary.Choice(f"{p} (Active - Locked)", value=p, disabled="Cannot eradicate active profile"))
+        else:
+            choices.append(questionary.Choice(p, value=p))
     choices.append(questionary.Choice("↩ Cancel / Go Back", value=None))
     return choices
 
 def interactive_tui(manager: ProfileManager) -> None:
-    """Primary asynchronous-style event loop for the TUI."""
     while True:
         console.clear()
         
@@ -390,7 +403,6 @@ def interactive_tui(manager: ProfileManager) -> None:
         ])
 
         try:
-            console.print("")
             action = questionary.select(
                 "Execute directive:",
                 choices=main_choices,
@@ -399,65 +411,73 @@ def interactive_tui(manager: ProfileManager) -> None:
                 style=questionary.Style([('pointer', 'fg:ansimagenta bold')])
             ).ask()
         except KeyboardInterrupt:
+            console.print("\n[info]Session terminated via interrupt.[/info]")
+            break
+
+        if action is None or action == "quit":
+            console.print("[info]Session terminated.[/info]")
             break
 
         console.print("")
         
-        match action:
-            case "quit" | None:
-                console.print("[info]Session terminated.[/info]")
-                break
-            case "switch":
-                target = questionary.select(
-                    "Select target index:", 
-                    choices=build_profile_choices(profiles),
-                    style=questionary.Style([('pointer', 'fg:ansimagenta bold')])
-                ).ask()
-                
-                if target: 
-                    manager.switch(target)
+        try:
+            match action:
+                case "switch":
+                    target = questionary.select(
+                        "Select target index:", 
+                        choices=build_profile_choices(profiles),
+                        style=questionary.Style([('pointer', 'fg:ansimagenta bold')])
+                    ).ask()
+                    
+                    if target: 
+                        manager.switch(target)
+                        questionary.press_any_key_to_continue("\nPress any key to return...").ask()
+                case "cycle":
+                    manager.cycle_next()
                     questionary.press_any_key_to_continue("\nPress any key to return...").ask()
-            case "cycle":
-                manager.cycle_next()
-                questionary.press_any_key_to_continue("\nPress any key to return...").ask()
-            case "create":
-                name = questionary.text("Designation for new identity (leave blank to cancel):").ask()
-                
-                if name and name.strip(): 
-                    manager.create(name.strip())
-                    questionary.press_any_key_to_continue("\nPress any key to return...").ask()
-            case "delete":
-                target = questionary.select(
-                    "Select index for eradication:", 
-                    choices=build_profile_choices(profiles),
-                    style=questionary.Style([('pointer', 'fg:ansimagenta bold')])
-                ).ask()
-                
-                if target: 
-                    manager.delete(target)
-                    questionary.press_any_key_to_continue("\nPress any key to return...").ask()
-            case "stash":
-                active_profile = manager.get_active()
-                if active_profile:
-                    manager.stash_keyring(active_profile)
-                    questionary.press_any_key_to_continue("\nPress any key to return...").ask()
+                case "create":
+                    name = questionary.text("Designation for new identity (leave blank to cancel):").ask()
+                    
+                    if name and name.strip(): 
+                        manager.create(name.strip())
+                        questionary.press_any_key_to_continue("\nPress any key to return...").ask()
+                case "delete":
+                    target = questionary.select(
+                        "Select index for eradication:", 
+                        choices=build_profile_choices(profiles, manager.get_active(), lock_active=True),
+                        style=questionary.Style([('pointer', 'fg:ansimagenta bold')])
+                    ).ask()
+                    
+                    if target: 
+                        manager.delete(target)
+                        questionary.press_any_key_to_continue("\nPress any key to return...").ask()
+                case "stash":
+                    active_profile = manager.get_active()
+                    if active_profile:
+                        manager.stash_keyring(active_profile)
+                        questionary.press_any_key_to_continue("\nPress any key to return...").ask()
+        except KeyboardInterrupt:
+            continue
 
 def main() -> None:
-    manager = ProfileManager()
-    
     parser = argparse.ArgumentParser(description="Antigravity Architecture Multiplexer")
     parser.add_argument("profile", nargs="?", help="Direct index override")
     parser.add_argument("-l", "--list", action="store_true", help="Dump matrix and exit")
     parser.add_argument("-n", "--next", action="store_true", help="Iterate matrix and exit")
+    parser.add_argument("-f", "--force", action="store_true", help="Force switch non-interactively, bypassing collision safety")
     
     args = parser.parse_args()
+
+    manager = ProfileManager(force_mode=args.force)
 
     if args.list:
         manager.render_dashboard()
     elif args.next:
-        manager.cycle_next()
+        if not manager.cycle_next():
+            sys.exit(1)
     elif args.profile:
-        manager.switch(args.profile)
+        if not manager.switch(args.profile):
+            sys.exit(1)
     else:
         interactive_tui(manager)
 
