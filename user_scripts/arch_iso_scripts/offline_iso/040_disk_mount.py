@@ -176,7 +176,6 @@ def determine_root_partition(auto_mode):
             if prov and Path(prov).exists():
                 root_part=Path(prov).resolve(); mapped_root=root_part
             else:
-                # Note: Do NOT combine -l (list) and -r (raw). Newer lsblk versions (util-linux >= 2.42) fail if both are combined.
                 r=run("lsblk","-pnro","NAME,FSTYPE,LABEL",check=False,capture=True)
                 btrfs_parts=[]; duskies=[]
                 for line in r.stdout.splitlines():
