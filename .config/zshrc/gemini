@@ -4,7 +4,7 @@
 
 # Main wrapper function
 gemini() {
-  local script_path="/home/dusk/user_scripts/apps/antigravity/switch_accounts.py"
+  local script_path="$HOME/user_scripts/apps/antigravity/switch_accounts.py"
   
   if [[ ! -f "$script_path" ]]; then
     echo "Error: switch_accounts.py not found at $script_path" >&2
@@ -34,7 +34,7 @@ _gemini_completions() {
   )
   
   local -a profiles
-  local script_path="/home/dusk/user_scripts/apps/antigravity/switch_accounts.py"
+  local script_path="$HOME/user_scripts/apps/antigravity/switch_accounts.py"
   
   if [[ -f "$script_path" ]]; then
     profiles=($(python3 "$script_path" --list 2>/dev/null | grep -E '^│' | awk -F'│' '{print $4}' | sed 's/ //g'))
