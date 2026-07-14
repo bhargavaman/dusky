@@ -192,7 +192,7 @@ has_active_crypt_on_device() {
     while read -r node type; do
         [[ -n "$node" && -n "$type" ]] || continue
         [[ "$type" == "crypt" ]] && return 0
-    done < <(lsblk -pnlro NAME,TYPE "$dev" 2>/dev/null || true)
+    done < <(lsblk -pnro NAME,TYPE "$dev" 2>/dev/null || true)
     return 1
 }
 
@@ -303,7 +303,7 @@ teardown_device() {
         [[ -n "$node" && -n "$type" ]] || continue
         [[ "$type" == "crypt" ]] || continue
         crypts+=("$node")
-    done < <(lsblk -pnlro NAME,TYPE "$dev" 2>/dev/null || true)
+    done < <(lsblk -pnro NAME,TYPE "$dev" 2>/dev/null || true)
     if (( ${#crypts[@]} > 0 )); then
         echo -e "${C_YELLOW}>> Closing active LUKS containers on $dev...${C_RESET}"
         for (( i=${#crypts[@]}-1; i>=0; i-- )); do

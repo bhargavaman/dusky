@@ -101,7 +101,7 @@ determine_root_partition() {
                 echo -e "${C_CYAN}Auto-detected unencrypted BTRFS root (prev module): $ROOT_PART${C_RESET}"
             else
                 local -a btrfs_parts=() part fstype
-                while read -r part fstype; do [[ "$fstype" == "btrfs" ]] && btrfs_parts+=("$part"); done < <(lsblk -pnlro NAME,FSTYPE 2>/dev/null || true)
+                while read -r part fstype; do [[ "$fstype" == "btrfs" ]] && btrfs_parts+=("$part"); done < <(lsblk -pnro NAME,FSTYPE 2>/dev/null || true)
                 if (( ${#btrfs_parts[@]} == 1 )); then ROOT_PART=$(readlink -f "${btrfs_parts[0]}"); MAPPED_ROOT="$ROOT_PART"
                     echo -e "${C_CYAN}Auto-detected unencrypted BTRFS root: $ROOT_PART${C_RESET}"
                 else echo -e "${C_RED}Critical: Cannot auto-detect unique BTRFS root. Run interactive.${C_RESET}"; exit 1; fi
@@ -152,7 +152,7 @@ auto_detect_efi_partition() {
         [[ "${parttype,,}" == "$EFI_GPT_TYPE" ]] && guid_matches+=("$part")
         [[ "${partlabel,,}" == *efi* ]] && label_matches+=("$part")
         [[ "${fstype,,}" == "vfat" || "${fstype,,}" == "fat32" ]] && vfat_matches+=("$part")
-    done < <(lsblk -pnlro NAME,TYPE "$disk" 2>/dev/null)
+    done < <(lsblk -pnro NAME,TYPE "$disk" 2>/dev/null)
     if (( ${#guid_matches[@]} == 1 )); then printf '%s\n' "${guid_matches[0]}"; return 0; fi; (( ${#guid_matches[@]} > 1 )) && return 1
     if (( ${#label_matches[@]} == 1 )); then printf '%s\n' "${label_matches[0]}"; return 0; fi; (( ${#label_matches[@]} > 1 )) && return 1
     if (( ${#vfat_matches[@]} == 1 )); then printf '%s\n' "${vfat_matches[0]}"; return 0; fi; (( ${#vfat_matches[@]} > 1 )) && return 1
