@@ -13,7 +13,7 @@ declare -ra ISO_SEQUENCE=(
   "001_uefi_check.sh"
   "010_set_variables.sh --no_encrypt"
   "020_environment_prep.sh --auto --cachy"
-  "030_partitioning.py --auto --no-encrypt"
+  "030_partitioning.py --no-encrypt"
   "040_disk_mount.py --auto"
   "045_repo_bind_mount.sh"
   "051_pacman_repo_switch.sh --offline --cachyos"

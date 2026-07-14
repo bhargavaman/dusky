@@ -493,10 +493,11 @@ def parse_strategy_cli(args, raw_argv):
 
 # --- Strategy Implementations ---
 
-def strategy_wipe(target_dev, boot_mode, do_encrypt, efi_size, has_win, win_esp, creds):
+def strategy_wipe(target_dev, boot_mode, do_encrypt, efi_size, has_win, win_esp, creds, auto_mode=False):
     console.print(Panel(f"[bold red]Strategy 1: Wipe Entire {target_dev}[/bold red]", box=box.ROUNDED))
-    if not Confirm.ask(f"[red]Confirm WIPE ENTIRE {target_dev}? All data will be erased![/red]", console=console, default=False):
-        console.print("[yellow]Aborted[/yellow]"); sys.exit(0)
+    if not auto_mode:
+        if not Confirm.ask(f"[red]Confirm WIPE ENTIRE {target_dev}? All data will be erased![/red]", console=console, default=False):
+            console.print("[yellow]Aborted[/yellow]"); sys.exit(0)
     teardown_device(target_dev); ensure_mapper_free(target_dev)
     root_part, efi_tmp = write_gpt_sfdisk(target_dev, boot_mode, bool(do_encrypt), efi_size=efi_size)
     efi_part = efi_tmp or ""
@@ -708,7 +709,7 @@ def main():
     # Dispatch
     if strategy == 1:
         # Wipe Entire Drive
-        strategy_wipe(target_dev, boot_mode, do_encrypt, args.efi_size, has_win, win_esp, creds)
+        strategy_wipe(target_dev, boot_mode, do_encrypt, args.efi_size, has_win, win_esp, creds, auto_mode=args.auto)
     elif strategy == 2:
         strategy_select_existing(target_dev, boot_mode, do_encrypt, creds, has_win, win_esp)
     elif strategy == 3:
