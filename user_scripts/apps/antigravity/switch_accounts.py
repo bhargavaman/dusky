@@ -350,15 +350,20 @@ def interactive_tui():
         profiles = list_profiles_rich()
         
         console.print("\n[bold cyan]Menu Actions:[/bold cyan]")
-        console.print("  [bold green][1-N][/bold green] Switch to a profile")
-        console.print("  [bold green][c][/bold green] Create new profile")
-        console.print("  [bold green][d][/bold green] Delete a profile")
-        console.print("  [bold green][b][/bold green] Backup / Stash current session credentials")
-        console.print("  [bold green][q][/bold green] Quit")
+        if profiles:
+            console.print(f"  [bold green]\\[1-{len(profiles)}][/bold green] Switch to a profile")
+        console.print("  [bold green]\\[c][/bold green] Create new profile")
+        if profiles:
+            console.print("  [bold green]\\[d][/bold green] Delete a profile")
+        console.print("  [bold green]\\[b][/bold green] Backup / Stash current session credentials")
+        console.print("  [bold green]\\[q][/bold green] Quit")
         console.print("")
         
         try:
-            action = Prompt.ask("Select an option").strip().lower()
+            if not profiles:
+                action = Prompt.ask("Select an option", default="c").strip().lower()
+            else:
+                action = Prompt.ask("Select an option").strip().lower()
         except (KeyboardInterrupt, EOFError):
             console.print("\nExiting.")
             break
@@ -395,13 +400,17 @@ def interactive_tui():
                 console.print("[bold red][[Error][/bold red] No active profile set. Please switch to a profile first.")
             Prompt.ask("\nPress Enter to continue")
         elif action.isdigit():
-            idx = int(action) - 1
-            if 0 <= idx < len(profiles):
-                switch_profile(profiles[idx])
-                Prompt.ask("\nPress Enter to continue")
-            else:
-                console.print("[bold red][[Error][/bold red] Index out of range.")
+            if not profiles:
+                console.print("[bold red][[Error][/bold red] No profiles exist yet. Type '[bold green]c[/bold green]' to create a new profile.")
                 Prompt.ask("Press Enter to continue")
+            else:
+                idx = int(action) - 1
+                if 0 <= idx < len(profiles):
+                    switch_profile(profiles[idx])
+                    Prompt.ask("\nPress Enter to continue")
+                else:
+                    console.print(f"[bold red][[Error][/bold red] Index out of range (must be between 1 and {len(profiles)}).")
+                    Prompt.ask("Press Enter to continue")
         elif action == '':
             continue
         else:
