@@ -346,8 +346,8 @@ class ProfileManager:
         table = Table(title="Local Isolation Matrix", title_style="highlight", border_style="magenta", expand=True)
         table.add_column("Index", justify="right", style="cyan", no_wrap=True)
         table.add_column("State", justify="center", no_wrap=True)
-        table.add_column("Identity Matrix", style="success")
-        table.add_column("Keyring Cache", justify="center", no_wrap=True)
+        table.add_column("Profile Name", style="success")
+        table.add_column("Login Status", justify="center", no_wrap=True)
         
         for idx, p in enumerate(profiles, start=1):
             is_active = p == active
@@ -360,7 +360,7 @@ class ProfileManager:
             
         console.print(Rule(style="dim magenta"))
         if not profiles:
-            console.print(Align.center("[muted]Matrix empty. Mint an identity to begin.[/muted]"))
+            console.print(Align.center("[muted]No profiles found. Create a profile to begin.[/muted]"))
         else:
             console.print(table)
         console.print(Rule(style="dim magenta"))
@@ -372,7 +372,7 @@ def build_profile_choices(profiles: ProfileList, active_profile: str | None = No
     choices = []
     for p in profiles:
         if lock_active and p == active_profile:
-            choices.append(questionary.Choice(f"{p} (Active - Locked)", value=p, disabled="Cannot eradicate active profile"))
+            choices.append(questionary.Choice(f"{p} (Active - Locked)", value=p, disabled="Cannot delete active profile"))
         else:
             choices.append(questionary.Choice(p, value=p))
     choices.append(questionary.Choice("↩ Cancel / Go Back", value=None))
@@ -382,8 +382,8 @@ def interactive_tui(manager: ProfileManager) -> None:
     while True:
         console.clear()
         
-        title = Text("🚀 Antigravity Architecture", style="bold magenta")
-        subtitle = Text("State isolation and identity multiplexer", style="italic cyan")
+        title = Text("🚀 Antigravity Profile Manager", style="bold magenta")
+        subtitle = Text("Account Isolation & Credentials Switcher", style="italic cyan")
         console.print(Panel(Align.center(Text.assemble(title, "\n", subtitle)), border_style="magenta"))
         
         manager.render_dashboard()
@@ -392,19 +392,19 @@ def interactive_tui(manager: ProfileManager) -> None:
         main_choices = []
         
         if profiles:
-            main_choices.append(questionary.Choice("Switch Identity", value="switch"))
-            main_choices.append(questionary.Choice("Iterate Sequentially", value="cycle"))
+            main_choices.append(questionary.Choice("Switch Profile", value="switch"))
+            main_choices.append(questionary.Choice("Cycle to Next Profile", value="cycle"))
         
         main_choices.extend([
-            questionary.Choice("Mint Identity", value="create"),
-            questionary.Choice("Eradicate Identity", value="delete", disabled="Matrix empty" if not profiles else None),
-            questionary.Choice("Force Auth Stash", value="stash", disabled="No active state" if not manager.get_active() else None),
-            questionary.Choice("Terminate Session", value="quit")
+            questionary.Choice("Create New Profile", value="create"),
+            questionary.Choice("Delete Profile", value="delete", disabled="No profiles created" if not profiles else None),
+            questionary.Choice("Backup/Save Credentials", value="stash", disabled="No active profile" if not manager.get_active() else None),
+            questionary.Choice("Quit", value="quit")
         ])
 
         try:
             action = questionary.select(
-                "Execute directive:",
+                "Select Action:",
                 choices=main_choices,
                 use_indicator=True,
                 pointer="❯",
@@ -424,7 +424,7 @@ def interactive_tui(manager: ProfileManager) -> None:
             match action:
                 case "switch":
                     target = questionary.select(
-                        "Select target index:", 
+                        "Select profile to switch to:", 
                         choices=build_profile_choices(profiles),
                         style=questionary.Style([('pointer', 'fg:ansimagenta bold')])
                     ).ask()
@@ -436,14 +436,14 @@ def interactive_tui(manager: ProfileManager) -> None:
                     manager.cycle_next()
                     questionary.press_any_key_to_continue("\nPress any key to return...").ask()
                 case "create":
-                    name = questionary.text("Designation for new identity (leave blank to cancel):").ask()
+                    name = questionary.text("Enter name for new profile (leave blank to cancel):").ask()
                     
                     if name and name.strip(): 
                         manager.create(name.strip())
                         questionary.press_any_key_to_continue("\nPress any key to return...").ask()
                 case "delete":
                     target = questionary.select(
-                        "Select index for eradication:", 
+                        "Select profile to delete:", 
                         choices=build_profile_choices(profiles, manager.get_active(), lock_active=True),
                         style=questionary.Style([('pointer', 'fg:ansimagenta bold')])
                     ).ask()
@@ -460,11 +460,11 @@ def interactive_tui(manager: ProfileManager) -> None:
             continue
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Antigravity Architecture Multiplexer")
-    parser.add_argument("profile", nargs="?", help="Direct index override")
-    parser.add_argument("-l", "--list", action="store_true", help="Dump matrix and exit")
-    parser.add_argument("-n", "--next", action="store_true", help="Iterate matrix and exit")
-    parser.add_argument("-f", "--force", action="store_true", help="Force switch non-interactively, bypassing collision safety")
+    parser = argparse.ArgumentParser(description="Antigravity Profile Manager & Credentials Switcher")
+    parser.add_argument("profile", nargs="?", help="Direct profile override")
+    parser.add_argument("-l", "--list", action="store_true", help="List all available profiles and exit")
+    parser.add_argument("-n", "--next", action="store_true", help="Cycle to the next profile and exit")
+    parser.add_argument("-f", "--force", action="store_true", help="Bypass running process check and force switch non-interactively")
     
     args = parser.parse_args()
 
