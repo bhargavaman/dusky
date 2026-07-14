@@ -77,6 +77,10 @@ CORE_SYSTEM_DEFS = {
         "Dusky CPU Cores & Power Restorer",
         "Restores your custom CPU core states and package power limit adjustments dynamically on system boot."
     ),
+    "numlock_disable.service": (
+        "Disable NumLock on TTY Boot",
+        "Disables NumLock on virtual consoles (TTYs 1 to 6) during boot. Useful for keyboards that default to NumLock ON, preventing lock-out at the login screen."
+    ),
 
     "swayosd-libinput-backend.service": (
         "SwayOSD Input Backend",
