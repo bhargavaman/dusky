@@ -1166,7 +1166,8 @@ hl.window_rule({
     float = true,
     size = {"monitor_w * 0.3958", "monitor_h * 0.9093"},
     animation = "slide up",
-    pin = true
+    workspace = "unset",
+    focus_on_activate = true
 })
 
 --- Dusky_QuickPanal Script ---
